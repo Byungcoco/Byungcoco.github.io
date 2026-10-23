@@ -490,3 +490,7 @@ void CPrefabRecycleSystem::Sorting()
 - `ifs >> jArray`는 JSON이 깨져 있으면 예외를 던지는데 받는 곳이 없어, 파일 하나만 잘못돼도 게임이 종료됩니다.
 - 읽은 데이터가 객체를 만든 뒤에도 다음 씬 로드까지 `CDataManager`에 남습니다. 생성이 끝나면 비워야 합니다.
 - 스테이지마다 `SetData` / `InstancingObjects`를 복사해 쓰고, 도로 구간은 재사용하면서도 구간을 옮길 때마다 드론 9마리는 `Clone_GameObject`로 새로 만듭니다. 공통 로딩 단계로 묶고 몬스터도 풀로 돌리는 편이 일관됩니다.
+
+### 다음 단계
+
+[듀엣 나이트 어비스 모작 — 데이터 파이프라인 (공격 프리셋)](/reviews/duet/05-data-pipeline/)에서는 데이터 종류마다 `ToJson` / `FromJson`을 가진 Document 클래스를 두고, 카테고리별 Builder가 Document로 객체를 만들게 했습니다. 레벨이 바뀔 때 Document를 비우고, JSON 파싱 실패는 예외 없이 검사합니다.

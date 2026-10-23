@@ -380,3 +380,8 @@ inline void CObjectPool<T>::Despawn(T *_pObject)
 - `ObjectTraits`는 타입이 늘어날 때의 실수를 막으려고 도입했지만, 프로젝트 규모가 크지 않아 기대만큼 효용이 크지 않았습니다.
 - `CEventManager::Clear`는 `size()`와 비교하며 `pop()`을 반복하다 큐의 절반만 비웁니다. `while (!empty())`로 바꿔야 합니다.
 - `Register` / `Unregister`가 `public`이라 이벤트 큐를 우회하는 경로가 열려 있습니다. `private`으로 막아야 요청과 실행의 분리가 보장됩니다.
+
+### 다음 단계
+
+- [뮬렛 매드잭 모작 — 범용 오브젝트 풀](/reviews/mullet/01-object-pool/): 타입마다 템플릿 풀을 두던 구조를, 프로토타입을 복제해 담는 범용 풀과 enum 인덱스 풀 관리자로 바꿨습니다. 풀 추가가 enum 한 줄과 등록 한 줄로 줄었습니다.
+- [듀엣 나이트 어비스 모작 — 객체 생명주기 · 이벤트 큐](/reviews/duet/06-lifecycle/): 프레임 끝에 요청을 한 번에 처리하는 이벤트 큐를 엔진으로 옮기고, 오브젝트 상태를 생명주기 단계와 비트 플래그로 나눠 관리했습니다.

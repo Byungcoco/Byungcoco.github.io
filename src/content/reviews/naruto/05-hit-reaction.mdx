@@ -382,3 +382,7 @@ _bool CPlayer::On_Hit(_uint iCollideMyLayer, ATTACK_DESC* pDesc, CGameObject* pO
 
 - 공격 수치가 상태 코드에 들어 있습니다. 데이터(프리셋)로 빼고 상태는 프리셋 번호만 갖게 하면 빌드 없이 조정할 수 있습니다.
 - `ATTACK_DESC`로 넉백 세기를 넘기지만 상태 시작 함수가 아직 읽지 않아, 피격 상태마다 고정값을 씁니다.
+
+### 다음 단계
+
+[듀엣 나이트 어비스 모작 — 판정 시스템](/reviews/duet/04-judgement/)에서는 가해자마다 흩어져 있던 판정을 판정 시스템 한 곳으로 모으고, 공격 수치는 프리셋 데이터에서 읽도록 바꿨습니다.

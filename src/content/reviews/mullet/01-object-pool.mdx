@@ -9,6 +9,8 @@ lineage:
   href: /reviews/katana/02-object-pool/
 ---
 import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
 import Editor from '../../../components/Editor.astro';
 import Tabs from '../../../components/Tabs.astro';
 import Tab from '../../../components/Tab.astro';
@@ -28,6 +30,8 @@ import Tab from '../../../components/Tab.astro';
 ## 3. 구조 요약
 
 풀의 중심은 객체 배열 하나와 활성·대기를 가르는 경계 하나입니다. 스폰은 경계를 한 칸 늘리고, 회수는 회수할 객체를 마지막 활성 객체와 맞바꾼 뒤 경계를 한 칸 줄입니다. 어느 쪽도 탐색이나 메모리 할당이 없습니다.
+
+<Fig n={1} white max={480} src="/img/reviews/mullet/01-object-pool/class.png" caption="풀 관련 클래스 관계도" />
 
 ### 책임 분리
 
@@ -178,9 +182,11 @@ void CObjectPoolManager::Update(const _float _fDeltaTime)
 
 </Editor>
 
-풀 객체는 레이어에 넣지 않고 관리자가 직접 갱신합니다. 객체는 수명이 끝나면 `DEAD`만 반환하고, 회수 호출은 관리자가 합니다.
+<Fig n={2} white max={560} src="/img/reviews/mullet/01-object-pool/update.png" caption="매 프레임 갱신과 자동 회수" />
 
-순회를 **역순**으로 한 데는 이유가 있습니다. `i`번째를 회수하면 마지막 활성 객체가 `i` 자리로 옮겨 오는데, 그 객체는 인덱스가 더 크므로 이번 프레임에 이미 갱신을 마친 상태입니다. 정순으로 돌면 옮겨 온 객체를 건너뛰게 됩니다.
+풀 객체는 레이어에 넣지 않고 관리자가 직접 갱신합니다. 활성 구간을 역순으로 돌며 갱신하고, `DEAD`를 반환한 객체는 그 자리에서 회수합니다. 객체는 수명이 끝나면 `DEAD`만 반환하면 되고, 회수 호출은 관리자가 합니다.
+
+순회를 **역순**으로 한 데는 이유가 있습니다. `i`번째를 회수하면 마지막 활성 객체가 `i` 자리로 옮겨 오는데, 그 객체는 인덱스가 더 크므로 이번 프레임에 이미 갱신을 마친 상태입니다(<FigRef n={2} />). 정순으로 돌면 옮겨 온 객체를 건너뛰게 됩니다.
 
 </Tab>
 <Tab>
@@ -253,7 +259,9 @@ CGameObject *CObjectPool::Spawn(void *pArg, std::function<void(CGameObject *)> _
 
 </Editor>
 
-스폰할 객체는 항상 `m_Objects[m_iActiveCount]`이므로 찾을 필요가 없습니다. 초기화는 두 단계로 나눴습니다.
+<Fig n={3} white max={560} src="/img/reviews/mullet/01-object-pool/spawn.png" caption="호출부가 객체를 스폰하기까지" />
+
+스폰할 객체는 항상 `m_Objects[m_iActiveCount]`이므로 찾을 필요가 없습니다. 경계 위치의 객체를 바로 꺼내 타입별 초기화를 하고, 이어서 호출부 설정을 적용합니다(<FigRef n={3} />). 초기화는 두 단계로 나눴습니다.
 
 - `Spawn_Pooling(pArg)`: **타입이 아는 값**(총알 속도, 이펙트 옵션)으로 객체가 스스로 초기화
 - `callback(pGo)`: **호출부만 아는 값**(생성 위치 등)을 그 자리에서 설정
@@ -299,7 +307,9 @@ HRESULT CObjectPool::Despawn(CGameObject *_pObject)
 
 </Editor>
 
-회수할 객체의 위치는 `m_iActiveIndex`로 바로 알 수 있습니다. 그 자리를 마지막 활성 객체로 채우고 경계를 줄이면 활성 구간에 빈칸이 생기지 않습니다. 자리가 바뀐 두 객체의 활성 번호는 그 자리에서 고쳐 둡니다. 순서는 보존되지 않지만 풀 객체끼리는 순서에 의미가 없어 문제가 되지 않습니다.
+<Fig n={4} white max={440} src="/img/reviews/mullet/01-object-pool/despawn.png" caption="B를 회수할 때 배열 상태 변화" />
+
+회수할 객체의 위치는 `m_iActiveIndex`로 바로 알 수 있습니다. 그 자리를 마지막 활성 객체로 채우고 경계를 줄이면 활성 구간에 빈칸이 생기지 않습니다(<FigRef n={4} />). 자리가 바뀐 두 객체의 활성 번호는 그 자리에서 고쳐 둡니다. 순서는 보존되지 않지만 풀 객체끼리는 순서에 의미가 없어 문제가 되지 않습니다.
 
 </Tab>
 <Tab>
@@ -384,3 +394,22 @@ HRESULT CBullet::Despawn_Pooling()
 - 풀이 가득 차면 알림 없이 `nullptr`를 반환해서 풀 크기를 감으로 정했습니다. 최대 사용량을 기록하거나 부족할 때 로그를 남겨 근거를 만들어야 합니다.
 - `CObjectPoolManager::Spawn`은 풀 생성이 실패했을 때(프로토타입 태그 오타 등) 빈 슬롯을 그대로 역참조합니다. 등록 시점에 실패를 바로 알려야 합니다.
 - `Ready_Pools`는 시작하자마자 `All_Clear()`로 배열을 비우므로, 이어지는 `if (!m_arrayPools[...])` 검사는 항상 참입니다. 의미 없는 분기는 정리해야 합니다.
+
+### 다음 단계
+
+[듀엣 나이트 어비스 모작 — 객체 생명주기 · 이벤트 큐](/reviews/duet/06-lifecycle/)에서는 풀 객체도 일반 객체와 같은 삭제 요청으로 처리했습니다. 생명 상태에 Pooled를 두고, 삭제할 객체가 풀 소속이면 풀로 돌려보냅니다.
+
+### 참고 · 듀엣 나이트 어비스 모작에서 바꾼 점
+
+풀 종류를 엔진 enum 대신 문자열 태그로 바꾸고, 클라이언트가 `Regist_Pool`로 등록하게 했습니다. 이제 엔진은 클라이언트 객체 이름을 모릅니다. 풀은 레벨별로 나눠 두고, 레벨이 바뀔 때 한꺼번에 정리합니다.
+
+<Editor file="ObjectPool_Manager.h" fn="CObjectPool_Manager">
+
+```cpp
+HRESULT Regist_Pool(_uint iTargetLevelIndex, const wstring& wstrPoolTag, const wstring& wstrLayerTag, _uint iSeedLevelID, const wstring& wstrSeedPrototypeTag, void* pArg, _uint iPoolCapacityCount);
+// ... 코드 중략
+
+vector<unordered_map<wstring, CObjectPool*>> m_Pools;
+```
+
+</Editor>

@@ -319,3 +319,8 @@ void CColliderComponent::OnCollisionExit(CColliderComponent *_pOther)
 
 - 등록된 타입 쌍 안에서는 공간 분할 없이 활성 오브젝트를 모두 짝지어 AABB를 검사합니다.
 - `CheckGroup`은 비트를 토글하므로 같은 쌍을 두 번 등록하면 오히려 꺼집니다. 켜기와 끄기를 나눈 함수가 더 안전합니다.
+
+### 다음 단계
+
+- [나루토 모작 — 공격 정보 전달 · 피격 반응](/reviews/naruto/05-hit-reaction/): 같은 구조를 3D로 옮기면서, 공격 정보를 넘기는 가해자와 반응을 처리하는 피해자로 로직을 나눴습니다.
+- [듀엣 나이트 어비스 모작 — 판정 시스템](/reviews/duet/04-judgement/): 충돌 감지와 전투 규칙을 분리한 판정 시스템으로 단순화했습니다.
