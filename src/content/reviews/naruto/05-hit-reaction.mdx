@@ -137,20 +137,27 @@ typedef struct tagAttackDesc
 <Editor file="PartObject.h" fn="CPartObject">
 
 ```cpp
-_bool Is_AttackWindow() const { return m_bAttackWindow; }
-void Begin_AttackWindow(ATTACK_DESC* pDesc);
-void End_AttackWindow();
-void Clear_HitTargets() { m_unsetHitTargets.clear(); }
-_bool Is_AlreadyHitted(CGameObject* pVictim) const { return (pVictim != nullptr) && (m_unsetHitTargets.find(pVictim) != m_unsetHitTargets.end()); }
-void Regist_HitTargets(CGameObject* pVictim) { if(pVictim) m_unsetHitTargets.insert(pVictim); }
-// ... 코드 중략
-
-_bool m_bAttackWindow = { false };
-CGameObject* m_pParentObject = { nullptr };
-const _float4x4* m_pMatParent = { nullptr };
-_float4x4 m_matCombinedWorld = {};
-ATTACK_DESC m_CurrentAttackDesc = {};
-unordered_set<CGameObject*> m_unsetHitTargets;
+class ENGINE_DLL CPartObject abstract : public CGameObject
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	_bool Is_AttackWindow() const { return m_bAttackWindow; }
+	void Begin_AttackWindow(ATTACK_DESC* pDesc);
+	void End_AttackWindow();
+	void Clear_HitTargets() { m_unsetHitTargets.clear(); }
+	_bool Is_AlreadyHitted(CGameObject* pVictim) const { return (pVictim != nullptr) && (m_unsetHitTargets.find(pVictim) != m_unsetHitTargets.end()); }
+	void Regist_HitTargets(CGameObject* pVictim) { if(pVictim) m_unsetHitTargets.insert(pVictim); }
+	// ... 코드 중략
+protected:
+	_bool m_bAttackWindow = { false };
+	CGameObject* m_pParentObject = { nullptr };
+	const _float4x4* m_pMatParent = { nullptr };
+	_float4x4 m_matCombinedWorld = {};
+	ATTACK_DESC m_CurrentAttackDesc = {};
+	unordered_set<CGameObject*> m_unsetHitTargets;
+	// ... 코드 중략
+};
 ```
 
 </Editor>

@@ -55,15 +55,30 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CResourceManager.cpp" fn="Initialize()">
 
 ```cpp
-AddRotatedAnimation(L"..\\Resource\\Effect\\spr_jumpcloud", L"Jump_Effect", false, false, 90.f);
-// ... 코드 중략
-
-AddRotatedAnimation(L"..\\Resource\\Effect\\spr_slash", L"Player_Slash_Effect", false, false, 15.f, DEFAULT_ANIM_DURATION * 0.4f);
-// ... 코드 중략
-
-AddAnimation(L"..\\Resource\\Player\\Zero\\spr_idle", L"Player_Idle", true, true);
-AddAnimation(L"..\\Resource\\Player\\Zero\\spr_Run", L"Player_Run", true, true, DEFAULT_ANIM_DURATION * 0.7f);
-AddAnimation(L"..\\Resource\\Player\\Zero\\spr_attack", L"Player_Attack", true, true, DEFAULT_ANIM_DURATION * 0.3f);
+void CResourceManager::Initialize()
+{
+    // ... 코드 중략
+    {
+        {
+            // ... 코드 중략
+            AddRotatedAnimation(L"..\\Resource\\Effect\\spr_jumpcloud", L"Jump_Effect", false, false, 90.f);
+            // ... 코드 중략
+            AddRotatedAnimation(L"..\\Resource\\Effect\\spr_slash", L"Player_Slash_Effect", false, false, 15.f, DEFAULT_ANIM_DURATION * 0.4f);
+        }
+        // ... 코드 중략
+    }
+    // ... 코드 중략
+    {
+        {
+            // ... 코드 중략
+            AddAnimation(L"..\\Resource\\Player\\Zero\\spr_idle", L"Player_Idle", true, true);
+            AddAnimation(L"..\\Resource\\Player\\Zero\\spr_Run", L"Player_Run", true, true, DEFAULT_ANIM_DURATION * 0.7f);
+            AddAnimation(L"..\\Resource\\Player\\Zero\\spr_attack", L"Player_Attack", true, true, DEFAULT_ANIM_DURATION * 0.3f);
+            // ... 코드 중략
+        }
+        // ... 코드 중략
+    }
+}
 ```
 
 </Editor>
@@ -75,15 +90,17 @@ AddAnimation(L"..\\Resource\\Player\\Zero\\spr_attack", L"Player_Attack", true, 
 <Editor file="CEffect.cpp" fn="PlayRotaionAnim(...)">
 
 ```cpp
-float fAngleRad = atan2f(GetDir().y, GetDir().x);
+void CEffect::PlayRotaionAnim(const wstring &key_in, bool _bLoop, bool _bOffeset)
+{
+	float fAngleRad = atan2f(GetDir().y, GetDir().x);
 
-float fDegree = fAngleRad * 180.f / Constants::fPi;
+	float fDegree = fAngleRad * 180.f / Constants::fPi;
 
-CAnimatorComponent *AnimComp = static_cast<CAnimatorComponent *>(GetComponent<CAnimatorComponent>());
-AnimComp->SetRotationAngle(fDegree);
-// ... 코드 중략
-
-AnimComp->PlayAnimation(key_in, _bLoop, true);
+	CAnimatorComponent *AnimComp = static_cast<CAnimatorComponent *>(GetComponent<CAnimatorComponent>());
+	AnimComp->SetRotationAngle(fDegree);
+	// ... 코드 중략
+	AnimComp->PlayAnimation(key_in, _bLoop, true);
+}
 ```
 
 </Editor>
@@ -152,17 +169,6 @@ vector<Bitmap *> CFileManager::SetAnimDataFromFolder(const path &relPath_in, con
         element_in.wTag = match[1];
         element_in.wIndex = match[3];
         // ... 코드 중략
-        if (pos > 0)
-        {
-            // ... 코드 중략
-        }
-        // ... 코드 중략
-        wstring::iterator removeEnd = std::remove_if(element_in.wPrefix.begin(), element_in.wPrefix.end(),
-            [](const wchar_t &wc)->bool
-            {
-                // ... 코드 중략
-            });
-        // ... 코드 중략
     }
         });
 // ... 코드 중략
@@ -188,6 +194,7 @@ typedef struct tagPathSorter
     }
 }PathSorter;
 // ... 코드 중략
+
 vector<Bitmap *> CFileManager::SetAnimDataFromFolder(const path &relPath_in, const wstring &key_in, bool bReverse)
 {
     // ... 코드 중략
@@ -243,41 +250,45 @@ void CResourceManager::AddAnimation(const path &relPath_in, const wstring &key_i
 <Editor file="CResourceManager.cpp" fn="Make_SpriteSheet(...)">
 
 ```cpp
-const int sheetWidth = iFrameWidth * iFrameCount;
-// reverse면 밑에 한줄 추가
-const int sheetHeight = (_bReverse ? 2 : 1) * iFrameHeight;
-// ... 코드 중략
-// 읽어들인 file count만큼 그리기 옆으로 쫘악 그리기
-for (int i = 0; i < iFrameCount; ++i)
+CAnimationBitmap *CResourceManager::Make_CustomColorSpriteSheetWithReal(const vector<Bitmap *> &_Bitmaps, const wstring &_key_in, const Gdiplus::ColorMatrix &_CM, bool _bReverse, float _fStretch_X, float _fStretch_Y, float _fElapsedTime)
 {
-    int destX = i * iFrameWidth;
-    graphics.DrawImage(_Bitmaps[i], destX, 0, iFrameWidth, iFrameHeight);
     // ... 코드 중략
-    if (_bReverse)
+    const int sheetWidth = iFrameWidth * iFrameCount;
+    // reverse면 밑에 한줄 추가
+    const int sheetHeight = (_bReverse ? 2 : 1) * iFrameHeight;
+    // ... 코드 중략
+    // 읽어들인 file count만큼 그리기 옆으로 쫘악 그리기
+    for (int i = 0; i < iFrameCount; ++i)
     {
-        Gdiplus::RectF destRect(
-            static_cast<Gdiplus::REAL>(destX + iFrameWidth),   // destX 보정 (좌우 반전용)
-            static_cast<Gdiplus::REAL>(iFrameHeight),          // destY
-            static_cast<Gdiplus::REAL>(-iFrameWidth),          // destWidth → flip
-            static_cast<Gdiplus::REAL>(iFrameHeight));           // destHeight
+        int destX = i * iFrameWidth;
+        graphics.DrawImage(_Bitmaps[i], destX, 0, iFrameWidth, iFrameHeight);
+        // ... 코드 중략
+        if (_bReverse)
+        {
+            Gdiplus::RectF destRect(
+                static_cast<Gdiplus::REAL>(destX + iFrameWidth),   // destX 보정 (좌우 반전용)
+                static_cast<Gdiplus::REAL>(iFrameHeight),          // destY
+                static_cast<Gdiplus::REAL>(-iFrameWidth),          // destWidth → flip
+                static_cast<Gdiplus::REAL>(iFrameHeight));           // destHeight
 
-
-        graphics.DrawImage(
-            _Bitmaps[i],
-            destRect,
-            0.0f, 0.0f,                           // srcX, srcY
-            (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),        // srcWidth
-            (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),       // srcHeight
-            Gdiplus::UnitPixel,
-            nullptr);                             // ImageAttributes (없어도 됨)
-    // ... 코드 중략
+            graphics.DrawImage(
+                _Bitmaps[i],
+                destRect,
+                0.0f, 0.0f,                           // srcX, srcY
+                (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),        // srcWidth
+                (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),       // srcHeight
+                Gdiplus::UnitPixel,
+                nullptr);                             // ImageAttributes (없어도 됨)
+                // ... 코드 중략
+        }
     }
-}
 
-// GDI+ Bitmap에서 HBITMAP 변환
-HBITMAP hSpriteSheet;
-sheet.GetHBITMAP(RGB(255, 255, 255), &hSpriteSheet);
-pNewAnim->Load_Bmp(hSpriteSheet);
+    // GDI+ Bitmap에서 HBITMAP 변환
+    HBITMAP hSpriteSheet;
+    sheet.GetHBITMAP(RGB(255, 255, 255), &hSpriteSheet);
+    pNewAnim->Load_Bmp(hSpriteSheet);
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -291,48 +302,51 @@ pNewAnim->Load_Bmp(hSpriteSheet);
 <Editor file="CResourceManager.cpp" fn="Make_RotatedSprtieSheet(...)">
 
 ```cpp
-// 회전시 이미지 잘려나가는거 방지를 위함
-int iDiag = sqrt(iFrameWidth * iFrameWidth + iFrameHeight * iFrameHeight);
-int iPaddedSize = static_cast<int>(ceil(iDiag)) + 1;
-// ... 코드 중략
-
-const int iRowCount = (int)(360.f / _fAngleStep);
-
-const int sheetWidth = iPaddedSize * iFrameCount;
-// 24방향
-const int sheetHeight = iPaddedSize * iRowCount;
-// ... 코드 중략
-
-for (int iRow = 0; iRow < iRowCount; ++iRow)
+CAnimationBitmap *CResourceManager::Make_RotatedSprtieSheet(const vector<Bitmap *> &_Bitmaps, const wstring &_key_in, float _fAngleStep, float _fStretch_X, float _fStretch_Y, bool _bAlpha, float _fElapsedTime)
 {
-    // 15도씩 24개
-    float destAngle = (float)(iRow * _fAngleStep);
-
-    for (int i = 0; i < iFrameCount; ++i)
-    {
-        int destX = i * iPaddedSize;
-        int destY = iRow * iPaddedSize;
-        // 회전용 임시
-        Bitmap RotatedBmp{ iPaddedSize, iPaddedSize, PixelFormat32bppPARGB };
-        Gdiplus::Graphics g(&RotatedBmp);
-        g.Clear(Gdiplus::Color::Transparent);
-
-        g.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
-        g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-
-        // 회전 중심
-        g.TranslateTransform(iPaddedSize * 0.5f, iPaddedSize * 0.5f);
-        g.RotateTransform(destAngle);
-        // 원본 이미지 중심
-        g.TranslateTransform(-iFrameWidth * 0.5f, -iFrameHeight * 0.5f);
-
-        // bitmap 회전시키고 그리기 (회전이 적용된 상태에서 그림)
-        g.DrawImage(_Bitmaps[i], 0, 0, iFrameWidth, iFrameHeight);
-
-        // 시트에 그리기
-        sheetG.DrawImage(&RotatedBmp, destX, destY);
     // ... 코드 중략
+    // 회전시 이미지 잘려나가는거 방지를 위함
+    int iDiag = sqrt(iFrameWidth * iFrameWidth + iFrameHeight * iFrameHeight);
+    int iPaddedSize = static_cast<int>(ceil(iDiag)) + 1;
+    // ... 코드 중략
+    const int iRowCount = (int)(360.f / _fAngleStep);
+
+    const int sheetWidth = iPaddedSize * iFrameCount;
+    // 24방향
+    const int sheetHeight = iPaddedSize * iRowCount;
+    // ... 코드 중략
+    for (int iRow = 0; iRow < iRowCount; ++iRow)
+    {
+        // 15도씩 24개
+        float destAngle = (float)(iRow * _fAngleStep);
+
+        for (int i = 0; i < iFrameCount; ++i)
+        {
+            int destX = i * iPaddedSize;
+            int destY = iRow * iPaddedSize;
+            // 회전용 임시
+            Bitmap RotatedBmp{ iPaddedSize, iPaddedSize, PixelFormat32bppPARGB };
+            Gdiplus::Graphics g(&RotatedBmp);
+            g.Clear(Gdiplus::Color::Transparent);
+
+            g.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+
+            // 회전 중심
+            g.TranslateTransform(iPaddedSize * 0.5f, iPaddedSize * 0.5f);
+            g.RotateTransform(destAngle);
+            // 원본 이미지 중심
+            g.TranslateTransform(-iFrameWidth * 0.5f, -iFrameHeight * 0.5f);
+
+            // bitmap 회전시키고 그리기 (회전이 적용된 상태에서 그림)
+            g.DrawImage(_Bitmaps[i], 0, 0, iFrameWidth, iFrameHeight);
+
+            // 시트에 그리기
+            sheetG.DrawImage(&RotatedBmp, destX, destY);
+            // ... 코드 중략
+        }
     }
+    // ... 코드 중략
 }
 ```
 
@@ -352,13 +366,20 @@ for (int iRow = 0; iRow < iRowCount; ++iRow)
 <Editor file="CAnimationBitmap.h" fn="GetRowFromAngle(...)">
 
 ```cpp
-int GetRowFromAngle(float _fAngle) const
+class CAnimationBitmap : public CMyBitmap
 {
-	while (_fAngle < 0.f) _fAngle += 360.f;
-	while (_fAngle >= 360.f) _fAngle -= 360.f;
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	int GetRowFromAngle(float _fAngle) const
+	{
+		while (_fAngle < 0.f) _fAngle += 360.f;
+		while (_fAngle >= 360.f) _fAngle -= 360.f;
 
-	return (int)(_fAngle / m_fAngleStep) % m_iAngleCount;
-}
+		return (int)(_fAngle / m_fAngleStep) % m_iAngleCount;
+	}
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -415,15 +436,20 @@ void CAnimatorComponent::NormalRender(HDC hDC)
 <Editor file="CAnimatorComponent.cpp" fn="RotateRender(...)">
 
 ```cpp
-// 현재 프레임 인덱스
-const size_t iFrameIndex = m_PlayState.iCurFrame;
+void CAnimatorComponent::RotateRender(HDC hDC)
+{
+	// ... 코드 중략
+	// 현재 프레임 인덱스
+	const size_t iFrameIndex = m_PlayState.iCurFrame;
 
-// 애니메이션 시트 내부의 Row 계산
-int iRow = m_pCurAnimation->GetRowFromAngle(m_fRotationAngle);
+	// 애니메이션 시트 내부의 Row 계산
+	int iRow = m_pCurAnimation->GetRowFromAngle(m_fRotationAngle);
 
-// 시트 위치 계산
-int srcX = static_cast<int>(iFrameIndex * iFrameWidth);
-int srcY = iRow * iFrameHeight;
+	// 시트 위치 계산
+	int srcX = static_cast<int>(iFrameIndex * iFrameWidth);
+	int srcY = iRow * iFrameHeight;
+	// ... 코드 중략
+}
 ```
 
 </Editor>

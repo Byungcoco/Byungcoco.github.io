@@ -106,7 +106,7 @@ void CCharacter::Set_OnTerrain(const _float &fTimeDelta)
 	}
 	else
 		vPos.y = vPos.y + m_fVelocity * fTimeDelta;
-	// ... 코드 중략
+
 	m_pTransformCom->Set_Info(INFO_POS, { vPos.x , vPos.y , vPos.z });
 }
 ```
@@ -333,13 +333,11 @@ _float CGrounding::Compute_Height(const PANELENTRY &tPanelEntry, _float fX, _flo
 	indexZ = (std::max)(0, (std::min)(indexZ, (int)dwCntZ - 2));
 
 	_ulong	dwIndex = indexZ * dwCntX + indexX;
-	// ... 코드 중략
 
 	const _vec3 &vLeftBottom = pTerrainVtxPos[dwIndex];
 	const _vec3 &vRightBottom = pTerrainVtxPos[dwIndex + 1];
 	const _vec3 &vLeftTop = pTerrainVtxPos[dwIndex + dwCntX];
 	const _vec3 &vRightTop = pTerrainVtxPos[dwIndex + dwCntX + 1];
-
 
 	const _float fWidth = (fX - vLeftBottom.x) * tPanelEntry.fInverseItv;
 	const _float fHeight = (fZ - vLeftBottom.z) * tPanelEntry.fInverseItv;

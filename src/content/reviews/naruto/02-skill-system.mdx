@@ -248,7 +248,6 @@ public:
 	}
 	// ... 코드 중략
 };
-// ... 코드 중략
 
 template<class ...Args>
 inline DelegateHandle CMulticastDelegate<void(Args...)>::Subscribe(std::function<void(Args...)> func) noexcept
@@ -266,6 +265,7 @@ inline DelegateHandle CMulticastDelegate<void(Args...)>::Subscribe(std::function
 
 	return slot.key;
 }
+
 // ... 코드 중략
 
 template<class ...Args>

@@ -61,9 +61,7 @@ void CPlayer::Initialize()
 	// ... 코드 중략
 	{
 		if (CComponent *Comp = AddComponent<CKatanaComponent>())
-		{
-
-		}
+		// ... 코드 중략
 		if (CComponent *Comp = AddComponent<CColliderComponent>())
 		{
 			CColliderComponent *ColliderComp = static_cast<CColliderComponent *>(Comp);
@@ -241,6 +239,7 @@ typedef struct tagComponentContainer
 	{
 		for_each(Components.begin(), Components.end(), Safe_DeleteObj());
 	}
+
 	// ... 코드 중략
 	template<IsComponent T>
 	bool RemoveComponent()
@@ -369,9 +368,6 @@ public:
 
 ```cpp
 class CKatanaComponent : public CWeaponComponent
-{
-	// ... 코드 중략
-};
 ```
 
 </Editor>

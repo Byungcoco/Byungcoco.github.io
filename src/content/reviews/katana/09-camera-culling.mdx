@@ -55,24 +55,29 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CGameScene.cpp" fn="Initialize()">
 
 ```cpp
-// MapData
+void CGameScene::Initialize()
 {
-	FileMgr->Load_LineData(SceneType::GAME_STAGE_1);
-	FileMgr->Load_RectData(SceneType::GAME_STAGE_1);
-	SetBackgroundBmp(RscMgr->GetBitmapImage(L"Stage_1_Map"));
-	SetSkyLineBmp(RscMgr->GetBitmapImage(L"Stage_1_SkyLine"));
-	CmrMgr->SetMapSize(GetBackgroundBmp()->GetSize());
-}
-
-// Player
-{
-	if (!ObjMgr->Get_Instance()->GetPlayer())
+	// ... 코드 중략
+	// MapData
 	{
-		ObjMgr->CreateObject<CPlayer>([](CObject *_p) {
-			_p->SetPos({ 128.f, 660.f });
-			CCameraManager::Get_Instance()->SetTarget(_p);
-			});
+		FileMgr->Load_LineData(SceneType::GAME_STAGE_1);
+		FileMgr->Load_RectData(SceneType::GAME_STAGE_1);
+		SetBackgroundBmp(RscMgr->GetBitmapImage(L"Stage_1_Map"));
+		SetSkyLineBmp(RscMgr->GetBitmapImage(L"Stage_1_SkyLine"));
+		CmrMgr->SetMapSize(GetBackgroundBmp()->GetSize());
 	}
+
+	// Player
+	{
+		if (!ObjMgr->Get_Instance()->GetPlayer())
+		{
+			ObjMgr->CreateObject<CPlayer>([](CObject *_p) {
+				_p->SetPos({ 128.f, 660.f });
+				CCameraManager::Get_Instance()->SetTarget(_p);
+				});
+		}
+	}
+	// ... 코드 중략
 }
 ```
 

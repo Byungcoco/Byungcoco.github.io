@@ -176,6 +176,7 @@ BoundingBox COctree_Manager::Make_Loose(const BoundingBox& boundingBox, _float f
 	newBox.Extents.z *= fLooseFactor;
 	return newBox;
 }
+// ... 코드 중략
 
 _int COctree_Manager::Candidate_ChildIndex(const BoundingBox& node, const BoundingBox& object)
 {
@@ -220,8 +221,7 @@ void COctree_Manager::Insert(OCTREE_NODE* pNode, OCTREE_ENTRY* pEntry)
 		_bool bTooSmall = (
 			(pNode->bounds.Extents.x <= m_Desc.fMinNodeSizeXZ) ||
 			(pNode->bounds.Extents.z <= m_Desc.fMinNodeSizeXZ)
-			);
-
+			// ... 코드 중략
 		if (bTooSmall)
 		{
 			Add_ToNode(pNode, pEntry);
@@ -321,6 +321,7 @@ void COctree_Manager::Update_AABB(CGameObject* pGo, const BoundingBox& newAABB)
 	// 갱신된 AABB가 LooseBound에 완전포함 안되어있다면 Owner로부터 빠지고 재삽입
 	if (pEntry->pOwner->looseBounds.Contains(pEntry->AABB) != ContainmentType::CONTAINS)
 	{
+		// ... 코드 중략
 		Remove_FromOwner(pEntry);
 		Insert(m_pRoot, pEntry);
 	}

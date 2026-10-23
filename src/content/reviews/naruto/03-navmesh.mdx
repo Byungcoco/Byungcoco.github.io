@@ -97,6 +97,7 @@ void CMainPlayer::Update_Late(const _float fTimeDelta)
         Movement_Ground(fTimeDelta);
 }
 // ... 코드 중략
+
 void CMainPlayer::Movement_Wall(const _float fTimeDelta)
 {
     // ... 코드 중략
@@ -217,6 +218,33 @@ void CPolygonNavigationCellMaker::Compute_Triangle_EarClippingXZ(const std::vect
 <Editor file="PolygonNavigationCellMaker.cpp" fn="CPolygonNavigationCellMaker::Is_Ear(...), CPolygonNavigationCellMaker::Point_InTriangleXZ(...)">
 
 ```cpp
+_bool CPolygonNavigationCellMaker::Point_InTriangleXZ(const _float3& vPoint, const _float3& vA, const _float3& vB, const _float3& vC)
+{
+	// p3 -> p1 방향벡터 (p1 - p3)
+	// p3 -> p2 방향벡터 (p2 - p3)
+	// 외적
+	auto sign = [](const _float3& p1, const _float3& p2, const _float3& p3)
+	{
+		return (p1.x - p3.x) * (p2.z - p3.z) -
+			(p2.x - p3.x) * (p1.z - p3.z);
+	};
+
+	const _float d1 = sign(vPoint, vA, vB); // 변 AB 기준
+	const _float d2 = sign(vPoint, vB, vC); // 변 BC 기준
+	const _float d3 = sign(vPoint, vC, vA); // 변 CA 기준
+
+	// 삼각형 내부의 점(변위에 있는점은 포함하지않는다, WithHole 만들때 좀 복잡해짐)은 모든 변에 대해 같은 방향의 부호를 가진다. 즉 아래 bool flag 둘중에 하나가 false
+	// 하지만 외부으 점은 어떤 변은 음수, 어떤변은 양수 일 수 있다. 아래 boolFlag가 모두 true
+	const _bool bHasNeg = (d1 < 0.f) || (d2 < 0.f) || (d3 < 0.f);
+	const _bool bHasPos = (d1 > 0.f) || (d2 > 0.f) || (d3 > 0.f);
+	const _bool bOnEdge = (fabsf(d1) <= g_XMEpsilon.f[0] || fabsf(d2) <= g_XMEpsilon.f[0] || fabsf(d3) <= g_XMEpsilon.f[0]);
+
+	if (bOnEdge)
+		return false;
+
+	return !(bHasNeg && bHasPos);
+}
+
 _bool CPolygonNavigationCellMaker::Is_Ear(const std::vector<_float3>& vecPoints, const std::vector<_int>& vecIndexList, _int i, _bool bCCW)
 {
 	const _int iCount = static_cast<_int>(vecIndexList.size());
@@ -247,34 +275,6 @@ _bool CPolygonNavigationCellMaker::Is_Ear(const std::vector<_float3>& vecPoints,
 	}
 
 	return true;
-}
-// ... 코드 중략
-
-_bool CPolygonNavigationCellMaker::Point_InTriangleXZ(const _float3& vPoint, const _float3& vA, const _float3& vB, const _float3& vC)
-{
-	// p3 -> p1 방향벡터 (p1 - p3)
-	// p3 -> p2 방향벡터 (p2 - p3)
-	// 외적
-	auto sign = [](const _float3& p1, const _float3& p2, const _float3& p3)
-	{
-		return (p1.x - p3.x) * (p2.z - p3.z) -
-			(p2.x - p3.x) * (p1.z - p3.z);
-	};
-
-	const _float d1 = sign(vPoint, vA, vB); // 변 AB 기준
-	const _float d2 = sign(vPoint, vB, vC); // 변 BC 기준
-	const _float d3 = sign(vPoint, vC, vA); // 변 CA 기준
-
-	// 삼각형 내부의 점(변위에 있는점은 포함하지않는다, WithHole 만들때 좀 복잡해짐)은 모든 변에 대해 같은 방향의 부호를 가진다. 즉 아래 bool flag 둘중에 하나가 false
-	// 하지만 외부으 점은 어떤 변은 음수, 어떤변은 양수 일 수 있다. 아래 boolFlag가 모두 true
-	const _bool bHasNeg = (d1 < 0.f) || (d2 < 0.f) || (d3 < 0.f);
-	const _bool bHasPos = (d1 > 0.f) || (d2 > 0.f) || (d3 > 0.f);
-	const _bool bOnEdge = (fabsf(d1) <= g_XMEpsilon.f[0] || fabsf(d2) <= g_XMEpsilon.f[0] || fabsf(d3) <= g_XMEpsilon.f[0]);
-
-	if (bOnEdge)
-		return false;
-
-	return !(bHasNeg && bHasPos);
 }
 ```
 

@@ -385,7 +385,7 @@ inline CObject *CObjectPool<T>::Spawn(std::function<void(T *)> _callback)
 template<IsObject T>
 inline void CObjectPool<T>::Despawn(T *_pObject)
 {
-	// ... 코드 중략
+
 	int src = _pObject->GetVisibleIndex();
 	int dst = m_iActiveTopIndex;
 	if (src < 0 || src > dst) return;

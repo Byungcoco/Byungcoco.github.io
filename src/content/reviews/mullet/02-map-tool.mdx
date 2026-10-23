@@ -142,7 +142,7 @@ HRESULT CStage_Car::Ready_Scene()
 
     if (FAILED(pPrefabSystem->Set_PrefabList(CObjectManager::GetInstance()->Get_ObjectList(SCENE_CAR, L"Prefab_Layer"))))
         return E_FAIL;
-
+    // ... 코드 중략
     return S_OK;
 }
 ```
@@ -334,7 +334,6 @@ HRESULT CFileManager::SaveDataFile(_uint iSceneID, const _tchar *szLayerTag)
 
     return S_OK;
 }
-// ... 코드 중략
 
 HRESULT CFileManager::LoadDataFile(_uint iSceneID, const _tchar *szLayerTag)
 {
@@ -343,6 +342,7 @@ HRESULT CFileManager::LoadDataFile(_uint iSceneID, const _tchar *szLayerTag)
     std::ifstream ifs(dir, std::ios::in | std::ios::binary);
     if (!ifs.is_open())
     {
+        // ... 코드 중략
         return E_FAIL;
     }
 
@@ -490,14 +490,6 @@ void CPrefab::Set_ChildrensMatrix()
 <Editor file="CPrefabRecycleSystem.cpp" fn="CPrefabRecycleSystem::Set_PrefabList(...), CPrefabRecycleSystem::Update(), CPrefabRecycleSystem::Sorting()">
 
 ```cpp
-HRESULT CPrefabRecycleSystem::Set_PrefabList(list<CGameObject *> *p)
-{
-	// ... 코드 중략
-	m_fDistance = std::fabs(pFirst->GetTransform()->Get_Info(INFO::INFO_POS).z - pSecond->GetTransform()->Get_Info(INFO::INFO_POS).z);
-	// ... 코드 중략
-}
-// ... 코드 중략
-
 void CPrefabRecycleSystem::Update()
 {
 	const _float fStandard_Z = m_pPrefabList.front()->GetTransform()->Get_Info(INFO::INFO_POS).z;
@@ -506,7 +498,13 @@ void CPrefabRecycleSystem::Update()
 	if (fPlayerPosition_Z - fStandard_Z >= m_fDistance)
 		Sorting();
 }
-// ... 코드 중략
+
+HRESULT CPrefabRecycleSystem::Set_PrefabList(list<CGameObject *> *p)
+{
+	// ... 코드 중략
+	m_fDistance = std::fabs(pFirst->GetTransform()->Get_Info(INFO::INFO_POS).z - pSecond->GetTransform()->Get_Info(INFO::INFO_POS).z);
+	// ... 코드 중략
+}
 
 void CPrefabRecycleSystem::Sorting()
 {

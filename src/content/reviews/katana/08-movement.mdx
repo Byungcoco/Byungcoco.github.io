@@ -76,13 +76,17 @@ void CPlayerState_Fall::Update(const float _fDeltaTime)
 <Editor file="CPlayerState_GrapWall.cpp" fn="Update(...)">
 
 ```cpp
-if (m_pPlayer->IsGround())
+void CPlayerState_GrapWall::Update(const float _fDeltaTime)
 {
-	m_pPlayer->ChangeState(PLAYERSTATE::IDLE);
-	return;
-}
+	// ... 코드 중략
+	if (m_pPlayer->IsGround())
+	{
+		m_pPlayer->ChangeState(PLAYERSTATE::IDLE);
+		return;
+	}
 
-m_pPlayer->Gravity_Half(_fDeltaTime);
+	m_pPlayer->Gravity_Half(_fDeltaTime);
+}
 ```
 
 </Editor>
@@ -99,31 +103,35 @@ m_pPlayer->Gravity_Half(_fDeltaTime);
 <Editor file="CWall.cpp" fn="OnCollisionEnter(...)">
 
 ```cpp
-Vector2 Delta = OtherPosition - RectPosition;
-Vector2 AbsDelta{ fabs(Delta.x), fabs(Delta.y) };
-
-float Overlapped_X = (RectHalfSize.x + OtherHalfSize.x) - AbsDelta.x;
-float Overlapped_Y = (RectHalfSize.y + OtherHalfSize.y) - AbsDelta.y;
-
-if (Overlapped_X < Overlapped_Y)
+void CWall::OnCollisionEnter(CColliderComponent *_pOtherComp)
 {
-		VerticalCollide(pOtherObject, Delta.x, Overlapped_X);
-		m_CollidedObjects.insert(unordered_map<CObject *, CollisionAxis>::value_type(pOtherObject, CollisionAxis::VERT));
-	if (eType == ObjectType::GANGSTER || eType == ObjectType::GRUNT || eType == ObjectType::POMP)
-		static_cast<CMonster *>(pOtherObject)->AddCollidedGround(this, CollisionAxis::VERT);
-}
-else
-{
-	// Rect기준 수평
-	HorizontalCollide(pOtherObject, Delta.y, Overlapped_Y);
-	if (Delta.y < 0.f)
-	{
-		m_CollidedObjects.insert(unordered_map<CObject *, CollisionAxis>::value_type(pOtherObject, CollisionAxis::HORZ));
-		pOtherObject->AddGrounded(1);
-		if (eType == ObjectType::GANGSTER || eType == ObjectType::GRUNT || eType == ObjectType::POMP)
-			static_cast<CMonster *>(pOtherObject)->AddCollidedGround(this, CollisionAxis::HORZ);
-	}
 	// ... 코드 중략
+	Vector2 Delta = OtherPosition - RectPosition;
+	Vector2 AbsDelta{ fabs(Delta.x), fabs(Delta.y) };
+
+	float Overlapped_X = (RectHalfSize.x + OtherHalfSize.x) - AbsDelta.x;
+	float Overlapped_Y = (RectHalfSize.y + OtherHalfSize.y) - AbsDelta.y;
+
+	if (Overlapped_X < Overlapped_Y)
+	{
+ 		VerticalCollide(pOtherObject, Delta.x, Overlapped_X);
+ 		m_CollidedObjects.insert(unordered_map<CObject *, CollisionAxis>::value_type(pOtherObject, CollisionAxis::VERT));
+		if (eType == ObjectType::GANGSTER || eType == ObjectType::GRUNT || eType == ObjectType::POMP)
+			static_cast<CMonster *>(pOtherObject)->AddCollidedGround(this, CollisionAxis::VERT);
+	}
+	else
+	{
+		// Rect기준 수평
+		HorizontalCollide(pOtherObject, Delta.y, Overlapped_Y);
+		if (Delta.y < 0.f)
+		{
+			m_CollidedObjects.insert(unordered_map<CObject *, CollisionAxis>::value_type(pOtherObject, CollisionAxis::HORZ));
+			pOtherObject->AddGrounded(1);
+			if (eType == ObjectType::GANGSTER || eType == ObjectType::GRUNT || eType == ObjectType::POMP)
+				static_cast<CMonster *>(pOtherObject)->AddCollidedGround(this, CollisionAxis::HORZ);
+		}
+		// ... 코드 중략
+	}
 }
 ```
 
@@ -138,12 +146,19 @@ else
 <Editor file="CObject.h" fn="CObject">
 
 ```cpp
-bool IsGround() {return m_iContactGround > 0;}
-void AddGrounded(int _i) { m_iContactGround += _i; }
-void SetGrounded(int _i) { m_iContactGround = _i; }
+class CObject abstract
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	bool IsGround() {return m_iContactGround > 0;}
+	void AddGrounded(int _i) { m_iContactGround += _i; }
+	void SetGrounded(int _i) { m_iContactGround = _i; }
 
-bool IsLine() { return m_bOnLine; }
-void SetOnLine(bool _b) { m_bOnLine = _b; }
+	bool IsLine() { return m_bOnLine; }
+	void SetOnLine(bool _b) { m_bOnLine = _b; }
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -151,14 +166,18 @@ void SetOnLine(bool _b) { m_bOnLine = _b; }
 <Editor file="CWall.cpp" fn="OnCollisionExit(...)">
 
 ```cpp
-unordered_map<CObject *, CollisionAxis>::iterator itr = m_CollidedObjects.find(pOtherObject);
-if (itr != m_CollidedObjects.end())
+void CWall::OnCollisionExit(CColliderComponent *_pOtherComp)
 {
-	if (itr->second == CollisionAxis::HORZ)
+	// ... 코드 중략
+	unordered_map<CObject *, CollisionAxis>::iterator itr = m_CollidedObjects.find(pOtherObject);
+	if (itr != m_CollidedObjects.end())
 	{
-		_pOtherComp->GetOwner()->AddGrounded(-1);
+		if (itr->second == CollisionAxis::HORZ)
+		{
+			_pOtherComp->GetOwner()->AddGrounded(-1);
+		}
+		m_CollidedObjects.erase(itr);
 	}
-	m_CollidedObjects.erase(itr);
 }
 ```
 
@@ -301,10 +320,20 @@ void CJumpThroughLine::OnCollision(CColliderComponent *_pOtherComp)
 <Editor file="CPlayer.cpp" fn="Update(...)">
 
 ```cpp
-if (IsLine() && !IsJumpThrough())
+void CPlayer::Update(const float _fDeltaTime)
 {
-	if (GetVel().y > 0.f || KEY_BUTTON_DOWN(KeyType::S))
-		SetJumpThrough(true);
+	// ... 코드 중략
+	if (m_eCurState < PLAYERSTATE::HURT_BEGIN)
+	{
+		// ... 코드 중략
+		if (IsLine() && !IsJumpThrough())
+		{
+			if (GetVel().y > 0.f || KEY_BUTTON_DOWN(KeyType::S))
+				SetJumpThrough(true);
+		}
+		// ... 코드 중략
+	}
+	// ... 코드 중략
 }
 ```
 
@@ -362,7 +391,11 @@ void CCharacter::Gravity_Half(const float _fDeltaTime)
 <Editor file="CPlayer.cpp" fn="Initialize()">
 
 ```cpp
-SetMess(350.f);
+void CPlayer::Initialize()
+{
+	SetMess(350.f);
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -370,7 +403,11 @@ SetMess(350.f);
 <Editor file="CMonster.cpp" fn="Initialize()">
 
 ```cpp
-SetMess(450.f);
+void CMonster::Initialize()
+{
+	SetMess(450.f);
+	// ... 코드 중략
+}
 ```
 
 </Editor>

@@ -81,7 +81,6 @@ HRESULT CBoss_Xibi::Ready_Components(void* pArg)
 	desc.fCloseRange = 1.f;
 	desc.fDetectionRange = 13.f;
 	desc.fSpeed = 1.f;
-	// ... 코드 중략
 
 	if (FAILED(Add_Component<CMonsterControlContext>(0 /*static*/, L"Prototype_Component_ControlContext_Monster", &desc)))
 		return E_FAIL;
@@ -764,6 +763,17 @@ _bool CMonsterControlContext::IsHitLight()
 <Editor file="MonsterControlContext.cpp" fn="Set_Groggy(...), Consume_GroggyRequest()">
 
 ```cpp
+void CMonsterControlContext::Consume_GroggyRequest()
+{
+	// 요청이 없었다면
+	if (Engine_Utils::Has_Flag(m_iSubState, SUB_STATE::GROGGY_REQ) == false)
+		return;
+
+	Engine_Utils::RemoveHard_Flag(m_iSubState, SUB_STATE::GROGGY_REQ);
+	Engine_Utils::Add_Flag(m_iSubState, SUB_STATE::GROGGY_ACTIVE);
+}
+// ... 코드 중략
+
 _bool CMonsterControlContext::Set_Groggy(EGroggyState eState, _bool bRequest, _float fGroggyDuration)
 {
 	const _bool bAleradyRequested = Engine_Utils::Has_Flag(m_iSubState, SUB_STATE::GROGGY_REQ);
@@ -794,17 +804,6 @@ _bool CMonsterControlContext::Set_Groggy(EGroggyState eState, _bool bRequest, _f
 	// 요청 성공
 	return true;
 }
-// ... 코드 중략
-
-void CMonsterControlContext::Consume_GroggyRequest()
-{
-	// 요청이 없었다면
-	if (Engine_Utils::Has_Flag(m_iSubState, SUB_STATE::GROGGY_REQ) == false)
-		return;
-
-	Engine_Utils::RemoveHard_Flag(m_iSubState, SUB_STATE::GROGGY_REQ);
-	Engine_Utils::Add_Flag(m_iSubState, SUB_STATE::GROGGY_ACTIVE);
-}
 ```
 
 </Editor>
@@ -821,7 +820,19 @@ _bool CBoss_Xibi::On_Hit(const HIT_DESC& hitDesc)
 		// ... 코드 중략
 		if (pControlContext->IsGroggy() == true)
 		{
-			// ... 코드 중략
+			if (hitDesc.attackDesc.iAttackerLayer == EPhysicsFilterGroup::ATTACK)
+			{
+				if (CMainPlayer* pMainPlayer = dynamic_cast<CMainPlayer*>(hitDesc.attackDesc.pAttacker))
+				{
+					// ... 코드 중략
+					if (pActionState->Get_CurrentStateIndex() == ENUM_TO_UINT(CPlayer::State::CONDEMN))
+					{
+						// ... 코드 중략
+						else
+						// ... 코드 중략
+					}
+				}
+			}
 		}
 		else
 		{

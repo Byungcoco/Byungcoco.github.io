@@ -81,17 +81,27 @@ void CPlayerState_Roll::Exit()
 <Editor file="CResourceManager.cpp" fn="Initialize()">
 
 ```cpp
-Gdiplus::ColorMatrix Red =
+void CResourceManager::Initialize()
 {
-    0.9f, 0, 0, 0, 0,
-    0, 0.05f, 0, 0, 0,
-    0, 0, 0.2f, 0, 0,
-    0, 0, 0, 0.7f, 0,
-    0, 0, 0, 0, 1.f
-};
-// ... 코드 중략
-
-AddCustomColorAnimationWithAfterImage(L"..\\Resource\\Boss\\spr_kissyface_slash", L"Boss_Slash", Red, true);
+    // ... 코드 중략
+    {
+        // ... 코드 중략
+        {
+            Gdiplus::ColorMatrix Red =
+            {
+                0.9f, 0, 0, 0, 0,
+                0, 0.05f, 0, 0, 0,
+                0, 0, 0.2f, 0, 0,
+                0, 0, 0, 0.7f, 0,
+                0, 0, 0, 0, 1.f
+            };
+            // ... 코드 중략
+            AddCustomColorAnimationWithAfterImage(L"..\\Resource\\Boss\\spr_kissyface_slash", L"Boss_Slash", Red, true);
+            // ... 코드 중략
+        }
+    }
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -107,6 +117,7 @@ void CBoss::Slash_Enter()
 	// ... 코드 중략
 }
 // ... 코드 중략
+
 void CBoss::Slash_Exit()
 {
 	m_bAttacked = false;
@@ -232,8 +243,7 @@ void CAfterImage::Draw(HDC hDC, unsigned _iIndex)
 		m_AfterImageDataPool[_iIndex].iSheet_y,
 		Size.x, Size.y,
 		bf
-	);
-
+	// ... 코드 중략
 	m_AfterImageDataPool[_iIndex].fAlpha -= (CTimeManager::Get_Instance()->GetDeltaTime() * 1.f);
 }
 ```
@@ -252,65 +262,68 @@ void CAfterImage::Draw(HDC hDC, unsigned _iIndex)
 <Editor file="CResourceManager.cpp" fn="Make_SpriteSheet(...)">
 
 ```cpp
-Gdiplus::ImageAttributes lightblue_Attr;
-Gdiplus::ImageAttributes magenta_Attr;
-if (_bAlpha)
+CAnimationBitmap *CResourceManager::Make_SpriteSheet(const vector<Bitmap*> &_Bitmaps, const wstring &_key_in, bool _bReverse, float _fStretch_X, float _fStretch_Y, bool _bAlpha, float _fElapsedTime)
 {
-
-    Gdiplus::ColorMatrix lightblue_cm =
-    {
-        0, 0, 0, 0, 0,
-        0, 1, 0, 0, 0,
-        0, 0, 1, 0, 0,
-        0, 0, 0, 1, 0,
-        0, 1, 1, 0, 1
-    };
-    lightblue_Attr.SetColorMatrix(&lightblue_cm, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
-
-    Gdiplus::ColorMatrix magenta_cm =
-    {
-         1, 0, 0, 0, 0,
-         0, 0.2, 0, 0, 0,
-         0, 0, 1, 0, 0,
-         0, 0, 0, 1, 0,
-         0.5, 0.5, 1, 0, 1
-    };
-    magenta_Attr.SetColorMatrix(&magenta_cm, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
-}
-// ... 코드 중략
-
-for (int i = 0; i < iFrameCount; ++i)
-{
-    int destX = i * iFrameWidth;
-    graphics.DrawImage(_Bitmaps[i], destX, 0, iFrameWidth, iFrameHeight);
+    // ... 코드 중략
+    Gdiplus::ImageAttributes lightblue_Attr;
+    Gdiplus::ImageAttributes magenta_Attr;
     if (_bAlpha)
     {
-        graphics2.DrawImage(
-            _Bitmaps[i],
-            Gdiplus::Rect(Gdiplus::Point{destX, 0}, Gdiplus::Size{ iFrameWidth , iFrameHeight }),
-            0.0f, 0.0f,
-            (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),
-            (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),
-            Gdiplus::UnitPixel,
-            &lightblue_Attr);
 
-        graphics3.DrawImage(
-            _Bitmaps[i],
-            Gdiplus::Rect(Gdiplus::Point{ destX, 0 }, Gdiplus::Size{ iFrameWidth , iFrameHeight }),
-            0.0f, 0.0f,
-            (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),
-            (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),
-            Gdiplus::UnitPixel,
-            &magenta_Attr);
+        Gdiplus::ColorMatrix lightblue_cm =
+        {
+            0, 0, 0, 0, 0,
+            0, 1, 0, 0, 0,
+            0, 0, 1, 0, 0,
+            0, 0, 0, 1, 0,
+            0, 1, 1, 0, 1
+        };
+        lightblue_Attr.SetColorMatrix(&lightblue_cm, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
+
+        Gdiplus::ColorMatrix magenta_cm =
+        {
+             1, 0, 0, 0, 0,
+             0, 0.2, 0, 0, 0,
+             0, 0, 1, 0, 0,
+             0, 0, 0, 1, 0,
+             0.5, 0.5, 1, 0, 1
+        };
+        magenta_Attr.SetColorMatrix(&magenta_cm, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
     }
-// ... 코드 중략
-}
-// ... 코드 중략
+    // ... 코드 중략
+    for (int i = 0; i < iFrameCount; ++i)
+    {
+        int destX = i * iFrameWidth;
+        graphics.DrawImage(_Bitmaps[i], destX, 0, iFrameWidth, iFrameHeight);
+        if (_bAlpha)
+        {
+            graphics2.DrawImage(
+                _Bitmaps[i],
+                Gdiplus::Rect(Gdiplus::Point{destX, 0}, Gdiplus::Size{ iFrameWidth , iFrameHeight }),
+                0.0f, 0.0f,
+                (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),
+                (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),
+                Gdiplus::UnitPixel,
+                &lightblue_Attr);
 
-if (_bAlpha && pSheet && pSheet2)
-{
-    pNewAnim->CreateDIB(pSheet, TintColor::BLUE);
-    pNewAnim->CreateDIB(pSheet2, TintColor::MAGENTA);
+            graphics3.DrawImage(
+                _Bitmaps[i],
+                Gdiplus::Rect(Gdiplus::Point{ destX, 0 }, Gdiplus::Size{ iFrameWidth , iFrameHeight }),
+                0.0f, 0.0f,
+                (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),
+                (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),
+                Gdiplus::UnitPixel,
+                &magenta_Attr);
+        }
+        // ... 코드 중략
+    }
+    // ... 코드 중략
+    if (_bAlpha && pSheet && pSheet2)
+    {
+        pNewAnim->CreateDIB(pSheet, TintColor::BLUE);
+        pNewAnim->CreateDIB(pSheet2, TintColor::MAGENTA);
+    }
+    // ... 코드 중략
 }
 ```
 
@@ -381,14 +394,19 @@ void CMyBitmap::CreateDIB(Gdiplus::Bitmap *pSrcSheet, TintColor _e)
 <Editor file="CAnimatorComponent.cpp" fn="NormalRender(...)">
 
 ```cpp
-if (m_bAfterImage)
+void CAnimatorComponent::NormalRender(HDC hDC)
 {
-	m_fAfterImageTime += CTimeManager::Get_Instance()->GetDeltaTime();
-	if (m_fAfterImageTime > DFEULAT_AFTERIMAGE_TIME)
+	// ... 코드 중략
+	if (m_bAfterImage)
 	{
-		m_AfterImage.Write(Obj_LeftTop, { (float)srcX ,(float)srcY }, m_pCurAnimation);
-		m_fAfterImageTime = 0.f;
+		m_fAfterImageTime += CTimeManager::Get_Instance()->GetDeltaTime();
+		if (m_fAfterImageTime > DFEULAT_AFTERIMAGE_TIME)
+		{
+			m_AfterImage.Write(Obj_LeftTop, { (float)srcX ,(float)srcY }, m_pCurAnimation);
+			m_fAfterImageTime = 0.f;
+		}
 	}
+	// ... 코드 중략
 }
 ```
 
@@ -412,6 +430,7 @@ void CAnimatorComponent::Update(const float _fDeltaTime)
 	// ... 코드 중략
 }
 // ... 코드 중략
+
 void CAnimatorComponent::Render(HDC hDC)
 {
 	if (!m_pCurAnimation)

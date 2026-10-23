@@ -73,7 +73,6 @@ void CUI_FrameCustomMainUI::Set_ButtonEvent_Temp()
         }
     }
     // ... 코드 중략
-    // AcceptButton
     {
         CUI_Button* pButton = static_cast<CUI_Button*>(m_vecElements[ACCEPT_BUTTON]);
         pButton->Bind_Event(
@@ -97,26 +96,31 @@ void CUI_FrameCustomMainUI::Set_ButtonEvent_Temp()
 <Editor file="Loader.cpp" fn="CLoader::Loading_For_Gamestage()">
 
 ```cpp
-//For. Prototype_Component_Model_CustomPlayer
+HRESULT CLoader::Loading_For_Gamestage()
 {
-	CModel::MODEL_ORIGIN_DESC desc = {};
-	desc.eType = EModelType::ANIM;
-	desc.pMatPreTransform = &matPreTransformScaling;
-	desc.pPrototypeTags = &m_pGameInstance->Get_ModelPartsData();
-	m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Model_CustomPlayer", CModel::Create(m_pDevice, m_pDeviceContext, &desc));
-}
-//For. Prototype_Component_Model_Enemy1
-{
-	MODELPARTS_PROTOTYPETAGS modelDesc = {}; 
-	modelDesc.wstrFace = L"Prototype_Component_Model_CustomFace_Mask2";
-	modelDesc.wstrHead = L"Prototype_Component_Model_CustomHead_Cap";
-	modelDesc.wstrOneset = L"Prototype_Component_Model_CustomOneset_Beach2";
+	// ... 코드 중략
+	//For. Prototype_Component_Model_CustomPlayer
+	{
+		CModel::MODEL_ORIGIN_DESC desc = {};
+		desc.eType = EModelType::ANIM;
+		desc.pMatPreTransform = &matPreTransformScaling;
+		desc.pPrototypeTags = &m_pGameInstance->Get_ModelPartsData();
+		m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Model_CustomPlayer", CModel::Create(m_pDevice, m_pDeviceContext, &desc));
+	}
+	//For. Prototype_Component_Model_Enemy1
+	{
+		MODELPARTS_PROTOTYPETAGS modelDesc = {};
+		modelDesc.wstrFace = L"Prototype_Component_Model_CustomFace_Mask2";
+		modelDesc.wstrHead = L"Prototype_Component_Model_CustomHead_Cap";
+		modelDesc.wstrOneset = L"Prototype_Component_Model_CustomOneset_Beach2";
 
-	CModel::tagModelOriginDesc desc = {};
-	desc.eType = EModelType::ANIM;
-	desc.pMatPreTransform = &matPreTransformScaling;
-	desc.pPrototypeTags = &modelDesc;
-	m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Model_Enemy1", CModel::Create(m_pDevice, m_pDeviceContext, &desc));
+		CModel::tagModelOriginDesc desc = {};
+		desc.eType = EModelType::ANIM;
+		desc.pMatPreTransform = &matPreTransformScaling;
+		desc.pPrototypeTags = &modelDesc;
+		m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Model_Enemy1", CModel::Create(m_pDevice, m_pDeviceContext, &desc));
+	}
+	// ... 코드 중략
 }
 ```
 
@@ -134,17 +138,23 @@ void CUI_FrameCustomMainUI::Set_ButtonEvent_Temp()
 <Editor file="CustomSystem.h" fn="CCustomSystem">
 
 ```cpp
-_bool m_bSelectedOneset = { false };
-class CUI_FrameCustomMainUI* m_pMainFrame = { nullptr };
-EModelParts m_eSelectedPart = { EModelParts::END };
-_uint m_iSelectedIndex[ENUM_TO_UINT(EModelParts::END)]{ 0 };
-CGameInstance* m_pGameInstance = { nullptr };
-class CCustomObject* m_pTarget = { nullptr };
-ID3D11Device* m_pDevice = { nullptr };
-ID3D11DeviceContext* m_pDeviceContext = { nullptr };
-std::array<vector<CModel*>, ENUM_TO_SZET(EModelParts::END)> m_Parts;
-std::array<vector<wstring>, ENUM_TO_SZET(EModelParts::END)> m_PartTags;
-DelegateHandle m_ChangePartHandle;
+class CCustomSystem final : public CBase
+{
+	// ... 코드 중략
+private:
+	_bool m_bSelectedOneset = { false };
+	class CUI_FrameCustomMainUI* m_pMainFrame = { nullptr };
+	EModelParts m_eSelectedPart = { EModelParts::END };
+	_uint m_iSelectedIndex[ENUM_TO_UINT(EModelParts::END)]{ 0 };
+	CGameInstance* m_pGameInstance = { nullptr };
+	class CCustomObject* m_pTarget = { nullptr };
+	ID3D11Device* m_pDevice = { nullptr };
+	ID3D11DeviceContext* m_pDeviceContext = { nullptr };
+	std::array<vector<CModel*>, ENUM_TO_SZET(EModelParts::END)> m_Parts;
+	std::array<vector<wstring>, ENUM_TO_SZET(EModelParts::END)> m_PartTags;
+	DelegateHandle m_ChangePartHandle;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -152,6 +162,23 @@ DelegateHandle m_ChangePartHandle;
 <Editor file="CustomSystem.cpp" fn="CCustomSystem::Add_Part(...), CCustomSystem::Ready_Uppper()">
 
 ```cpp
+HRESULT CCustomSystem::Ready_Uppper()
+{
+    CModel* pInitPart = { nullptr };
+    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_SandVest", &pInitPart)))
+        return E_FAIL;
+
+    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_TShirt")))
+        return E_FAIL;
+
+    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_Anbu")))
+        return E_FAIL;
+
+    m_pTarget->Change_Model(EModelParts::UPPER, pInitPart);
+    return S_OK;
+}
+// ... 코드 중략
+
 HRESULT CCustomSystem::Add_Part(EModelParts ePart, const wstring& wstrPrototypeTag, CModel **ppResult)
 {
     CModel* pReturn = { nullptr };
@@ -163,23 +190,6 @@ HRESULT CCustomSystem::Add_Part(EModelParts ePart, const wstring& wstrPrototypeT
     }
     if(ppResult)
         *ppResult = pReturn;
-    return S_OK;
-}
-// ... 코드 중략
-
-HRESULT CCustomSystem::Ready_Uppper()
-{
-    CModel* pInitPart = { nullptr };
-    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_SandVest", &pInitPart)))
-        return E_FAIL; 
-
-    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_TShirt")))
-        return E_FAIL;
-
-    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_Anbu")))
-        return E_FAIL;
-
-    m_pTarget->Change_Model(EModelParts::UPPER, pInitPart);
     return S_OK;
 }
 ```
@@ -380,18 +390,11 @@ HRESULT CModel::Initialize_Prototype(void* pArg)
 {
 	// ... 코드 중략
 	if (!pDesc->pPrototypeTags)
-	{
-		// ... 코드 중략
-	}
+	// ... 코드 중략
 	else
 	{
 		if (FAILED(Combine_Model(pDesc->pPrototypeTags)))
 			return E_FAIL;
-	}
-
-	if (m_vecAnimations.size() > 0)
-	{
-		// ... 코드 중략
 	}
 	// ... 코드 중략
 }
@@ -521,27 +524,32 @@ HRESULT CMesh::Bind_Bones(CShader* pShader, const vector<CBone*>& vecBones, _uin
 <Editor file="Body.cpp" fn="CBody::Render()">
 
 ```cpp
-pShader->Bind_TransformData(m_matCombinedWorld);
+HRESULT CBody::Render()
+{
+	// ... 코드 중략
+	pShader->Bind_TransformData(m_matCombinedWorld);
 
-if (m_bCustomed)
-{
-	pModel->Bind_Masterbones(pShader, 2);
-	for (_uint i = 0; i < iMeshCount; ++i)
+	if (m_bCustomed)
 	{
-		pModel->Bind_Material(pShader, i);
-		pShader->Apply();
-		pModel->Render(i);
+		pModel->Bind_Masterbones(pShader, 2);
+		for (_uint i = 0; i < iMeshCount; ++i)
+		{
+			pModel->Bind_Material(pShader, i);
+			pShader->Apply();
+			pModel->Render(i);
+		}
 	}
-}
-else
-{
-	for (_uint i = 0; i < iMeshCount; ++i)
+	else
 	{
-		pModel->Bind_Material(pShader, i);
-		pModel->Bind_Bones(pShader, i);
-		pShader->Apply();
-		pModel->Render(i);
+		for (_uint i = 0; i < iMeshCount; ++i)
+		{
+			pModel->Bind_Material(pShader, i);
+			pModel->Bind_Bones(pShader, i);
+			pShader->Apply();
+			pModel->Render(i);
+		}
 	}
+	// ... 코드 중략
 }
 ```
 

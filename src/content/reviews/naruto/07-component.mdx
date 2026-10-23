@@ -85,13 +85,10 @@ HRESULT CMainPlayer::Initialize(void* pArg)
     return S_OK;
 }
 // ... 코드 중략
-{
-// ... 코드 중략
+
 HRESULT CMainPlayer::Ready_Ability()
 {
     // ... 코드 중략
-    }
-
     {
         CStatComponent::STATCOMP_DESC desc = {};
         desc.iHealth = 100;
@@ -308,7 +305,6 @@ public:
 	virtual HRESULT Awake(_uint iLevelIndex) { return S_OK; }
 	virtual HRESULT Initialize(void* pArg) PURE;
 	virtual void Update(const _float fTimeDelta) PURE;
-protected:
 
 public:
 	virtual CComponent* Clone(void* pArg) PURE;

@@ -278,6 +278,7 @@ void CShader::Bind_SkillEffectData(const SHADER_SKILLEFFECT_DESC& desc)
 	m_pSkillEffect_CBuffer->Copy_Data(desc);
 }
 // ... 코드 중략
+
 void CShader::Create_ConstantBuffer()
 {
 	// ... 코드 중략
@@ -302,14 +303,21 @@ C++ 구조체는 셰이더 쪽 구조체와 필드 순서·크기를 맞추고, 
 <Editor file="SkillMeshPart.h" fn="CSkillMeshPart::Flags">
 
 ```cpp
-enum Flags
+class CSkillMeshPart : public CSkillPart
 {
-	None = 0,
-	UVScroll = 1 << 0,
-	Dissolve = 1 << 1,
-	Distortion = 1 << 2,
-	Gradation = 1 << 3,
-	GradationMap = 1 << 4,
+	// ... 코드 중략
+protected:
+	// ... 코드 중략
+	enum Flags
+	{
+		None = 0,
+		UVScroll = 1 << 0,
+		Dissolve = 1 << 1,
+		Distortion = 1 << 2,
+		Gradation = 1 << 3,
+		GradationMap = 1 << 4,
+	};
+	// ... 코드 중략
 };
 ```
 
@@ -348,6 +356,17 @@ void CSkillMeshPart::Setup_RuntimeFlags()
 <Editor file="SkillMeshPart.cpp" fn="CSkillMeshPart::Setup_PatternUV(...), CSkillMeshPart::UVScrolling(...)">
 
 ```cpp
+void CSkillMeshPart::UVScrolling(const _float fTimeDelta)
+{
+	if ((m_iBaseFlags & Flags::UVScroll) == false)
+		return;
+
+	m_skillEffectDesc.vUVOffset.x += m_vUVScrollSpeed.x * fTimeDelta;
+	m_skillEffectDesc.vUVOffset.y += m_vUVScrollSpeed.y * fTimeDelta;
+	// ... 코드 중략
+}
+// ... 코드 중략
+
 void CSkillMeshPart::Setup_PatternUV(const EFFECT_PRESET_SNAPSHOT& snapShot)
 {
 	_int iTotalCount = snapShot.iPatternCols * snapShot.iPatternRows;
@@ -367,17 +386,6 @@ void CSkillMeshPart::Setup_PatternUV(const EFFECT_PRESET_SNAPSHOT& snapShot)
 
 	m_materialInstanceDesc.vTintColor = snapShot.vTintColor;
 	m_materialInstanceDesc.fEmissivePower = snapShot.fEmissivePower;
-}
-// ... 코드 중략
-
-void CSkillMeshPart::UVScrolling(const _float fTimeDelta)
-{
-	if ((m_iBaseFlags & Flags::UVScroll) == false)
-		return;
-
-	m_skillEffectDesc.vUVOffset.x += m_vUVScrollSpeed.x * fTimeDelta;
-	m_skillEffectDesc.vUVOffset.y += m_vUVScrollSpeed.y * fTimeDelta;
-// ... 코드 중략
 }
 ```
 
@@ -521,13 +529,17 @@ void CSkillPreviewMesh::Ready_Before_Render(_float fTimeDelta)
 <Editor file="ImGui_Dockspace_MenuBar.cpp" fn="프리셋 저장">
 
 ```cpp
-// Preset
-if (pLevelEffect->Is_FileDirty())
+void CImGui_Dockspace_MenuBar::Save_EffectData(const wstring& wstrFilePath)
 {
-	MAPFILE_DATA saveData = {};
-	pLevelEffect->Save_PresetData(saveData);
-	CGameInstance::GetInstance()->Save_MapData(g_wszMeshEffectPresetPath, saveData);
-	pLevelEffect->Clear_PresetDirty();
+	// ... 코드 중략
+	// Preset
+	if (pLevelEffect->Is_FileDirty())
+	{
+		MAPFILE_DATA saveData = {};
+		pLevelEffect->Save_PresetData(saveData);
+		CGameInstance::GetInstance()->Save_MapData(g_wszMeshEffectPresetPath, saveData);
+		pLevelEffect->Clear_PresetDirty();
+	}
 }
 ```
 

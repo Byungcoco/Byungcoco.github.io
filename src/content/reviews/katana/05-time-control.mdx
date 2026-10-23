@@ -136,9 +136,7 @@ class CMemento
 public:
 	CMemento(Vector2 _Pos = Vector2{}, Vector2 _Dir = Vector2{}, wstring _Animkey = L"", unsigned _FrameIndex = -1, unsigned _iVisible = -1)
 		: VisibleIndex(_iVisible), Position(_Pos), Direction(_Dir), FrameIndex(_FrameIndex), AnimKey(_Animkey)
-	{
-
-	}
+	// ... 코드 중략
 	~CMemento() {};
 private:
 	unsigned VisibleIndex;
@@ -207,17 +205,6 @@ public:
 <Editor file="CMementoManager.cpp" fn="Store(), Restore(), Replay()">
 
 ```cpp
-void CMementoManager::Store()
-{
-	// ... 코드 중략
-	if(pPlayer)
-		m_Snapshots[ObjectType::PLAYER].push_back(pPlayer->CreateMemento());
-
-	if(pBoss)
-		m_Snapshots[ObjectType::BOSS].push_back(pBoss->CreateMemento());
-}
-// ... 코드 중략
-
 void CMementoManager::Restore()
 {
 	// ... 코드 중략
@@ -230,7 +217,6 @@ void CMementoManager::Restore()
 		m_Snapshots[ObjectType::BOSS].pop_back();
 	}
 }
-// ... 코드 중략
 
 void CMementoManager::Replay()
 {
@@ -243,6 +229,16 @@ void CMementoManager::Replay()
 		pBoss->Restore(m_Snapshots[ObjectType::BOSS].front());
 		m_Snapshots[ObjectType::BOSS].pop_front();
 	}
+}
+
+void CMementoManager::Store()
+{
+	// ... 코드 중략
+	if(pPlayer)
+		m_Snapshots[ObjectType::PLAYER].push_back(pPlayer->CreateMemento());
+
+	if(pBoss)
+		m_Snapshots[ObjectType::BOSS].push_back(pBoss->CreateMemento());
 }
 ```
 

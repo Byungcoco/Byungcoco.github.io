@@ -124,6 +124,21 @@ void CBullet::OnCollisionEnter(CColliderComponent *_pOther)
 <Editor file="CCollisionManager.cpp" fn="CheckGroup(...), Update()">
 
 ```cpp
+void CCollisionManager::Update()
+{
+	for(int iRow = 0; iRow < g_All_ObjectTypeCount; ++iRow)
+	{
+		for (int iCol = iRow; iCol < g_All_ObjectTypeCount; ++iCol)
+		{
+			if (m_CheckBit[iRow] & (1 << iCol))
+			{
+				UpdateGroup((ObjectType)iRow, (ObjectType)iCol);
+			}
+		}
+	}
+}
+// ... 코드 중략
+
 void CCollisionManager::CheckGroup(ObjectType _eLeft, ObjectType _eRight)
 {
 	uint16_t iRow = (uint16_t)_eLeft;
@@ -142,21 +157,6 @@ void CCollisionManager::CheckGroup(ObjectType _eLeft, ObjectType _eRight)
 	else
 	{
 		m_CheckBit[iRow] |= (1 << iCol);
-	}
-}
-// ... 코드 중략
-
-void CCollisionManager::Update()
-{
-	for(int iRow = 0; iRow < g_All_ObjectTypeCount; ++iRow)
-	{
-		for (int iCol = iRow; iCol < g_All_ObjectTypeCount; ++iCol)
-		{
-			if (m_CheckBit[iRow] & (1 << iCol))
-			{
-				UpdateGroup((ObjectType)iRow, (ObjectType)iCol);
-			}
-		}
 	}
 }
 ```

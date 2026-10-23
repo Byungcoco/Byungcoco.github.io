@@ -266,49 +266,57 @@ D3DXVECTOR3 CEffect_Pixel::randomDir_HalfSphere() const
 <Editor file="CEffect_Pixel.cpp" fn="CEffect_Pixel::Particle_Update(...)">
 
 ```cpp
-const float fNoiseFrequency = m_tOption.fNoiseFreq * 6.28f;
-
-// 가속 구성
-_vec3 fAccelVelocity{ 0,0,0 };
-switch (m_tOption.eMode)
+void CEffect_Pixel::Particle_Update(_float fDeltaTime)
 {
-case EffectMode::LINEAR:
-{
-    fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
-} break;
-case EffectMode::GRAVITY_ARC:
-{
-    fAccelVelocity += _vec3{ 0, -9.8f, 0 };
-    fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
-} break;
-case EffectMode::CURVE_NOISE:
-{
-    _vec3 vSrc = tElement.vVelocity; 
-    _float fLength = ::D3DXVec3Length(&vSrc);
-    if (fLength > 1e-4f /*Epsilon*/)
+    // ... 코드 중략
+    for (ParticleInfo &tElement : m_vecParticles)
     {
-        vSrc /= fLength;
-        _vec3 vWorldUp{ 0, 1.f, 0 };
-        _vec3 vCrossResult;
-        ::D3DXVec3Cross(&vCrossResult, &vSrc, &vWorldUp);
         // ... 코드 중략
-        ::D3DXVec3Normalize(&vCrossResult, &vCrossResult);
-        float fSin = sinf(tElement.fPhase + fNoiseFrequency * tElement.fDurationTime);
-        fAccelVelocity += vCrossResult * (m_tOption.fNoiseStrength * fSin);
+        const float fNoiseFrequency = m_tOption.fNoiseFreq * 6.28f;
+
+        // 가속 구성
+        _vec3 fAccelVelocity{ 0,0,0 };
+        switch (m_tOption.eMode)
+        {
+        case EffectMode::LINEAR:
+        {
+            fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
+        } break;
+        case EffectMode::GRAVITY_ARC:
+        {
+            fAccelVelocity += _vec3{ 0, -9.8f, 0 };
+            fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
+        } break;
+        case EffectMode::CURVE_NOISE:
+        {
+            _vec3 vSrc = tElement.vVelocity;
+            _float fLength = ::D3DXVec3Length(&vSrc);
+            if (fLength > 1e-4f /*Epsilon*/)
+            {
+                vSrc /= fLength;
+                _vec3 vWorldUp{ 0, 1.f, 0 };
+                _vec3 vCrossResult;
+                ::D3DXVec3Cross(&vCrossResult, &vSrc, &vWorldUp);
+                // ... 코드 중략
+                ::D3DXVec3Normalize(&vCrossResult, &vCrossResult);
+                float fSin = sinf(tElement.fPhase + fNoiseFrequency * tElement.fDurationTime);
+                fAccelVelocity += vCrossResult * (m_tOption.fNoiseStrength * fSin);
+            }
+            fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
+        } break;
+        // ... 코드 중략
+        }
+
+        tElement.vVelocity += fAccelVelocity * fDeltaTime;
+        tElement.vPosition += tElement.vVelocity * fDeltaTime;
+
+        tElement.fDurationTime += fDeltaTime;
+        if (tElement.fDurationTime >= tElement.fLifeTime)
+        {
+            tElement.bAlive = false;
+            --m_iAliveCount;
+        }
     }
-    fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
-} break;
-// ... 코드 중략
-}
-
-tElement.vVelocity += fAccelVelocity * fDeltaTime;
-tElement.vPosition += tElement.vVelocity * fDeltaTime;
-
-tElement.fDurationTime += fDeltaTime;
-if (tElement.fDurationTime >= tElement.fLifeTime)
-{
-    tElement.bAlive = false;
-    --m_iAliveCount;
 }
 ```
 
@@ -338,6 +346,7 @@ void CEffect_Pixel::Render_GameObject()
     // ... 코드 중략
 }
 // ... 코드 중략
+
 HRESULT CEffect_Pixel::Ready_VB()
 {
 	if (!m_pVB || m_iAliveCount <= 0)
@@ -478,6 +487,7 @@ void CBoss::Update_Dash(_float fDeltaTime)
 	}
 }
 // ... 코드 중략
+
 void CBoss::Record_AfterImage()
 {
 	AfterImage tData;

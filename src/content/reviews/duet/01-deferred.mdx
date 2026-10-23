@@ -191,9 +191,16 @@ HRESULT CRender_Manager::Render()
 		return E_FAIL;
 
 	m_pGameInstance->Setup_ViewProj_ToCBuffer();
-	// ... 코드 중략
-	m_pGameInstance->Setup_UIViewProj_ToCBuffer();
 
+	{
+		{
+			// ... 코드 중략
+			m_pGameInstance->Setup_UIViewProj_ToCBuffer();
+			// ... 코드 중략
+		}
+		// ... 코드 중략
+	}
+	// ... 코드 중략
 	if (FAILED(Render_Bloom()))
 		return E_FAIL;
 
@@ -622,13 +629,12 @@ HRESULT CRender_Manager::Compute_ShadowCascade()
 			vCenter += corners[c];
 		}
 		vCenter /= 8.f;
-		// ... 코드 중략
+
 		Matrix matLightView = ::XMMatrixLookAtLH(
 			vCenter - vLightDir * 50.f,  // 뒤로 50m 물러남
 			vCenter,
 			Vec3::Up
-		);
-
+		// ... 코드 중략
 		//=================================
 		// Light Space AABB에서 Ortho Proj로
 		//=================================
@@ -647,8 +653,7 @@ HRESULT CRender_Manager::Compute_ShadowCascade()
 
 		Matrix matLightProj = XMMatrixOrthographicOffCenterLH(
 			vMin.x, vMax.x, vMin.y, vMax.y, vMin.z, vMax.z
-		);
-
+		// ... 코드 중략
 		m_tCascadeShadowDesc.matLightVP[i] = matLightView * matLightProj;
 	}
 	// ... 코드 중략

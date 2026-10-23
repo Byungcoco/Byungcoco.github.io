@@ -60,9 +60,14 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CStage_Boss.cpp" fn="CStage_Boss::Ready_Boss_Layer(...)">
 
 ```cpp
-CBoss* pBoss = static_cast<CBoss *>(pGo);
-pBoss->Set_Player(pPlayer);
-pBoss->Set_RectPath(_vec3{ 17.f, 0.f, 17.f }, 40.f, 40.f, 20.f, TRUE);
+HRESULT CStage_Boss::Ready_Boss_Layer(const _tchar *pLayerTag)
+{
+    // ... 코드 중략
+    CBoss* pBoss = static_cast<CBoss *>(pGo);
+    pBoss->Set_Player(pPlayer);
+    pBoss->Set_RectPath(_vec3{ 17.f, 0.f, 17.f }, 40.f, 40.f, 20.f, TRUE);
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -70,15 +75,20 @@ pBoss->Set_RectPath(_vec3{ 17.f, 0.f, 17.f }, 40.f, 40.f, 20.f, TRUE);
 <Editor file="CStage_Car.cpp" fn="CStage_Car::Ready_Boss_Layer(...)">
 
 ```cpp
-RigidBodyConfig tConfig;
-tConfig.fHealth = 33.f;
-tConfig.fMoveSpeed = fNormalSpeed;
-tConfig.fDash_Speed = fNormalSpeed * 1.5f;
-CGameObject *pGo = CObjectManager::GetInstance()->Clone_GameObject(L"Prototype_GameObject_Boss", SCENE_CAR, L"Boss_Layer", &tConfig);
-if (!pGo) return E_FAIL;
-CBoss *pBoss = static_cast<CBoss *>(pGo);
-pBoss->Set_Player(pGo2);
-pBoss->Set_LinearLR(_vec3{ 4.f, 0.f, 35.f }, _vec3{ 20.f, 0.f, 35.f }, 8.f);
+HRESULT CStage_Car::Ready_Boss_Layer(const _tchar *pLayerTag)
+{
+    // ... 코드 중략
+    RigidBodyConfig tConfig;
+    tConfig.fHealth = 33.f;
+    tConfig.fMoveSpeed = fNormalSpeed;
+    tConfig.fDash_Speed = fNormalSpeed * 1.5f;
+    CGameObject *pGo = CObjectManager::GetInstance()->Clone_GameObject(L"Prototype_GameObject_Boss", SCENE_CAR, L"Boss_Layer", &tConfig);
+    if (!pGo) return E_FAIL;
+    CBoss *pBoss = static_cast<CBoss *>(pGo);
+    pBoss->Set_Player(pGo2);
+    pBoss->Set_LinearLR(_vec3{ 4.f, 0.f, 35.f }, _vec3{ 20.f, 0.f, 35.f }, 8.f);
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -205,8 +215,15 @@ void CBoss::Update_Idle(_float fDeltaTime)
 <Editor file="CBoss.h" fn="CBoss">
 
 ```cpp
-void Set_Cooldown(_int iIndex, _float fTime) { m_fCooldown[iIndex] = (std::max)(m_fCooldown[iIndex], fTime); }
-_bool Is_Cooldown_Ready(_int iIndex) const { return m_fCooldown[iIndex] <= 0.f; }
+class CBoss : public CCharacter
+{
+	// ... 코드 중략
+private:
+	// ... 코드 중략
+	void Set_Cooldown(_int iIndex, _float fTime) { m_fCooldown[iIndex] = (std::max)(m_fCooldown[iIndex], fTime); }
+	_bool Is_Cooldown_Ready(_int iIndex) const { return m_fCooldown[iIndex] <= 0.f; }
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -225,29 +242,34 @@ _bool Is_Cooldown_Ready(_int iIndex) const { return m_fCooldown[iIndex] <= 0.f; 
 <Editor file="CBoss.h" fn="RigidBodyConfig">
 
 ```cpp
-_float fDash_WindUp = 0.20f;
-_float fDash_Speed = 22.f;
-_float fDash_Duration = 0.30f;
-_float fDash_Recover = 0.22f;
-_float fDash_Cooldown = 2.0f;
+struct RigidBodyConfig
+{
+	// ... 코드 중략
+	_float fDash_WindUp = 0.20f;
+	_float fDash_Speed = 22.f;
+	_float fDash_Duration = 0.30f;
+	_float fDash_Recover = 0.22f;
+	_float fDash_Cooldown = 2.0f;
 
-// Missile
-_float fMis_WindUp = 0.22f;
-_float fMis_Interval = 0.22f;
-_int   iMis_Volley = 3;
-_int   iMis_PerVolley = 4;
-_float fMis_Recover = 0.28f;
-_float fMis_VolleyGap = 0.3f;
-_float fMis_Cooldown = 5.2f;
+	// Missile
+	_float fMis_WindUp = 0.22f;
+	_float fMis_Interval = 0.22f;
+	_int   iMis_Volley = 3;
+	_int   iMis_PerVolley = 4;
+	_float fMis_Recover = 0.28f;
+	_float fMis_VolleyGap = 0.3f;
+	_float fMis_Cooldown = 5.2f;
 
-// Bullet
-_float fBul_WindUp = 0.14f;
-_int   iBul_Burst = 32;
-_float fBul_SpreadDeg = 1.5f;
-_float fBul_Speed = 18.f;
-_float fBul_Recover = 0.22f;
-_float fBul_Interval = 0.1f;
-_float fBul_Cooldown = 1.3f;
+	// Bullet
+	_float fBul_WindUp = 0.14f;
+	_int   iBul_Burst = 32;
+	_float fBul_SpreadDeg = 1.5f;
+	_float fBul_Speed = 18.f;
+	_float fBul_Recover = 0.22f;
+	_float fBul_Interval = 0.1f;
+	_float fBul_Cooldown = 1.3f;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -305,31 +327,36 @@ void CBoss::Update_Dash(_float fDeltaTime)
 <Editor file="CBoss.cpp" fn="CBoss::Update_Bullet(...)">
 
 ```cpp
-else if (m_iPhase == 1)
+void CBoss::Update_Bullet(_float fDeltaTime)
 {
-	Follow_PathSpeed(0.75f, fDeltaTime);
-	if (m_iShots < m_tRigidbodyConfig.iBul_Burst &&
-		m_fStateDuration >= m_tRigidbodyConfig.fBul_Interval)
+	// ... 코드 중략
+	else if (m_iPhase == 1)
 	{
-		m_fStateDuration = 0.f;
+		Follow_PathSpeed(0.75f, fDeltaTime);
+		if (m_iShots < m_tRigidbodyConfig.iBul_Burst &&
+			m_fStateDuration >= m_tRigidbodyConfig.fBul_Interval)
+		{
+			m_fStateDuration = 0.f;
 
-		_vec3 vTo = m_pPlayer->GetTransform()->Get_Info(INFO::INFO_POS) - m_pTransformCom->Get_Info(INFO::INFO_POS);
-		::D3DXVec3Normalize(&vTo, &vTo);
+			_vec3 vTo = m_pPlayer->GetTransform()->Get_Info(INFO::INFO_POS) - m_pTransformCom->Get_Info(INFO::INFO_POS);
+			::D3DXVec3Normalize(&vTo, &vTo);
 
-		_float fBaseYaw = std::atan2(vTo.z, vTo.x);
-		_float fOffDegree = (m_iShots - (m_tRigidbodyConfig.iBul_Burst - 1) * 0.5f) * m_tRigidbodyConfig.fBul_SpreadDeg;
-		_float fYaw = fBaseYaw + fOffDegree * (D3DX_PI / 180.f);
-		_vec3 vDir(std::cos(fYaw), vTo.y, std::sin(fYaw));
+			_float fBaseYaw = std::atan2(vTo.z, vTo.x);
+			_float fOffDegree = (m_iShots - (m_tRigidbodyConfig.iBul_Burst - 1) * 0.5f) * m_tRigidbodyConfig.fBul_SpreadDeg;
+			_float fYaw = fBaseYaw + fOffDegree * (D3DX_PI / 180.f);
+			_vec3 vDir(std::cos(fYaw), vTo.y, std::sin(fYaw));
 
-		Spawn_Bullet(vDir);
+			Spawn_Bullet(vDir);
 
-		++m_iShots;
+			++m_iShots;
+		}
+		if (m_iShots >= m_tRigidbodyConfig.iBul_Burst)
+		{
+			m_iPhase = 2;
+			m_fStateDuration = 0.f;
+		}
 	}
-	if (m_iShots >= m_tRigidbodyConfig.iBul_Burst)
-	{
-		m_iPhase = 2;
-		m_fStateDuration = 0.f;
-	}
+	// ... 코드 중략
 }
 ```
 

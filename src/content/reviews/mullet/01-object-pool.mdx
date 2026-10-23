@@ -63,6 +63,7 @@ void CMini_Gun::LateUpdate_GameObject(const _float& fTimeDelta)
 	// ... 코드 중략
 	switch (m_tInfo.ePlayerState)
 	{
+
 	case ATTACK:
 	case ATTACK_ZOOM:
 		// ... 코드 중략
@@ -76,23 +77,20 @@ void CMini_Gun::LateUpdate_GameObject(const _float& fTimeDelta)
 					// ... 코드 중략
 					BulletData tData;
 					// ... 코드 중략
-
 					tData.vMuzzlePosition = vCameraPos + vCameraLook * 1.5;
 					tData.vLookDir = vCameraLook;
 					// ... 코드 중략
-
 					tData.fSpeed = pPlayer->Get_NormalSpeed() * 2.f;
-					// ... 코드 중략
 
 					tData.eOwner = BulletData::OWNER::PLAYER;
-					// ... 코드 중략
 
 					CObjectPoolManager::GetInstance()->Spawn(PoolType::BULLET, &tData);
 				}
+
 			}
 			// ... 코드 중략
 		}
-		// ... 코드 중략
+	// ... 코드 중략
 	}
 	// ... 코드 중략
 }
@@ -228,16 +226,19 @@ CObjectPool *CObjectPool::Create(const wstring &_pPrototypeTag, _uint _iReserve)
 	if (FAILED(pInstance->Ready_ObjectPool(_pPrototypeTag)))
 	{
 		Safe_Release(pInstance);
+		// ... 코드 중략
 		return nullptr;
 	}
 	return pInstance;
 }
+// ... 코드 중략
 
 HRESULT CObjectPool::Ready_ObjectPool(const wstring &_pPrototypeTag)
 {
 	CGameObject *pPrototype = CObjectManager::GetInstance()->Find_Prototype(_pPrototypeTag.c_str());
 	if (!pPrototype)
 	{
+		// ... 코드 중략
 		return E_FAIL;
 	}
 	for (int i = 0; i < m_Objects.capacity(); ++i)
@@ -245,6 +246,7 @@ HRESULT CObjectPool::Ready_ObjectPool(const wstring &_pPrototypeTag)
 		CGameObject *pGo = pPrototype->Clone();
 		if (!pGo)
 		{
+			// ... 코드 중략
 			return E_FAIL;
 		}
 		m_Objects.push_back(pGo);
@@ -269,6 +271,7 @@ CGameObject *CObjectPool::Spawn(void *pArg, std::function<void(CGameObject *)> _
 {
 	if (m_iActiveCount >= m_Objects.size())
 	{
+		// ... 코드 중략
 		return nullptr;
 	}
 	CGameObject *pGo = m_Objects[m_iActiveCount];
@@ -303,6 +306,7 @@ HRESULT CObjectPool::Despawn(CGameObject *_pObject)
 	int iNeed_Despawned_Index = _pObject->Get_ActiveIndex();
 	if (iNeed_Despawned_Index < 0 || iNeed_Despawned_Index >= m_iActiveCount)
 	{
+		// ... 코드 중략
 		return E_FAIL;
 	}
 
@@ -320,6 +324,7 @@ HRESULT CObjectPool::Despawn(CGameObject *_pObject)
 
 	if (FAILED(_pObject->Despawn_Pooling()))
 	{
+		// ... 코드 중략
 		return E_FAIL;
 	}
 
