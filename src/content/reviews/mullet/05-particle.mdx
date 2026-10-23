@@ -1,0 +1,541 @@
+---
+project: mullet
+order: 5
+title: 파티클 · 잔상 이펙트
+topic: 이펙트
+chips: [Particle System, Point Sprite, Billboard, Dynamic Vertex Buffer, std::deque, Object Pool]
+lineage:
+  label: 카타나 제로 모작 — 잔상 이펙트
+  href: /reviews/katana/07-afterimage/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+파티클 시스템은 수명이 짧은 작은 입자를 많이 뿌려 불꽃·피·연기 같은 효과를 만드는 방식입니다. 입자마다 위치·속도·수명을 두고 매 프레임 적분하며, 이펙트 사이의 차이는 보통 클래스가 아니라 방출·움직임·색 변화 파라미터로 표현합니다.
+
+이펙트의 차이를 옵션 데이터로 표현해, 전기·피·불꽃은 같은 클래스에 프리셋만 바꿔 만들고 새 이펙트는 프리셋 함수 하나로 추가할 수 있습니다.
+
+## 2. 문제
+
+> 총에 맞을 때의 불꽃, 피, 전기, 깨지는 유리, 폭발처럼 짧게 나왔다 사라지는 이펙트가 매우 많았습니다. 이펙트마다 클래스를 만들면 종류가 늘 때마다 코드도 늘어납니다. 이펙트마다 퍼지는 방식(직선, 포물선, 흔들림, 나선)과 색 변화가 다르고, 리소스 형태도 점, 조각 이미지, 연속 프레임 애니메이션으로 제각각이었습니다. 보스 돌진은 너무 빨리 지나가서 움직임이 잘 보이지 않았습니다.
+
+## 3. 구조 요약
+
+이펙트의 차이는 클래스가 아니라 옵션 데이터로 표현했습니다. 전기·피·불꽃은 모두 같은 점 파티클 클래스이고 옵션 프리셋만 다릅니다. 클래스는 리소스 형태(점·조각·애니메이션)에 따라서만 나눴습니다.
+
+<Fig n={1} white max={560} src="/img/reviews/mullet/05-particle/class.png" caption="이펙트 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `EffectOptions` · 프리셋 함수 | 이펙트 하나의 모양을 수치로 정의 (움직임 모드, 계수, 색, 블렌드) |
+| `CEffect_Pixel` | 점 파티클 시뮬레이션, 동적 정점 버퍼 갱신, 포인트 스프라이트 그리기 |
+| `CEffect_Pixel_Sprite` | 같은 시뮬레이션에 회전하는 텍스처 사각형 (유리 조각 등) |
+| `CEffect_World` | 한 장짜리 스프라이트 애니메이션을 빌보드로 재생, 끝나면 `DEAD` |
+| `CBoss` 잔상 | 돌진 중 일정 간격으로 스냅샷을 저장하고 색을 보간해 그림 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '이펙트 옵션', '점 파티클', '조각 파티클', '애니메이션 이펙트', '보스 잔상']}>
+<Tab>
+
+호출부는 풀 종류와 옵션(프리셋)만 골라 넘기고, 이펙트 클래스를 직접 만들지 않습니다.
+
+#### A. 몬스터 폭발
+
+<Editor file="CMonster.cpp" fn="CMonster::Spawn_Explosion_Effect(...)">
+
+```cpp
+tInfo.eType = WorldEffectType::BLOOD_EXPLOSION;
+tInfo.fSize = 10.f;
+CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_WORLD, &tInfo,
+    [vPos, vLook](CGameObject *pGo)->void
+    {
+        pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.f, 0.f });
+    });
+
+EffectOptions Option = Get_Preset_BulletSpark();
+CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_PIXEL, &Option,
+    [vPos](CGameObject *pGo)->void
+    {
+        pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.1f, 0.f });
+    });
+
+SpriteParticleOptions Option2;
+Option2.tEffectOption = Get_Preset_Blood();
+Option2.eType = SpriteParticleType::DRONEBODY;
+CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_PIXEL_SPRITE, &Option2,
+    [vPos](CGameObject *pGo)->void
+    {
+        pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.25f, 0.f });
+    });
+```
+
+</Editor>
+
+<Fig n={2} white max={640} src="/img/reviews/mullet/05-particle/kinds.png" caption="리소스 형태에 따른 세 가지 이펙트" />
+
+몬스터가 터질 때 폭발 애니메이션, 불꽃 점 파티클, 파편 조각 파티클을 한꺼번에 띄웁니다. 이펙트는 점 파티클, 텍스처 조각 파티클, 스프라이트 애니메이션 세 가지이고 모두 풀에서 재사용합니다(<FigRef n={2} />). 세 종류 모두 풀 종류와 스폰 데이터만 바꿔 같은 방식으로 호출합니다.
+
+</Tab>
+<Tab>
+
+`EffectOptions`는 이펙트 하나의 모양을 정하는 수치를 모은 구조체입니다. 움직임 모드 `eMode`, 입자 수, 수명·크기·속도 범위, 시작·끝 색(`colorStart`·`colorEnd`), 모드별 계수, 블렌드 방식 `eBlendmode`를 담습니다. 새 이펙트는 이 값을 채우는 프리셋 함수 하나로 추가합니다.
+
+#### A. 옵션과 프리셋
+
+<Editor file="Engine_Struct.h" fn="EffectOptions">
+
+```cpp
+typedef struct tagEffectOptions
+{
+	EffectMode eMode = EffectMode::LINEAR;
+	int   iPixelCount = 64;
+
+	// 생명시간
+	float fLife_Min = 3.f;
+	float fLife_Max = 5.f;
+
+	// 크기
+	float fSize_Min = 4.f;
+	float fSize_Max = 10.f;
+
+	// 속도
+	float fSpeed_Min = 5.f;
+	float fSpeed_Max = 12.f;
+
+	// 페이드 아웃 색깔
+	D3DXCOLOR colorStart = D3DXCOLOR(1, 1, 1, 1);
+	D3DXCOLOR colorEnd = D3DXCOLOR(1, 1, 1, 0);
+
+	// 저항
+	float fDrag = 0.0f;
+
+	// 노이즈/스파이럴 파라미터
+	float fNoiseStrength = 15.f; // CURVE_NOISE: 가속 크기(도/초 수준)
+	float fNoiseFreq = 20.f; // Hz
+	float fSpiralFreq = 8.f;  // SPIRAL 회전 빈도
+	float fSpiralAmp = 6.f;  // SPIRAL 반경 가속
+
+	// 전기, 스파이크 = Add
+	// 피 = Alpha
+	BlendMode eBlendmode = BlendMode::ADDITIVE;
+
+	// 최대 파티클 = PixelCount * RepeatCount * 2 가 여유롭고 좋음
+	int fMax_ParticlesBufferSize{ 0 };
+
+} EffectOptions;
+```
+
+</Editor>
+
+<Editor file="Client_Global.cpp" fn="Get_Preset_Electric()">
+
+```cpp
+EffectOptions Get_Preset_Electric()
+{
+    EffectOptions o;
+    o.eMode = EffectMode::SPIRAL;
+    o.iPixelCount = 24;
+    o.fLife_Min = 0.3f;
+    o.fLife_Max = 0.5f;
+    o.fSize_Min = 1.f;
+    o.fSize_Max = 4.f;
+    o.fSpeed_Min = 2.f;
+    o.fSpeed_Max = 4.f;
+    o.colorStart = D3DXCOLOR(0.5f, 0.8f, 1.0f, 1.0f);
+    o.colorEnd = D3DXCOLOR(0.1f, 0.3f, 1.0f, 0.7f);
+    o.eBlendmode = BlendMode::ADDITIVE;
+    o.fSpiralAmp = 100.f;
+    o.fSpiralFreq = 30.f;
+    o.fDrag = 5.0f;
+    return o;
+}
+```
+
+</Editor>
+
+전기 이펙트는 나선 모드에 짧은 수명, 파란 색, 가산 블렌드를 조합한 값일 뿐입니다. 피와 불꽃도 같은 클래스에 다른 프리셋을 넘겨 만듭니다.
+
+</Tab>
+<Tab>
+
+점 파티클은 CPU에서 입자(`m_vecParticles`)를 시뮬레이션하고, 살아 있는 입자만 동적 정점 버퍼 `m_pVB`에 채워 포인트 스프라이트로 한 번에 그립니다. `Spawn_Pooling`이 옵션을 받아 바로 발사하고, `Particle_Update`가 모드별 가속도와 적분을, `Ready_VB`가 색 보간과 버퍼 갱신을 맡습니다. 살아 있는 입자가 없으면 `DEAD`를 반환합니다.
+
+#### A. 스폰과 발사
+
+<Editor file="CEffect_Pixel.cpp" fn="CEffect_Pixel::Update_GameObject(...), CEffect_Pixel::Spawn_Pooling(...), CEffect_Pixel::Do_Once()">
+
+```cpp
+_int CEffect_Pixel::Update_GameObject(const _float &fTimeDelta)
+{
+    if (m_iAliveCount <= 0)
+        return DEAD;
+
+    m_pRendererCom->Add_RenderGroup(RENDER_ALPHA, this);
+
+    Particle_Update(fTimeDelta);
+    return NO_EVENT;
+}
+// ... 코드 중략
+
+HRESULT CEffect_Pixel::Spawn_Pooling(void *pArg)
+{
+    if (FAILED(CGameObject::Spawn_Pooling()))
+        return E_FAIL;
+
+    if (EffectOptions *pOption = reinterpret_cast<EffectOptions *>(pArg))
+    {
+        ::memcpy(&m_tOption, pOption, sizeof(EffectOptions));
+        // VB 준비
+        SetOptions(m_tOption, false);
+        // 생성과 동시에 발사
+        Trigger();
+    }
+
+    return S_OK;
+}
+// ... 코드 중략
+
+void CEffect_Pixel::Do_Once()
+{
+    const int iIndex = (std::min)(m_tOption.iPixelCount, (_int)(m_vecParticles.size() - m_iAliveCount));
+    for (int i = 0; i < iIndex; ++i)
+    {
+        ParticleInfo &tInfo = m_vecParticles[i];
+
+        if (tInfo.bAlive)
+            continue;
+
+        tInfo.vPosition = _vec3{ 0.f, 0.f, 0.f };
+        // 방향/속도
+        _vec3 vDir = randomDir_HalfSphere();
+        _float fSpeed = randRange(m_tOption.fSpeed_Min, m_tOption.fSpeed_Max);
+        tInfo.vVelocity = vDir * fSpeed;
+
+        tInfo.fDurationTime = 0.f;
+        tInfo.fLifeTime = randRange(m_tOption.fLife_Min, m_tOption.fLife_Max);
+        tInfo.fSize = randRange(m_tOption.fSize_Min, m_tOption.fSize_Max);
+        tInfo.colorStart = m_tOption.colorStart;
+        tInfo.colorEnd = m_tOption.colorEnd;
+        tInfo.bAlive = true;
+        ++m_iAliveCount;
+    }
+}
+```
+
+</Editor>
+
+<Editor file="CEffect_Pixel.cpp" fn="CEffect_Pixel::randomDir_HalfSphere()">
+
+```cpp
+D3DXVECTOR3 CEffect_Pixel::randomDir_HalfSphere() const
+{
+	float u = rand01() * 2.f - 1.f;      // cos theta in [-1,1]
+	float phi = rand01() * 6.28f;
+	float r = sqrtf((std::max)(0.f, 1.f - u * u));
+	D3DXVECTOR3 d(r * cosf(phi), fabsf(u), r * sinf(phi)); // y>=0
+	D3DXVec3Normalize(&d, &d);
+	return d;
+}
+```
+
+</Editor>
+
+스폰 데이터로 옵션을 받아 입자를 배치하고 그 자리에서 발사합니다. 방향은 반구 위에서 고르게 뽑아 위쪽으로 퍼지게 했습니다. 입자가 모두 죽으면 `DEAD`를 반환하고, 풀이 이를 회수합니다.
+
+#### B. 모드별 가속도
+
+<Editor file="CEffect_Pixel.cpp" fn="CEffect_Pixel::Particle_Update(...)">
+
+```cpp
+const float fNoiseFrequency = m_tOption.fNoiseFreq * 6.28f;
+
+// 가속 구성
+_vec3 fAccelVelocity{ 0,0,0 };
+switch (m_tOption.eMode)
+{
+case EffectMode::LINEAR:
+{
+    fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
+} break;
+case EffectMode::GRAVITY_ARC:
+{
+    fAccelVelocity += _vec3{ 0, -9.8f, 0 };
+    fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
+} break;
+case EffectMode::CURVE_NOISE:
+{
+    _vec3 vSrc = tElement.vVelocity; 
+    _float fLength = ::D3DXVec3Length(&vSrc);
+    if (fLength > 1e-4f /*Epsilon*/)
+    {
+        vSrc /= fLength;
+        _vec3 vWorldUp{ 0, 1.f, 0 };
+        _vec3 vCrossResult;
+        ::D3DXVec3Cross(&vCrossResult, &vSrc, &vWorldUp);
+        // ... 코드 중략
+        ::D3DXVec3Normalize(&vCrossResult, &vCrossResult);
+        float fSin = sinf(tElement.fPhase + fNoiseFrequency * tElement.fDurationTime);
+        fAccelVelocity += vCrossResult * (m_tOption.fNoiseStrength * fSin);
+    }
+    fAccelVelocity += (-m_tOption.fDrag) * tElement.vVelocity;
+} break;
+// ... 코드 중략
+}
+
+tElement.vVelocity += fAccelVelocity * fDeltaTime;
+tElement.vPosition += tElement.vVelocity * fDeltaTime;
+
+tElement.fDurationTime += fDeltaTime;
+if (tElement.fDurationTime >= tElement.fLifeTime)
+{
+    tElement.bAlive = false;
+    --m_iAliveCount;
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={520} src="/img/reviews/mullet/05-particle/modes.png" caption="움직임 모드별 가속도" />
+
+모드마다 가속도만 다르게 구하고, 적분은 같은 식으로 합니다(<FigRef n={3} />). 노이즈 모드는 진행 방향과 위쪽의 외적 방향으로 사인파만큼 밀어 좌우로 흔들고, 모든 모드에 저항을 더합니다. 적분은 `v += a·dt`, `p += v·dt`로 공통입니다.
+
+#### C. 동적 버퍼와 포인트 스프라이트
+
+<Editor file="CEffect_Pixel.cpp" fn="CEffect_Pixel::Ready_VB(), CEffect_Pixel::Render_GameObject()">
+
+```cpp
+HRESULT CEffect_Pixel::Ready_VB()
+{
+	if (!m_pVB || m_iAliveCount <= 0)
+        return E_FAIL;
+
+	VTXPIXELCOLOR *vtx = nullptr;
+	m_pVB->Lock(0, sizeof(VTXPIXELCOLOR) * m_iVBCapacity, (void **)&vtx, D3DLOCK_DISCARD);
+
+	int iIndex{ 0 };
+	for (ParticleInfo &tElement : m_vecParticles)
+	{
+		if (!tElement.bAlive)
+			continue;
+
+		// 경과 시간 / 생명 시간으로 색깔 보간!
+		float fSrc = (std::min)(1.f, (std::max)(0.f, tElement.fDurationTime / tElement.fLifeTime));
+		vtx[iIndex].vPosition = tElement.vPosition;
+		vtx[iIndex].dwColor = ToColor(LerpColor(tElement.colorStart, tElement.colorEnd, fSrc));
+		vtx[iIndex].fSize = tElement.fSize;
+		++iIndex;
+	}
+	m_pVB->Unlock();
+    return S_OK;
+}
+    // ... 코드 중략
+    m_pGraphicDev->SetStreamSource(0, m_pVB, 0, sizeof(VTXPIXELCOLOR));
+    m_pGraphicDev->SetFVF(FVF_PIXEL_COLOR);
+    m_pGraphicDev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    Effect_SetRenderState();
+
+    // 포인트 스프라이트 모드
+    m_pGraphicDev->SetRenderState(D3DRS_POINTSPRITEENABLE, TRUE);
+    // ... 코드 중략
+    m_pGraphicDev->DrawPrimitive(D3DPT_POINTLIST, 0, m_iAliveCount);
+```
+
+</Editor>
+
+살아 있는 입자만 버퍼 앞쪽에 채우고, 색은 경과 시간 / 수명 비율로 보간합니다. 그리기는 포인트 스프라이트 한 번이어서, 이펙트 하나에 버퍼 갱신 한 번과 그리기 호출 한 번이면 됩니다.
+
+</Tab>
+<Tab>
+
+조각 파티클은 같은 시뮬레이션에 모양이 있는 텍스처 조각(유리·드론 파편 등)을 붙인 것으로, 옵션은 `SpriteParticleOptions`로 받습니다. 입자마다 각도 `fAngle`로 회전한 사각형을 CPU에서 만들어 정점·인덱스 버퍼에 담습니다.
+
+#### A. 회전하는 조각
+
+<Editor file="CEffect_Pixel_Sprite.cpp" fn="CEffect_Pixel_Sprite::Ready_VB()">
+
+```cpp
+    _float fHalf = tElement.fSize * 0.5f;
+    _float fCos = cosf(tElement.fAngle);
+    _float fSin = sinf(tElement.fAngle);
+
+    _vec3 vLocalOffset_0{ -fHalf, fHalf, 0.f };
+    _vec3 vLocalOffset_1{ fHalf, fHalf, 0.f };
+    _vec3 vLocalOffset_2{ fHalf, -fHalf, 0.f };
+    _vec3 vLocalOffset_3{ -fHalf, -fHalf, 0.f };
+
+    auto GetRotate = [&](const _vec3 &v)->_vec3
+    { return _vec3(v.x * fCos - v.y * fSin, v.x * fSin + v.y * fCos, 0.f); };
+
+    vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_0);
+    vtx[iIndex].vTexUV = { 0.f, 0.f };
+    ++iIndex;
+    vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_1);
+    vtx[iIndex].vTexUV = { 1.f, 0.f };
+    ++iIndex;
+    vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_2);
+    vtx[iIndex].vTexUV = { 1.f, 1.f };
+    ++iIndex;
+    vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_3);
+    vtx[iIndex].vTexUV = { 0.f, 1.f };
+    ++iIndex;
+}
+```
+
+</Editor>
+
+입자 중심에서 네 꼭짓점 오프셋을 회전시켜 사각형을 만듭니다. 시뮬레이션은 점 파티클과 같고, 그리는 단위만 점에서 텍스처 사각형으로 바뀝니다.
+
+</Tab>
+<Tab>
+
+파티클이 아니라 한 장짜리 연속 프레임을 재생하는 이펙트로, 폭발이나 피 튀김처럼 한 덩어리로 보이는 효과에 씁니다. 각도·크기·종류는 `EFFECTINFO`로 받고, 애니메이션이 끝나면 `DEAD`를 반환합니다. 빌보드로 세운 뒤 절두체 안에 있을 때만 그립니다.
+
+#### A. 애니메이션 재생과 회수
+
+<Editor file="CEffect_World.cpp" fn="CEffect_World::Update_GameObject(...), CEffect_World::LateUpdate_GameObject(...)">
+
+```cpp
+_int CEffect_World::Update_GameObject(const _float &fTimeDelta)
+{
+	if (m_pTextureCom->Is_AnimFinished())
+		return DEAD;
+
+	CGameObject::Update_GameObject(fTimeDelta);
+
+	m_pTextureCom->MoveFrame();
+
+	return NO_EVENT;
+}
+
+void CEffect_World::LateUpdate_GameObject(const _float &fTimeDelta)
+{
+	CGameObject::LateUpdate_GameObject(fTimeDelta);
+
+	Update_Position(m_pTransformCom->Get_Info(INFO_POS));
+	Compute_CamDistance(Get_Position());
+
+	SetUp_BillBoard();
+
+	if (CCullingManager::GetInstance()->Is_In_Frustum(Get_Position(), m_fRadius))
+		if (m_pRendererCom) m_pRendererCom->Add_RenderGroup(RENDER_ALPHA, this);
+}
+```
+
+</Editor>
+
+애니메이션이 끝나는 것이 곧 수명이 끝나는 것이어서, 따로 타이머를 두지 않고 `DEAD`를 반환해 풀로 돌아갑니다. 항상 카메라를 향하도록 빌보드로 세우고, 화면 밖이면 그리지 않습니다.
+
+</Tab>
+<Tab>
+
+잔상은 보스 한 개체만 쓰기 때문에, 별도 오브젝트 대신 위치·방향·프레임·경과 시간을 담은 스냅샷을 `m_dequeAfterImage`로 관리합니다(최대 15개, 수명 0.3초, 0.05초마다 기록). `Record_AfterImage`가 쌓고, `Update_AfterImage`가 수명이 지난 것을 지우며, `Render_AfterImage`가 가산 블렌딩으로 그립니다.
+
+#### A. 기록과 수명
+
+<Editor file="CBoss.cpp" fn="CBoss::Update_Dash(...), CBoss::Record_AfterImage(), CBoss::Update_AfterImage(...)">
+
+```cpp
+	m_fDurationRecordTime += fDeltaTime;
+	if (m_fDurationRecordTime >= m_fRecordTime)
+	{
+		Record_AfterImage();
+		m_fDurationRecordTime -= m_fRecordTime;
+	}
+// ... 코드 중략
+
+void CBoss::Record_AfterImage()
+{
+	AfterImage tData;
+	tData.vRight = GetTransform()->Get_Info(INFO::INFO_RIGHT);
+	tData.vUp = GetTransform()->Get_Info(INFO::INFO_UP);
+	tData.vLook = GetTransform()->Get_Info(INFO::INFO_LOOK);
+	tData.vPos = GetTransform()->Get_Info(INFO::INFO_POS);
+	tData.iFrame = m_pTextureCom->Get_Frame().m_iCurrentTex;
+
+	m_dequeAfterImage.push_back(tData);
+	if (m_dequeAfterImage.size() > m_iMaxAfterImage)
+		m_dequeAfterImage.pop_front();
+}
+
+void CBoss::Update_AfterImage(const _float fDeltaTime)
+{
+	if (m_dequeAfterImage.size() <= 0)
+		return;
+
+	deque<AfterImage>::iterator itr = m_dequeAfterImage.begin();
+	for (;itr != m_dequeAfterImage.end(); )
+	{
+		itr->fLife += fDeltaTime;
+		if (itr->fLife >= m_fLifeLimit)
+			itr = m_dequeAfterImage.erase(itr);
+		else
+			++itr;
+	}
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={720} src="/img/reviews/mullet/05-particle/trail.png" caption="일정 간격 기록과 수명에 따른 색 보간" />
+
+매 프레임 기록하면 오버헤드가 생겨서 0.05초 간격으로만 기록합니다. 뒤에 쌓고 앞에서 빼므로 `deque`를 썼고, 최대 개수와 수명 두 조건으로 정리합니다(<FigRef n={4} />).
+
+#### B. 색 보간 렌더
+
+<Editor file="CBoss.cpp" fn="CBoss::Render_AfterImage()">
+
+```cpp
+m_pGraphicDev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+m_pGraphicDev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+m_pGraphicDev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+
+// Texture * TFACTOR
+m_pGraphicDev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2);
+m_pGraphicDev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_TFACTOR);
+
+m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
+
+for (const AfterImage &element : m_dequeAfterImage)
+{
+	_float fTime = std::clamp(element.fLife / m_fLifeLimit, 0.f, 1.f);
+
+	D3DXCOLOR color = Lerp_Color(m_AfterIamge_StartColor, m_AfterIamge_EndColor, fTime);
+
+	DWORD dwTF = D3DCOLOR_COLORVALUE(color.r, color.g, color.b, color.a);
+	m_pGraphicDev->SetRenderState(D3DRS_TEXTUREFACTOR, dwTF);
+```
+
+</Editor>
+
+텍스처의 알파는 실루엣으로만 쓰고, 색은 `TEXTUREFACTOR`로 넘긴 보간 색으로 칠합니다. 수명 비율에 따라 마젠타에서 시안으로 바뀌고, 가산 블렌딩이라 겹칠수록 밝아집니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**이펙트의 움직임이 모드 하나를 고르는 데 묶여 있습니다.** 포물선과 흔들림처럼 여러 효과를 섞을 수 없어서, 원하는 모양이 나오지 않으면 모드를 새로 추가해야 했습니다. 옵션 데이터로 이펙트를 늘리는 구조는 잘 동작했지만, 표현력은 모드 목록을 넘어서지 못했습니다.
+
+남은 개선점입니다.
+
+- 점 파티클과 조각 파티클이 시뮬레이션 코드를 각자 복사해 갖고 있어, 한쪽을 고치면 다른 쪽도 맞춰 고쳐야 합니다. 조각 파티클은 입자마다 텍스처를 바꿔 따로 그리므로, 조각을 아틀라스 한 장에 모으면 한 번에 그릴 수 있습니다.
+- 점 파티클의 정점 버퍼는 옵션의 입자 수와 상관없이 128개로 만들어서, 옵션의 개수가 버퍼 크기를 넘지 않는다는 보장이 없습니다.
+- 입자별 위상(`fPhase`)이 모두 0이라 노이즈·나선 모드에서 같은 박자로 흔들리고, 나선 모드는 나선 주파수 옵션(`fSpiralFreq`) 대신 노이즈 주파수를 씁니다.
+- 잔상을 그린 뒤 텍스처 스테이지 상태는 복원하지만 블렌드 상태(`ALPHABLENDENABLE`, `DESTBLEND`)는 바꾼 채로 둡니다.

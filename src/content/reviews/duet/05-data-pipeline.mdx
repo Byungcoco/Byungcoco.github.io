@@ -1,0 +1,468 @@
+---
+project: duet
+order: 5
+title: 데이터 파이프라인 (공격 프리셋)
+topic: 툴·데이터
+chips: [Data-Driven, nlohmann/json, std::filesystem, std::function, Factory Pattern]
+lineage:
+  label: 뮬렛 매드잭 모작 — 맵 툴 · 데이터 파이프라인
+  href: /reviews/mullet/02-map-tool/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+데이터 파이프라인은 툴이 저장한 파일을 게임이 읽어 실제 객체나 런타임 데이터로 바꾸는 단계들입니다. 파일 형식을 다루는 쪽(문서)과 객체를 만드는 쪽(빌더)을 나눠 두면, 새 데이터 종류도 같은 흐름에 끼워 넣을 수 있습니다.
+
+툴이 늘어도 저장·로드 방식은 하나로 유지됐습니다. 새 데이터 종류는 데이터 구조체와 문서·빌더 한 쌍만 추가하면 됐고, 공격 수치처럼 자주 바뀌는 값은 팀원이 다시 빌드하지 않고 JSON만 고쳐 맞췄습니다.
+
+## 2. 문제
+
+> 뮬렛 매드잭 모작의 맵 데이터는 파일 관리자 한 곳에 데이터 종류마다 저장·로드 함수 쌍을 두는 구조였습니다. 종류가 늘 때마다 파일 관리자가 커졌고, JSON이 깨져 있으면 예외로 게임이 종료됐으며, 읽은 데이터는 다음 씬까지 메모리에 남았습니다. 그때는 맵 툴 하나뿐이었지만, 최종 프로젝트에서는 맵 배치·공격 수치·이펙트 이벤트처럼 데이터를 만드는 툴이 여럿 생겼습니다. 툴마다 저장·로드를 따로 만들면 형식의 일관성이 깨지고, 책임이 흩어져 문제가 생겨도 어디서 잘못됐는지 찾기 어렵습니다. 모든 툴 데이터가 같은 "읽기 → 객체로 만들기" 흐름을 타는 하나의 파이프라인이 필요했습니다.
+
+## 3. 구조 요약
+
+데이터 종류를 카테고리로 나누고, "파일 ↔ 문서" 변환은 문서 클래스에, "문서 → 객체" 변환은 빌더에 맡겼습니다. 저장소와 빌드 시스템은 카테고리만 보고 움직이므로, 새 데이터 종류는 문서와 빌더 한 쌍을 등록하기만 하면 같은 흐름을 탑니다.
+
+<Fig n={1} white max={560} src="/img/reviews/duet/05-data-pipeline/class.png" caption="데이터 파이프라인 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CDataRepository` | 레벨·카테고리별 저장소와 (로드 함수, 문서 생성 함수) 묶음 보관, 레벨 단위 정리 |
+| `CDataStore` | 파일 이름 → 문서. JSON 파싱과 문서 등록 |
+| `CDataDocumentBase` | 한 파일의 데이터 목록. `ToJson`/`FromJson`, 타입·태그로 조회 |
+| `CBuilderSystem` / `CBuilderBase` | 카테고리별 빌더 등록, 문서를 받아 빌드 |
+| `CDataDocument_AttackPreset` / `CBuilder_AttackPreset` | 공격 프리셋 문서와, 프리셋을 게임 데이터에 등록하는 빌더 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '저장소', '문서 · 빌더']}>
+<Tab>
+
+로더는 카테고리별 빌더를 한 번 등록해 두고, 파일마다 같은 키로 로드와 빌드를 호출합니다.
+
+#### A. 공격 프리셋 로딩
+
+<Editor file="Loader.cpp" fn="Ready_AttackPresets()">
+
+```cpp
+HRESULT CLoader::Ready_AttackPresets()
+{
+	ELevelType eLevelType = ELevelType::LOGO;
+	DTO::ECategory eCategory = DTO::ECategory::ATTACK_PRESET;
+	_uint iLevelID = ENUM_TO_UINT(eLevelType);
+
+	std::filesystem::path rootFolder{ g_wszAttackPresetDataPath };
+
+	if (std::filesystem::exists(rootFolder) == false)
+	{
+		MSG_BOX("CLoader::Ready_AttackPresets, RootFolder exist failed");
+		return E_FAIL;
+	}
+
+	for (const auto& dirEntry : std::filesystem::directory_iterator(rootFolder))
+	{
+		if (dirEntry.is_directory() == false)
+			continue;
+
+		const std::filesystem::path categoryFolder = dirEntry.path();
+		for (const auto& fileEntry : std::filesystem::directory_iterator(categoryFolder))
+		{
+			if (fileEntry.is_regular_file() == false)
+				continue;
+
+			const std::filesystem::path filePath = fileEntry.path();
+			if (filePath.extension() != ".json")
+				continue;
+
+			string strFileKey = filePath.filename().stem().string();
+			if (FAILED(Loading_File(iLevelID, eCategory, filePath)))
+			{
+				MSG_BOX("CLoader::Ready_AttackPresets, Load_File_Json failed");
+				return E_FAIL;
+			}
+
+			if (FAILED(m_pBuilderSystem->Build_File(iLevelID, eCategory, filePath.stem().string())))
+				return E_FAIL;
+		}
+	}
+	// ... 코드 중략
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Editor file="Loader.cpp" fn="Loading_File(...)">
+
+```cpp
+HRESULT CLoader::Loading_File(_uint iLevelID, DTO::ECategory eCategory, const wstring& wstrFilePath)
+{
+	return m_pGameInstance->Load_File_Json(iLevelID, eCategory, wstrFilePath);
+}
+```
+
+</Editor>
+
+로더는 프리셋 폴더 아래의 카테고리 폴더를 돌며 JSON 파일마다 "로드 → 같은 키로 빌드"를 반복합니다. 파일을 추가하기만 하면 새 프리셋이 등록되고, 로더에는 프리셋 종류별 분기가 없습니다.
+
+</Tab>
+<Tab>
+
+데이터를 레벨 → 카테고리 → 파일 순으로 찾아가는 저장소입니다. 툴 데이터를 객체 생성에 쓰는 동안만 들고 있는 짧은 수명의 보관소라서, 레벨이 끝나면 `Clear(level)`로 한꺼번에 비웁니다.
+
+#### A. 타입을 등록 시점에 묶기
+
+<Editor file="DataRepository.h" fn="TStoreEntry, Regist_Category<T>(...)">
+
+```cpp
+	using DataRepository_LoadFunc = std::function<HRESULT(CDataStore*, const path&)>;
+	using DataRepository_CreateFunc = std::function<CDataDocumentBase*()>;
+	// DataStore를 생성하여 캐싱, load함수와 CDataDocument 생성하는 함수를 바인딩한 Entry 구조체
+	// 타입별로 load, create가 이루어져야하기때문에 내부적으로 일관된 처리를 하기위하여 만듬
+	struct TStoreEntry
+	{
+		CDataStore* pStore{ nullptr };
+		DataRepository_LoadFunc load;
+		DataRepository_CreateFunc create;
+	};
+// ... 코드 중략
+
+template<typename T>
+inline HRESULT CDataRepository::Regist_Category(_uint iLevelID, DTO::ECategory eCategory)
+{
+	static_assert(std::is_base_of_v<CDataDocumentBase, T>, "T is not derived from CDataDocumentBase");
+	if (iLevelID >= m_mapStores.size())
+		return E_FAIL;
+
+	CDataStore* pStore = CDataStore::Create();
+
+	TStoreEntry entry;
+	entry.pStore = pStore;
+
+	entry.load = [](CDataStore* pStore, const path& filePath) ->HRESULT
+	{
+			return pStore->LoadFile_Json<T>(filePath);
+	};
+	entry.create = []()->CDataDocumentBase*
+	{
+			return T::Create();
+	};
+
+	auto itr = m_mapStores[iLevelID].find(eCategory);
+	if (itr != m_mapStores[iLevelID].end())
+	{
+		Safe_Release(itr->second.pStore);
+		m_mapStores[iLevelID].erase(itr);
+	}
+
+	m_mapStores[iLevelID][eCategory] = std::move(entry);
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Editor file="DataRepository.cpp" fn="Load_File_Json(...), Get_Document(...)">
+
+```cpp
+HRESULT CDataRepository::Load_File_Json(_uint iLevelID, DTO::ECategory eCategory, const path& filePath)
+{
+	if (iLevelID >= m_mapStores.size())
+		return E_FAIL;
+
+	auto itr = m_mapStores[iLevelID].find(eCategory);
+	if (itr == m_mapStores[iLevelID].end() || itr->second.pStore == nullptr || itr->second.load == nullptr)
+		return E_FAIL;
+
+	return itr->second.load(itr->second.pStore, filePath);
+}
+// ... 코드 중략
+
+const CDataDocumentBase* CDataRepository::Get_Document(_uint iLevelID, DTO::ECategory eCategory, const string& strFileKey)
+{
+	if (iLevelID >= m_mapStores.size())
+		return nullptr;
+
+	auto itr = m_mapStores[iLevelID].find(eCategory);
+	if (itr == m_mapStores[iLevelID].end() || (itr->second.pStore == nullptr))
+		return nullptr;
+
+	return itr->second.pStore->Get_Document(strFileKey);
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={440} src="/img/reviews/duet/05-data-pipeline/layers.png" caption="Repository(레벨·카테고리) → Store(파일) → Document(데이터 목록)" />
+
+저장소 자체는 문서 타입을 모르는 일반 코드로 두고, 타입이 꼭 필요한 "이 JSON을 어떤 문서로 읽을지"만 등록 시점에 템플릿 람다로 묶어 둡니다. 이후 로드는 카테고리로 묶음을 찾아 람다를 호출할 뿐이라, 카테고리가 늘어나도 저장소 코드는 그대로입니다(<FigRef n={2} />). 레벨과 카테고리로 저장소를 찾고, 그 안에서 파일 이름으로 문서를 찾는 순서입니다. 문서 기반 클래스를 상속하지 않은 타입은 `static_assert` 때문에 등록 단계에서 컴파일 오류가 납니다.
+
+#### B. 예외 없는 JSON 로드
+
+<Editor file="DataStore.h" fn="LoadFile_Json<T>(...)">
+
+```cpp
+template<typename T>
+HRESULT CDataStore::LoadFile_Json(const path& filePath)
+{
+	CFileUtils* pFileUtil = CFileUtils::Create();
+	if (FAILED(pFileUtil->Open(filePath, FileMode::READ)))
+	{
+		MSG_BOX("CDataStore::LoadFile_Json, open failed");
+		Safe_Release(pFileUtil);
+		return E_FAIL;
+	}
+
+	std::string text;
+	if (FAILED(pFileUtil->ReadAllText(text)))
+	{
+		MSG_BOX("CDataStore::LoadFile_Json, read failed");
+		Safe_Release(pFileUtil);
+		return E_FAIL;
+	}
+
+	json j = json::parse(text, nullptr, false);
+	if (j.is_discarded() == true)
+	{
+		MSG_BOX("CDataStore::LoadFile_Json, is_discarded");
+		Safe_Release(pFileUtil);
+		return E_FAIL;
+	}
+
+	T* pDoc = T::Create();
+	if (FAILED(pDoc->FromJson(j)))
+	{
+		MSG_BOX("CDataStore::LoadFile_Json, read failed");
+		Safe_Release(pDoc);
+		Safe_Release(pFileUtil);
+		return E_FAIL;
+	}
+
+	if (FAILED(Regist_Document(Engine_Utils::Make_DataFileKey(filePath), pDoc)))
+	{
+		MSG_BOX("CDataStore::LoadFile_Json, load failed");
+		Safe_Release(pDoc);
+		Safe_Release(pFileUtil);
+		return E_FAIL;
+	}
+
+	Safe_Release(pFileUtil);
+	return S_OK;
+}
+```
+
+</Editor>
+
+JSON은 `json::parse(text, nullptr, false)`로 예외 없이 파싱하고, 깨진 파일은 `is_discarded()`로 걸러 실패를 돌려줍니다. 뮬렛 매드잭 모작처럼 파일 하나가 잘못됐다고 게임이 종료되는 일은 없습니다. 문서는 파일 이름에서 만든 키로 등록되고, 빌드 단계에서도 같은 키로 찾습니다.
+
+</Tab>
+<Tab>
+
+데이터 한 종류를 담당하는 문서와 빌더입니다. 문서는 파일 형식을, 빌더는 그 데이터로 무엇을 만들지를 압니다. 새 데이터 종류는 데이터 구조체를 정의하고 이 두 클래스만 추가하면 됐습니다.
+
+#### A. 읽기와 만들기의 분리
+
+<Editor file="DataDocumentBase.h" fn="CDataDocumentBase">
+
+```cpp
+class ENGINE_DLL CDataDocumentBase abstract : public CBase
+{
+	using Super = CBase;
+protected:
+	CDataDocumentBase();
+	virtual ~CDataDocumentBase() = default;
+public:
+	// 각 Category를 직접 지정하여 반환할 것
+	virtual DTO::ECategory Get_Category() const PURE;
+	virtual json ToJson() const PURE;
+	virtual HRESULT FromJson(const json& j) PURE;
+
+	// 현재 문서에 저장된 모든 ObjectDataList를 반환
+	const vector<IObjectDataBase*> Get_AllList() const;
+	// 현재 문서의 특정 타입에 해당하는 ObjectDataList를 반환
+	const vector<IObjectDataBase*> Get_ListByType(_uint iType) const;
+	// 현재 문서의 특정 타입, 특정 Tag에 해당하는 ObjectData를 반환
+	const IObjectDataBase* Get_ByTag(_uint iType, const string& strTag) const;
+	size_t Get_ObjectCount() const;
+	void Clear();
+protected:
+	map<_uint, unordered_map<string, IObjectDataBase*>> m_Datas;
+	unordered_set<string> m_AllTags;
+public:
+	virtual void Free() override;
+};
+```
+
+</Editor>
+
+<Editor file="BuilderBase.h" fn="CBuilderBase">
+
+```cpp
+class ENGINE_DLL CBuilderBase abstract : public CBase
+{
+	using Super = CBase;
+protected:
+	CBuilderBase(ID3D11Device* pDevice, ID3D11DeviceContext* pDeviceContext, _uint iLevelID);
+	virtual ~CBuilderBase() = default;
+public:
+	virtual HRESULT Build(const CDataDocumentBase& document) PURE;
+protected:
+	ID3D11Device* m_pDevice = { nullptr };
+	ID3D11DeviceContext* m_pDeviceContext = { nullptr };
+	CGameInstance* m_pGameInstance = { nullptr };
+	_uint m_iLevelID = { 0 };
+public:
+	virtual void Free() override;
+};
+```
+
+</Editor>
+
+<Editor file="BuilderSystem.cpp" fn="Ready_Builder(...), Build_File(...)">
+
+```cpp
+HRESULT CBuilderSystem::Ready_Builder(DTO::ECategory eCategory, CBuilderBase* pBuilder)
+{
+	if (pBuilder == nullptr)
+		return E_FAIL;
+
+	if (Has_Builder(eCategory) == false)
+		m_arrBuilders[ENUM_TO_UINT(eCategory)] = pBuilder;
+	else
+	{
+		MSG_BOX("CBuilderSystem::Ready_Builder, Already have builder");
+	}
+
+	return S_OK;
+}
+
+HRESULT CBuilderSystem::Build_File(_uint iLevelID, DTO::ECategory eCategory, string strFileKey)
+{
+	if (Has_Builder(eCategory) == false)
+		return E_FAIL;
+
+	const CDataDocumentBase* pBase = m_pGameInstance->Get_Document(iLevelID, eCategory, strFileKey);
+	if (pBase == nullptr)
+		return E_FAIL;
+
+	return m_arrBuilders[ENUM_TO_UINT(eCategory)]->Build(*pBase);
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={820} src="/img/reviews/duet/05-data-pipeline/flow.png" caption="JSON 파일 → Document(FromJson) → Builder → 런타임 시스템" />
+
+문서는 "파일에 무엇이 들어 있는가"만, 빌더는 "그걸로 무엇을 만드는가"만 압니다(<FigRef n={3} />). 로드는 파일을 문서로 바꾸는 데서 끝나고, 실제 객체·데이터를 만드는 일은 카테고리별 빌더의 몫입니다. 빌드 시스템은 카테고리 번호로 빌더 배열을 바로 찾고, 저장소에서 받은 문서를 넘기기만 합니다. 덕분에 같은 문서를 툴에서는 편집·저장에, 게임에서는 빌드에 쓸 수 있습니다.
+
+#### B. 공격 프리셋
+
+<Editor file="DataDocument_AttackPreset.cpp" fn="ToJson(), Try_Add(...)">
+
+```cpp
+json CDataDocument_AttackPreset::ToJson() const
+{
+	json j;
+	j["Category"] = DTO::ECategory::ATTACK_PRESET;
+
+	json jsonArray = json::array();
+
+	for (const auto& [iType, umapTags] : m_Datas)
+		for (const auto& [strTag, object] : umapTags)
+			jsonArray.push_back(object->ToJson());
+
+	j["Objects"] = std::move(jsonArray);
+	return j;
+}
+// ... 코드 중략
+
+HRESULT CDataDocument_AttackPreset::Try_Add(IObjectDataBase* pObject)
+{
+	if (pObject == nullptr)
+		return E_FAIL;
+
+	const string& strTag = pObject->Get_Tag();
+	if (strTag.empty() == true)
+	{
+		Safe_Release(pObject);
+		return E_FAIL;
+	}
+
+	if (m_AllTags.find(strTag) != m_AllTags.end())
+	{
+		Safe_Release(pObject);
+		return E_FAIL;
+	}
+
+	m_AllTags.insert(strTag);
+	/* Type */
+	const _uint iType = pObject->Get_Type();
+	m_Datas[iType].emplace(strTag, pObject);
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Editor file="Builder_AttackPreset.cpp" fn="Build(...), Set_AttackPreset(...)">
+
+```cpp
+HRESULT CBuilder_AttackPreset::Build(const CDataDocumentBase& document)
+{
+	if (document.Get_Category() != DTO::ECategory::ATTACK_PRESET)
+		return E_FAIL;
+
+	const auto& doc = static_cast<const CDataDocument_AttackPreset&>(document);
+	{
+		const vector<Engine::IObjectDataBase*> vecDtoList = doc.Get_ListByType(ENUM_TO_UINT(DTO::EAttackPresetType::NORMAL));
+		for (const auto& pDtoBase : vecDtoList)
+		{
+			const auto* pDto = static_cast<const Engine::CDataStruct_AttackPreset*>(pDtoBase);
+			if (FAILED(Set_AttackPreset(pDto->Get_Data())))
+				return E_FAIL;
+		}
+	}
+
+	return S_OK;
+}
+
+HRESULT CBuilder_AttackPreset::Set_AttackPreset(const DTO::TAttackPreset_Data& data)
+{
+	if (FAILED(m_pGameInstance->Upsert_AttackPresetData(data)))
+		return E_FAIL;
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={600} src="/img/reviews/duet/05-data-pipeline/preset.png" caption="공격 프리셋 JSON이 판정 시스템의 조회 테이블이 되기까지" />
+
+공격 프리셋 문서는 태그 중복을 막으면서 데이터를 모으고, 빌더는 그중 일반 공격 타입 목록을 꺼내 게임 데이터 매니저에 등록(`Upsert`)합니다(<FigRef n={4} />). 판정 시스템은 이 테이블에서 프리셋 번호로 기본 대미지 등을 조회하므로, 공격 수치를 바꿀 때 코드를 다시 빌드할 필요가 없습니다. 실제로 팀원이 JSON의 수치만 고쳐 밸런스를 직접 맞추기도 했습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**타입을 템플릿으로 끝까지 묶지 못했습니다.** 저장소는 등록 시점에 템플릿 람다로 문서 타입을 묶어 두지만, 빌더는 문서를 기반 클래스로 받아 카테고리 값을 확인한 뒤 `static_cast`로 되돌립니다. 문서 안의 데이터도 `IObjectDataBase`로 꺼내 다시 캐스팅합니다. 그래서 카테고리 값과 실제 타입이 어긋나도 컴파일러가 잡아 주지 못합니다. 빌더를 문서 타입 템플릿으로 만들어 저장소와 같은 방식으로 타입을 묶었다면 이 캐스팅은 필요 없었습니다.
+
+남은 개선점입니다.
+
+- 데이터 하나를 쓰기까지 레벨 → 카테고리 → 파일 → 타입 → 태그로 다섯 번을 찾아 들어갑니다. 런타임까지 남는 데이터와 로딩 후 버려지는 데이터도 구조만 봐서는 구분되지 않습니다.
+- 로드 실패를 `MSG_BOX`로만 알리기 때문에, 어느 파일의 어느 항목이 잘못됐는지 로그로 남지 않습니다.
+- `Ready_AttackPresets` 끝에 결과를 쓰지 않는 디버그용 순회가 남아 있습니다.

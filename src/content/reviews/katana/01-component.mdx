@@ -1,0 +1,344 @@
+---
+project: katana
+order: 1
+title: 컴포넌트 설계
+topic: GameObject·컴포넌트
+chips: [Component Pattern, C++20 Concepts, constexpr, std::array]
+---
+import Chips from '../../../components/Chips.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+기능을 상속이 아니라 컴포넌트 조합으로 붙이는 구조입니다. 충돌·애니메이션 같은 기능을 각각 독립된 클래스로 만들고, 오브젝트는 필요한 컴포넌트만 골라 붙입니다.
+
+기능을 컴포넌트로 나눈 덕분에 오브젝트의 구성은 어떤 컴포넌트를 붙이느냐로만 정해지고, 기능이 늘어도 오브젝트 클래스는 고치지 않아도 됐습니다.
+
+## 2. 문제
+
+> 오브젝트마다 충돌·애니메이션·무기·AI처럼 필요한 기능의 조합이 다릅니다. 이를 상속으로 표현하면 책임이 한 클래스에 섞이고 상속 구조가 복잡해져 유지보수가 어려워지며, 기능을 붙이거나 떼기도 어렵습니다. Unity에서 익숙했던 컴포넌트 구조를 C++로 직접 옮겨, **기능은 컴포넌트로 나누고 오브젝트는 필요한 컴포넌트만 붙이도록** 했습니다.
+
+## 3. 구조 요약
+
+오브젝트는 `ComponentType` 값을 인덱스로 쓰는 고정 배열 하나만 들고 있습니다. 컴포넌트 타입마다 `_ID`를 선언해 두었기 때문에 조회·추가·제거가 모두 배열 인덱싱 한 번으로 끝납니다.
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CObject` | 컴포넌트 슬롯을 소유하고, 타입 기반 템플릿 함수로 접근 제공 |
+| `ComponentContainer` | 타입 ID → 슬롯 매핑, 중복 추가 방지, 소멸 시 일괄 해제 |
+| `CComponentManager` | 컴포넌트 생성과 초기화 (단일 진입점) |
+| `CComponent` 파생 | 기능 하나(충돌·애니메이션·AI·무기)의 로직 |
+| `CWeaponComponent` 파생 | 무기 종류별 공격 방식 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '오브젝트', '컨테이너', '생성 · 타입 제약', '컴포넌트 계층']}>
+<Tab>
+
+오브젝트는 초기화할 때 필요한 컴포넌트를 붙이고, 그 뒤로는 타입으로 꺼내 씁니다.
+
+#### A. 컴포넌트 구성
+
+<Editor file="CPlayer.cpp" fn="Initialize()">
+
+```cpp
+void CPlayer::Initialize()
+{
+	// ... 코드 중략
+	{
+		if (CComponent *Comp = AddComponent<CKatanaComponent>())
+		{
+
+		}
+		if (CComponent *Comp = AddComponent<CColliderComponent>())
+		{
+			CColliderComponent *ColliderComp = static_cast<CColliderComponent *>(Comp);
+			ColliderComp->SetSize(Vector2{ 30.f, 70.f });
+		}
+
+		if (CComponent *Comp = AddComponent<CAnimatorComponent>())
+		{
+			CAnimatorComponent *AnimComp = static_cast<CAnimatorComponent *>(Comp);
+			AnimComp->SetAnimation_Offset(true);
+		}
+	}
+```
+
+</Editor>
+
+플레이어는 카타나·충돌·애니메이션 컴포넌트를 붙이고, 갱스터는 같은 자리에 `CGunComponent`를 붙입니다. 오브젝트가 무엇인지는 어떤 컴포넌트를 붙였느냐로 정해집니다.
+
+#### B. 컴포넌트 사용
+
+<Editor file="CPlayer.cpp" fn="Update(...), Late_Update()">
+
+```cpp
+		GetComponent<CWeaponComponent>()->Update(_fDeltaTime);
+	}
+
+	GetComponent<CAnimatorComponent>()->Update(_fDeltaTime);
+}
+// ... 코드 중략
+
+void CPlayer::Late_Update()
+{
+	GetComponent<CColliderComponent>()->Late_Update();
+	GetComponent<CWeaponComponent>()->Late_Update();
+}
+```
+
+</Editor>
+
+어떤 무기를 들었든 `GetComponent<CWeaponComponent>()`로 같은 슬롯을 꺼내 갱신합니다. 다만 컴포넌트마다 `Update`·`Late_Update`를 오브젝트가 직접 불러 줘야 합니다.
+
+</Tab>
+<Tab>
+
+오브젝트는 컴포넌트 컨테이너 `m_Components`를 멤버로 직접 소유하고, `GetComponent<T>()`·`AddComponent<T>()`·`RemoveComponent<T>()`는 모두 컨테이너에 넘깁니다. 추가할 때는 자기 자신을 소유자로 함께 넘깁니다.
+
+#### A. 슬롯 접근
+
+<Editor file="CObject.h" fn="CObject">
+
+```cpp
+template<IsComponent T>
+bool HasComponent() { return m_Components.HasComponent<T>(); }
+template<IsComponent T>
+CComponent* GetComponent() { return m_Components.GetComponent<T>(); }
+template<IsComponent T>
+CComponent *AddComponent() { return m_Components.AddComponent<T>(this); }
+template<IsComponent T>
+bool RemoveComponent() { return m_Components.RemoveComponent<T>(); }
+// ... 코드 중략
+
+ComponentContainer m_Components;
+```
+
+</Editor>
+
+오브젝트 클래스에는 컴포넌트 종류별 코드가 없습니다. 기능이 늘어나도 바뀌는 것은 템플릿 인자뿐이라 `CObject`를 고칠 일이 없습니다.
+
+</Tab>
+<Tab>
+
+컨테이너는 컴포넌트 종류 수만큼의 고정 배열 `Components`입니다. `ComponentType` 값이 곧 인덱스여서 타입마다 들어갈 칸이 정해져 있습니다. `GetComponent<T>()`는 `T::_ID`로 배열을 한 번 인덱싱하고, `AddComponent<T>()`는 슬롯이 비어 있을 때만 생성을 맡기며, 남은 슬롯은 소멸자가 한꺼번에 해제합니다.
+
+#### A. 슬롯 번호
+
+<Editor file="MyEnum.h" fn="ComponentType">
+
+```cpp
+enum class ComponentType
+{
+	COLLIDE,
+	ANIMATOR,
+	WEAPON,
+	AI,
+	END
+};
+
+constexpr size_t g_CompCount = static_cast<size_t>(ComponentType::END);
+```
+
+</Editor>
+
+<Editor file="CColliderComponent.h" fn="CColliderComponent">
+
+```cpp
+constexpr static ComponentType _ID = ComponentType::COLLIDE;
+```
+
+</Editor>
+
+열거값이 슬롯 번호, `END`가 배열 크기입니다. 각 컴포넌트는 자기 슬롯을 `constexpr static _ID`로 선언합니다.
+
+#### B. 조회 · 추가
+
+<Editor file="CComponentManager.h" fn="ComponentContainer::GetComponent<T>(), ComponentContainer::AddComponent<T>(...)">
+
+```cpp
+template<IsComponent T>
+CComponent *GetComponent() const
+{
+	constexpr ComponentType _eType = T::_ID;
+	static_assert(static_cast<size_t>(_eType) < g_CompCount);
+	return Components[static_cast<size_t>(_eType)];
+}
+
+template<IsComponent T>
+CComponent *AddComponent(CObject *_p)
+{
+	constexpr ComponentType _eType = T::_ID;
+	if (Components[static_cast<size_t>(_eType)])
+		return Components[static_cast<size_t>(_eType)];
+
+	CComponent *pReturn = nullptr;
+	if (!(pReturn = CComponentManager::Get_Instance()->Create<T>(_p)))
+		return pReturn;
+
+	Components[static_cast<size_t>(_eType)] = pReturn;
+	return pReturn;
+}
+```
+
+</Editor>
+
+`_ID`가 `constexpr`이라 슬롯 번호는 컴파일 타임에 정해지고, 실행 중에는 배열 인덱싱만 남습니다. 인덱스 범위도 `static_assert`로 컴파일 단계에서 검사합니다.
+
+슬롯이 이미 차 있으면 새로 만들지 않고 기존 컴포넌트를 돌려줍니다. 같은 종류를 두 번 붙이는 실수를 호출하는 쪽에서 신경 쓸 필요가 없습니다.
+
+#### C. 해제
+
+<Editor file="CComponentManager.h" fn="ComponentContainer, ComponentContainer::RemoveComponent<T>()">
+
+```cpp
+typedef struct tagComponentContainer
+{
+	array<CComponent *, g_CompCount> Components;
+
+	tagComponentContainer() { Components.fill(nullptr); }
+	~tagComponentContainer()
+	{
+		for_each(Components.begin(), Components.end(), Safe_DeleteObj());
+	}
+	// ... 코드 중략
+	template<IsComponent T>
+	bool RemoveComponent()
+	{
+		constexpr ComponentType _eType = T::_ID;
+		if (Components[static_cast<size_t>(_eType)])
+		{
+			delete Components[static_cast<size_t>(_eType)];
+			Components[static_cast<size_t>(_eType)] = nullptr;
+		}
+		return true;
+	}
+} ComponentContainer;
+```
+
+</Editor>
+
+컴포넌트의 수명은 오브젝트를 따라갑니다. 컨테이너가 오브젝트의 멤버이므로 오브젝트가 사라지면 소멸자가 남은 슬롯을 한 번에 해제하고, 컴포넌트를 따로 지우는 코드는 필요 없습니다.
+
+</Tab>
+<Tab>
+
+컴포넌트를 만드는 경로를 한 곳으로 모은 싱글턴입니다. `Create<T>()`가 생성과 `Initialize()` 호출을 함께 맡고, 템플릿 인자는 C++20 Concept `IsComponent`로 `CComponent` 파생 타입만 받습니다.
+
+#### A. 생성
+
+<Editor file="CComponentManager.h" fn="Create<T>(...)">
+
+```cpp
+template<IsComponent T>
+CComponent *Create(CObject *_Owner)
+{
+	if (!_Owner) return nullptr;
+	CComponent *pComp = new T(_Owner);
+	pComp->Initialize();
+
+	return pComp;
+}
+```
+
+</Editor>
+
+생성과 초기화 순서가 한 곳에 있어서, 어디서 붙이든 컴포넌트는 같은 순서로 준비됩니다.
+
+#### B. 타입 제약
+
+<Editor file="MyConcepts.h" fn="IsComponent">
+
+```cpp
+template <typename T>
+concept IsComponent = std::is_base_of_v<CComponent, T>;
+```
+
+</Editor>
+
+C++20을 공부하면서 타입 제약을 코드에 드러내려고 적용했습니다. `CComponent` 파생이 아닌 타입을 넘기면 제약 단계에서 바로 걸립니다.
+
+</Tab>
+<Tab>
+
+모든 컴포넌트의 공통 인터페이스입니다. 기능의 종류는 합성으로, 같은 기능의 변형은 상속으로 나눴습니다. 각 컴포넌트는 소유 오브젝트 `m_pOwner`와 자기 슬롯 번호 `_ID`를 갖고, 무기 변형은 `CWeaponComponent::Attack()`을 재정의합니다.
+
+#### A. 공통 인터페이스
+
+<Editor file="CComponent.h" fn="CComponent">
+
+```cpp
+class CComponent
+{
+public:
+	explicit CComponent(CObject *);
+	virtual ~CComponent();
+public:
+	virtual void Initialize();
+	virtual void Update(const float _fDeltaTime) PURE;
+	virtual void Late_Update() PURE;
+	virtual void Render(HDC hDC) PURE;
+	virtual void Release() PURE;
+public:
+	bool IsEnable() const { return m_bEnable; }
+	void SetEnable() { m_bEnable = true; }
+	void SetDisable() { m_bEnable = false; }
+
+	CObject *GetOwner() const { return m_pOwner; }
+	void SetOwner(CObject *_p) { m_pOwner = _p; }
+private:
+	bool m_bEnable;
+	CObject *m_pOwner;
+};
+```
+
+</Editor>
+
+컴포넌트는 소유자 포인터만 들고, 다른 컴포넌트를 멤버로 직접 참조하지 않습니다. 필요하면 소유자를 거쳐 조회하게 해서 컴포넌트끼리의 결합을 줄였습니다.
+
+#### B. 무기 변형은 같은 슬롯
+
+<Editor file="CWeaponComponent.h" fn="CWeaponComponent">
+
+```cpp
+class CWeaponComponent : public CComponent
+	// ... 코드 중략
+	constexpr static ComponentType _ID = ComponentType::WEAPON;
+	// ... 코드 중략
+	virtual void Attack();
+```
+
+</Editor>
+
+<Editor file="CKatanaComponent.h" fn="CKatanaComponent">
+
+```cpp
+class CKatanaComponent : public CWeaponComponent
+```
+
+</Editor>
+
+무기 파생 클래스는 상위 클래스의 `_ID`(`WEAPON`)를 그대로 물려받아 모두 같은 슬롯에 들어갑니다. 오브젝트의 무기는 어떤 무기 컴포넌트를 붙이느냐로만 정해지고, 호출하는 쪽은 `GetComponent<CWeaponComponent>()` 하나로 어떤 무기든 다룹니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**컴포넌트를 꺼낼 때마다 캐스팅은 호출하는 쪽의 몫이었습니다.** `GetComponent<T>()`가 `T*`가 아니라 `CComponent*`를 돌려주는 바람에, 컴포넌트를 꺼내 쓰는 곳마다 `static_cast`를 다시 적어야 했습니다. 반환 타입을 `T*`로 바꿔 캐스팅을 템플릿 안에 숨겼어야 했습니다.
+
+남은 개선점입니다.
+
+- 컨테이너가 슬롯을 돌며 갱신해 주지 않아, 오브젝트마다 `Update`·`Late_Update`·`Render`를 컴포넌트별로 직접 호출해야 합니다.
+- `IsComponent`는 상속 여부만 검사합니다. `_ID`가 없는 타입을 넘기면 제약 단계가 아니라 템플릿 내부에서 긴 오류가 납니다.
+- `HasComponent`는 `enum class` 값을 변환 없이 배열 인덱스로 씁니다. 사용처가 없어 드러나지 않았을 뿐, 호출하면 컴파일되지 않습니다.

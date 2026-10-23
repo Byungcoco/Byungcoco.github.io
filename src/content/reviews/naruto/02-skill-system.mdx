@@ -1,0 +1,578 @@
+---
+project: naruto
+order: 2
+title: 스킬 시스템 · 이벤트 버스
+topic: 스킬
+chips: [Event Bus, Data-Driven, std::function, unordered_map]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+이벤트 버스는 보내는 쪽과 받는 쪽이 서로를 모른 채 이벤트 종류만으로 이어지게 하는 구조입니다. 여기에 데이터 주도 설계를 더하면 공통 흐름은 코드 한 곳에 두고, 객체마다 다른 동작은 커맨드 목록 같은 데이터로 정의할 수 있습니다.
+
+스킬마다 다른 부분을 커맨드 데이터로 빼서, 새 스킬은 파츠 구성과 커맨드 목록만 정하면 붙습니다. 캐릭터 상태도 스킬 오브젝트를 직접 참조하지 않습니다.
+
+## 2. 문제
+
+> 나선수리검·나선환·화둔·치도리는 모양이 제각각이지만, 흐름은 모두 "나타남 → 발동 → 사라짐"으로 같습니다. 다른 것은 단계마다 어떤 파츠(코어·회전 메시·바람·충돌체)를 켜고, 키우고, 돌릴지뿐입니다. 이 흐름을 스킬마다 파생 클래스에 직접 짜면 같은 전환 코드가 스킬 수만큼 반복됩니다. 게다가 단계가 바뀌는 시점은 캐릭터의 애니메이션 상태가 알고, 실제로 보여 줄 대상은 따로 생성된 스킬 오브젝트라서, 둘을 직접 참조로 묶으면 상태 코드가 스킬 종류를 알아야 했습니다.
+
+## 3. 구조 요약
+
+공통 흐름과 스킬별 차이를 나눴습니다. 단계 전환은 스킬 기반 클래스 하나가 처리하고, 스킬마다 다른 부분은 "어느 단계에 어떤 파츠를 어떻게 움직일지"를 담은 커맨드 목록(프리셋)으로만 정의합니다. 캐릭터 상태와 스킬 오브젝트 사이는 이벤트 버스로만 이어집니다.
+
+<Fig n={1} white max={560} src="/img/reviews/naruto/02-skill-system/class.png" caption="스킬 시스템 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CEventBus_Manager` | 태그 타입별 채널 보관, 구독·해제·방송 |
+| `CMulticastDelegate` | 구독자 목록. 방송 중 구독 변경은 끝난 뒤 반영 |
+| `CSkillComponent` | 슬롯별 쿨타임, 스킬 오브젝트 생성, 단계 이벤트를 해당 스킬에 전달 |
+| `CSkillStateContainer` | 스킬 하나의 애니메이션 단계(시작·충전·돌진 등)를 순서대로 진행하는 상태 |
+| `CSkillBase` · `SKILL_PRESET` | 단계 전환, 이벤트에 등록된 커맨드를 파츠에 실행 |
+| `CSkillMeshPart` | 켜기·회전·크기 변화 같은 커맨드를 받아 스스로 갱신 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '이벤트 버스', '스킬 컴포넌트', '스킬 · 프리셋', '단계 묶음']}>
+<Tab>
+
+캐릭터는 슬롯에 스킬 단계 상태와 오브젝트 태그를 등록하고, 상태는 단계마다 이벤트를 방송하기만 합니다.
+
+#### A. 스킬 등록
+
+<Editor file="MainPlayer.cpp" fn="CMainPlayer::Ready_Ability()">
+
+```cpp
+{
+    CSkillStateContainer* pContainer = CSkillStateContainer::Create(pActionState, "Chidori");
+    {
+        CState_Chidori_Start::STATE_DESC desc = {};
+        desc.bBlend = true;
+        desc.pModel = pModel;
+        desc.iAnimIndex = Get_AnimationIndex(L"Animation_Master_ChidoriStart");
+        if (FAILED(pContainer->Add_SkillState(CState_Chidori_Start::Create(pActionState, &desc))))
+            return E_FAIL;
+    }
+    {
+        CState_Chidori_Charge::STATE_DESC desc = {};
+        desc.bBlend = true;
+        desc.pModel = pModel;
+        desc.iAnimIndex = Get_AnimationIndex(L"Animation_Master_ChidoriCharge");
+        if (FAILED(pContainer->Add_SkillState(CState_Chidori_Charge::Create(pActionState, &desc))))
+            return E_FAIL;
+    }
+    // ... 코드 중략
+    m_pSkillComp->Add_SkillAbility(AbilityState::SWORD, 1, pContainer);
+}
+// ... 코드 중략
+
+m_pSkillComp->Set_SkillCoolTime(SWORD, 1, 10.f);
+m_pSkillComp->Set_SkillEffectModelTag(SWORD, 1, L"Prototype_GameObject_Chidori");
+```
+
+</Editor>
+
+치도리는 다섯 단계 상태를 컨테이너에 넣어 슬롯에 등록하고, 쿨타임과 생성할 스킬 오브젝트 태그를 지정합니다.
+
+#### B. 단계별 이벤트 방송
+
+<Editor file="State_Chidori_Start.cpp" fn="CState_Chidori_Start::Start(...)">
+
+```cpp
+CPlayer* pPlayer = static_cast<CPlayer*>(Get_OwnerObject());
+CSkillChidori::SKILLBASE_DESC desc = {};
+desc.pOwner = Get_OwnerObject();
+pPlayer->Use_Skill(1, &desc);
+CGameInstance::GetInstance()->Broadcast<Skill_Appear>(Get_OwnerObject(), 1, 1);
+```
+
+</Editor>
+
+<Editor file="State_Chidori_ToRun.cpp" fn="CState_Chidori_ToRun::Start(...)">
+
+```cpp
+SetupLook_Target_XZ();
+CGameInstance::GetInstance()->Broadcast<Skill_Active>(Get_OwnerObject(), 1, 1);
+```
+
+</Editor>
+
+<Editor file="State_Chidori_Attack.cpp" fn="CState_Chidori_Attack::Start(...)">
+
+```cpp
+CGameInstance::GetInstance()->Broadcast<Skill_Disappear>(Get_OwnerObject(), 1, 1);
+```
+
+</Editor>
+
+애니메이션 단계가 시작될 때마다 그 단계에 맞는 이벤트를 방송합니다. 시작 단계에서 스킬 오브젝트를 만들고, 돌진 단계에서 충돌체를 켜고, 공격 단계에서 사라지게 합니다.
+
+</Tab>
+<Tab>
+
+이벤트를 태그 타입으로 구분하는 전역 버스입니다. 태그 구조체의 `Signature`가 곧 콜백 형식이고, 태그 타입마다 채널(`m_channels`)을 하나씩 두어 `Add_MemFunc`로 구독하고 `Broadcast`로 호출합니다. 방송 중에 들어온 구독은 방송 깊이(`m_iBroadcastDepth`)를 보고 대기 목록(`m_vecPending`)에 모아 둡니다.
+
+#### A. 태그 타입 채널
+
+<Editor file="Client_EventDefine.h" fn="Skill_Appear, Skill_Active, Skill_Disappear">
+
+```cpp
+struct Skill_Appear { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
+struct Skill_Active { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
+struct Skill_Disappear { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
+```
+
+</Editor>
+
+<Editor file="EventBus_Manager.h" fn="CEventBus_Manager">
+
+```cpp
+	template<typename Tag, typename T, typename... Args>
+	DelegateHandle Add_MemFunc(T* pObj, void (T::* memFunc)(Args...))
+	{
+		using Sig = typename Tag::Signature;
+		static_assert(std::is_same_v<Sig, void(Args...)>, "signature not match");
+		return Subscribe<Tag>([pObj, memFunc](Args... args)
+			{
+				(pObj->*memFunc)(std::forward<Args>(args)...);
+			});
+	}
+	// ... 코드 중략
+	template<typename Tag, typename... Arg>
+	void Broadcast(Arg&&... a)
+	{
+		auto itr = m_channels.find(std::type_index(typeid(Tag)));
+		if (itr == m_channels.end()) return;
+
+		auto* pChannel = static_cast<Channel<typename Tag::Signature>*>(itr->second);
+		pChannel->multicast.Broadcast(std::forward<Arg>(a)...);
+	}
+	// ... 코드 중략
+	template<typename Tag>
+	Channel<typename Tag::Signature>* GetOrCreate()
+	{
+		const std::type_index key{ typeid(Tag) };
+		auto itr = m_channels.find(key);
+		if (itr != m_channels.end())
+			return static_cast<Channel<typename Tag::Signature>*>(itr->second);
+
+		auto* pChannel = new Channel<typename Tag::Signature>();
+		m_channels.emplace(key, pChannel);
+		return pChannel;
+	}
+private:
+	std::unordered_map<std::type_index, IChannel*> m_channels;
+```
+
+</Editor>
+
+<Fig n={2} white max={560} src="/img/reviews/naruto/02-skill-system/bus.png" caption="태그 타입별 채널과 방송 중 구독 변경" />
+
+이벤트는 문자열이나 번호 대신 빈 태그 구조체로 구분하고, 태그 타입의 `type_index`로 채널을 찾습니다. 구독하는 멤버 함수의 형식이 태그의 `Signature`와 다르면 `static_assert`가 컴파일 단계에서 막습니다(<FigRef n={2} />).
+
+#### B. 방송 중 구독 변경
+
+<Editor file="MulticastDelegate.h" fn="CMulticastDelegate<void(Args...)>">
+
+```cpp
+	template<typename... A>
+	void Broadcast(A&&... args)
+	{
+		static_assert(sizeof...(A) == sizeof...(Args), "Broadcast argument count must match the delegate signature");
+
+		m_iBroadcastDepth++;
+		for (size_t i = 0; i < m_vecSlots.size(); ++i)
+		{
+			if (!m_vecSlots[i].bAlive)
+				continue;
+
+			m_vecSlots[i].func(std::forward<A>(args)...);
+		}
+		m_iBroadcastDepth--;
+
+		if (!IsBroadcasting())
+			Apply_Pending();
+	}
+// ... 코드 중략
+
+template<class ...Args>
+inline DelegateHandle CMulticastDelegate<void(Args...)>::Subscribe(std::function<void(Args...)> func) noexcept
+{
+	Slot slot = {};
+	slot.bAlive = true;
+	slot.key.iGeneration = 1;
+	slot.key.iID = m_iNextID++;
+	slot.func = std::move(func);
+
+	if (IsBroadcasting())
+		m_vecPending.emplace_back(std::move(slot));
+	else
+		m_vecSlots.emplace_back(std::move(slot));
+
+	return slot.key;
+}
+// ... 코드 중략
+
+template<class ...Args>
+inline void CMulticastDelegate<void(Args...)>::Apply_Pending()
+{
+	auto itr = std::remove_if(m_vecSlots.begin(), m_vecSlots.end(),
+		[&](const Slot& s)->bool
+		{
+			return !s.bAlive;
+		});
+
+	m_vecSlots.erase(itr, m_vecSlots.end());
+
+	for (auto& slot : m_vecPending)
+	{
+		if (slot.bAlive)
+			m_vecSlots.emplace_back(std::move(slot));
+	}
+	m_vecPending.clear();
+}
+```
+
+</Editor>
+
+구독자 콜백 안에서 다시 구독하거나 해제하면 순회 중인 배열이 바뀌어 반복자가 깨집니다. 그래서 방송 중에는 새 구독을 대기 목록에 넣고 해제는 표시만 해 두었다가, 가장 바깥 방송이 끝날 때 한꺼번에 반영합니다. 방송 깊이를 세므로 방송 안에서 다시 방송해도 안전합니다.
+
+</Tab>
+<Tab>
+
+캐릭터에 붙는 컴포넌트입니다. 슬롯별 스킬 상태(`m_vecSkill`)와 쿨타임을 들고 `CanUse`/`Use`로 스킬 오브젝트를 만들며, `Subscribe_SkillEvenets()`로 구독한 단계 이벤트 가운데 자기 캐릭터의 것만 골라 해당 스킬에 넘깁니다.
+
+#### A. 쿨타임과 생성
+
+<Editor file="SkillComponent.cpp" fn="CSkillComponent::CanUse(...), CSkillComponent::Use(...), CSkillComponent::Spawn_SkillEffect(...)">
+
+```cpp
+_bool CSkillComponent::CanUse(_uint iType, _uint _iIndex)
+{
+	_uint iIndex = iType * 3 + _iIndex;
+	return m_vecSkillRemaintimes[iIndex] <= 0.f;
+}
+
+void CSkillComponent::Use(_uint iType, _uint _iIndex, void* pArg)
+{
+	_uint iIndex = iType * 3 + _iIndex;
+	if (iIndex >= m_vecSkill.size())
+		return;
+
+	Spawn_SkillEffect(iIndex, pArg);
+	m_vecSkillRemaintimes[iIndex] = m_vecSkillCooltimes[iIndex];
+}
+
+void CSkillComponent::Spawn_SkillEffect(_uint iIndex, void* pArg)
+{
+	_uint iLevelIndex = m_pGameInstance->Get_CurrentLevelIndex();
+	CGameObject* pGo = m_pGameInstance->Add_GameObject(0, m_wstrSkillEffectTag[iIndex], iLevelIndex, g_wszSkillLayer, pArg);
+	if (pGo == nullptr)
+		return;
+	m_vecActiveSkillEffect[iIndex] = static_cast<CSkillBase*>(pGo);
+}
+```
+
+</Editor>
+
+쿨타임 확인과 생성은 컴포넌트가 맡고, 스킬 오브젝트는 슬롯에 등록된 프로토타입 태그로 복제합니다. 어떤 스킬을 만들지는 슬롯 설정이 정하므로 컴포넌트 코드는 스킬 종류를 모릅니다.
+
+#### B. 이벤트 전달
+
+<Editor file="SkillComponent.cpp" fn="CSkillComponent::Subscribe_SkillEvenets(), CSkillComponent::On_SkillAppear(...)">
+
+```cpp
+void CSkillComponent::Subscribe_SkillEvenets()
+{
+	m_arrDelegateHandles[EDelegateHandleID::Appear] =
+		m_pGameInstance->Subscribe<Skill_Appear>(this, &CSkillComponent::On_SkillAppear);
+	m_arrDelegateHandles[EDelegateHandleID::Active] =
+		m_pGameInstance->Subscribe<Skill_Active>(this, &CSkillComponent::On_SkillActive);
+	m_arrDelegateHandles[EDelegateHandleID::Disappear] =
+		m_pGameInstance->Subscribe<Skill_Disappear>(this, &CSkillComponent::On_SkillDisapear);
+}
+// ... 코드 중략
+
+void CSkillComponent::On_SkillAppear(CGameObject* pOwner, _uint iType, _uint _iIndex)
+{
+	if (pOwner != Get_Owner())
+		return;
+
+	Dispatch_SkillEvent(ESkillEventID::AppearBegin, iType, _iIndex);
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={600} src="/img/reviews/naruto/02-skill-system/flow.png" caption="입력에서 스킬 파츠 동작까지" />
+
+상태는 "이 캐릭터의 몇 번 스킬이 나타났다"고 방송만 합니다. 스킬 컴포넌트가 자기 캐릭터의 이벤트만 골라 해당 슬롯의 스킬 오브젝트에 전달하므로(<FigRef n={3} />), 상태 코드는 스킬 오브젝트를 직접 참조하지 않습니다.
+
+</Tab>
+<Tab>
+
+모든 스킬 오브젝트의 기반입니다. 단계 전환은 `On_SkillEvent`에 한 번만 구현하고, 스킬마다 다른 부분은 "단계 이벤트 → 커맨드(`SKILL_CMD`) 목록" 프리셋으로 받아 `Execute_Command`가 대상 파츠에 전달합니다.
+
+#### A. 커맨드 데이터
+
+<Editor file="Client_Defines.h" fn="SKILL_CMD, SKILL_PRESET">
+
+```cpp
+typedef struct tagSkillCommand
+{
+	ESkillCommandType eType = { ESkillCommandType::END };
+	_uint iPartID = { 0 };
+
+	_uint iEnable = 0;
+	_uint iAxis = 0;
+	_float fRotateSpeed = 1.f;
+	_float fA = 0.f;
+	_float fB = 0.f;
+	_float fDuration = 0.f;
+}SKILL_CMD;
+
+typedef struct tagSkillPreset
+{
+	std::unordered_map<_uint, std::vector<tagSkillCommand>> umapEventToCommands;
+}SKILL_PRESET;
+```
+
+</Editor>
+
+<Editor file="SkillShuriken.cpp" fn="CSkillShuriken::Initialize_Prototype()">
+
+```cpp
+SKILL_PRESET* pPreset = new SKILL_PRESET;
+{
+    vector<SKILL_CMD> vec;
+    // Core Enable
+    {
+        SKILL_CMD cmd;
+        cmd.eType = ESkillCommandType::EnablePart;
+        cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Core);
+        cmd.iEnable = 1;
+        vec.push_back(cmd);
+    }
+    // Core TweenScale Enable
+    {
+        SKILL_CMD cmd;
+        cmd.eType = ESkillCommandType::TweenScale;
+        cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Core);
+        cmd.iEnable = 1;
+        cmd.fA = 0.2f;
+        cmd.fB = 3.f;
+        cmd.fDuration = 1.5f;
+        vec.push_back(cmd);
+    }
+    // Shuriken Enable
+    {
+        SKILL_CMD cmd;
+        cmd.eType = ESkillCommandType::EnablePart;
+        cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Shuriken);
+        cmd.iEnable = 1;
+        vec.push_back(cmd);
+    }
+    // Shuriken Rotation Enable
+    {
+        SKILL_CMD cmd;
+        cmd.eType = ESkillCommandType::Rotate;
+        cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Shuriken);
+        cmd.iEnable = 1;
+        cmd.iAxis = ENUM_TO_UINT(ERotateAxis::Yaw);
+        cmd.fRotateSpeed = 20.f;
+        vec.push_back(cmd);
+    }
+    // ... 코드 중략
+    pPreset->umapEventToCommands[ENUM_TO_UINT(ESkillEventID::AppearBegin)] = std::move(vec);
+}
+// ... 코드 중략
+
+Set_Preset(pPreset);
+```
+
+</Editor>
+
+<Fig n={4} white max={760} src="/img/reviews/naruto/02-skill-system/preset.png" caption="나선수리검의 단계 이벤트별 커맨드 목록" />
+
+나선수리검은 나타날 때 코어를 켜서 0.2배에서 3배로 키우고, 수리검 파츠를 켜서 회전시킵니다. 이 내용이 모두 커맨드 데이터이고 실행 코드는 모든 스킬이 같아서, 새 스킬은 파츠 구성과 커맨드 목록만 정하면 됩니다(<FigRef n={4} />).
+
+#### B. 이벤트 → 커맨드 실행
+
+<Editor file="SkillBase.cpp" fn="CSkillBase::On_SkillEvent(...), CSkillBase::Execute_Command(...)">
+
+```cpp
+void CSkillBase::On_SkillEvent(ESkillEventID eID)
+{
+	auto itr = m_pPreset->umapEventToCommands.find(ENUM_TO_UINT(eID));
+	if (itr == m_pPreset->umapEventToCommands.end())
+		return;
+
+	switch (eID)
+	{
+	case Client::ESkillEventID::AppearBegin:
+	{
+		Change_State(CSkillBase::EState::Appear);
+		m_pGameInstance->Play_OneShot(L"SkillUse", 0.25f);
+	} break;
+	case Client::ESkillEventID::ActiveBegin:
+		Change_State(CSkillBase::EState::Active);
+		break;
+	case Client::ESkillEventID::DisappearBegin:
+		Change_State(CSkillBase::EState::Disappear);
+		break;
+	}
+
+	for (auto& cmd : itr->second)
+		Execute_Command(cmd);
+}
+// ... 코드 중략
+
+void CSkillBase::Execute_Command(const SKILL_CMD& cmd)
+{
+	CSkillPart* pSkillPart = { nullptr };
+	if ((pSkillPart = Get_Part<CSkillPart>(cmd.iPartID)) == nullptr)
+		return;
+
+	switch (cmd.eType)
+	{
+	case Client::ESkillCommandType::EnablePart:
+		pSkillPart->Set_Enable(cmd.iEnable);
+		break;
+	case Client::ESkillCommandType::Rotate:
+	case Client::ESkillCommandType::PulseScale:
+	case Client::ESkillCommandType::TweenScale:
+	case Client::ESkillCommandType::PlayOneShot:
+		pSkillPart->Execute_Command(cmd);
+		break;
+	}
+}
+```
+
+</Editor>
+
+<Editor file="SkillMeshPart.cpp" fn="CSkillMeshPart::Update(...), CSkillMeshPart::Execute_Command(...)">
+
+```cpp
+void CSkillMeshPart::Update(_float fTimeDelta)
+{
+	if (Is_Enable())
+	{
+		Super::Update(fTimeDelta);
+		Rotating(fTimeDelta);
+		TweenScaling(fTimeDelta);
+		PulseScaling(fTimeDelta);
+		UVScrolling(fTimeDelta);
+	}
+}
+// ... 코드 중략
+
+void CSkillMeshPart::Execute_Command(const SKILL_CMD& cmd)
+{
+	_bool bEnable = cmd.iEnable > 0;
+
+	switch (cmd.eType)
+	{
+	case Client::ESkillCommandType::EnablePart:
+
+		break;
+	case Client::ESkillCommandType::Rotate:
+		Enable_Rotate(bEnable, static_cast<ERotateAxis>(cmd.iAxis), cmd.fRotateSpeed);
+		break;
+	case Client::ESkillCommandType::PulseScale:
+		Enable_PulseScale(bEnable, cmd.fA, cmd.fB, cmd.fDuration);
+		break;
+	case Client::ESkillCommandType::TweenScale:
+		Enable_TweenScale(bEnable, cmd.fA, cmd.fB, cmd.fDuration);
+		break;
+	case Client::ESkillCommandType::PlayOneShot:
+
+		break;
+	}
+}
+```
+
+</Editor>
+
+이벤트가 오면 단계를 바꾸고, 그 이벤트에 등록된 커맨드를 순서대로 실행합니다. 파츠는 커맨드를 받으면 회전·크기 변화를 켜 두기만 하고, 실제 변화는 매 프레임 자기 `Update`에서 진행합니다.
+
+</Tab>
+<Tab>
+
+스킬 하나를 이루는 애니메이션 단계들(`m_vecSkillStates`, 예: 시작 → 충전 → 돌진 → 공격)을 묶은 상태입니다. 상태 머신에게는 상태 하나지만, `Update`에서 하위 단계를 순서대로 진행하고 마지막 단계가 끝나면 기본 상태로 돌아갑니다.
+
+#### A. 하위 단계 진행
+
+<Editor file="SkillStateContainer.cpp" fn="CSkillStateContainer::Start(...), CSkillStateContainer::Update(...)">
+
+```cpp
+HRESULT CSkillStateContainer::Start(void* pArg, _bool bForce)
+{
+	if (m_vecSkillStates.size() <= 0)
+		return E_FAIL;
+
+	m_iCurrentSkillState = 0;
+	m_vecSkillStates[m_iCurrentSkillState]->Start(nullptr);
+	Setup_SkillState(m_vecSkillStates[m_iCurrentSkillState]);
+	return S_OK;
+}
+
+void CSkillStateContainer::Update(const _float fTimeDelta)
+{
+	if (m_iCurrentSkillState < 0 || m_iCurrentSkillState >= m_vecSkillStates.size())
+		return;
+
+	if (!m_vecSkillStates[m_iCurrentSkillState])
+		return;
+
+	Super::Update(fTimeDelta);
+
+	// Todo - desc 전달
+	if (m_vecSkillStates[m_iCurrentSkillState]->Is_FinishedState())
+	{
+		if(Goto_NextSkillState(nullptr))
+			return;
+		else
+		{
+			if (m_iCurrentSkillState + 1 >= m_vecSkillStates.size())
+			{
+				Request_Change_State(m_iRootState /* 0 = Idle */);
+				return;
+			}
+		}
+	}
+
+	m_vecSkillStates[m_iCurrentSkillState]->Update(fTimeDelta);
+}
+```
+
+</Editor>
+
+상태 머신은 스킬 슬롯 하나를 상태 하나로만 보고, 스킬 안의 여러 애니메이션 단계는 컨테이너가 진행합니다. 마지막 단계가 끝나면 컨테이너가 기본 상태로 돌려보내므로 스킬마다 복귀 코드를 따로 쓰지 않습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**한 캐릭터의 스킬 단계를 전역 방송으로 알렸습니다.** 모든 스킬 컴포넌트가 같은 채널을 구독하고, 각자 "내 캐릭터인가"를 비교해 걸러 냅니다. 받을 쪽이 정해진 호출에 방송을 썼기 때문에 캐릭터가 늘수록 쓸모없는 호출도 함께 늘어납니다. 스킬 컴포넌트를 직접 호출하거나 캐릭터별 채널을 두었다면 걸러 내는 비용과 잘못 받을 가능성이 함께 사라졌을 것입니다.
+
+남은 개선점입니다.
+
+- 치도리 상태들이 `(1, 1)`처럼 슬롯 번호를 직접 적고 있어, 슬롯 배치가 바뀌면 함께 고쳐야 합니다. 컨테이너가 자기 슬롯 번호를 하위 단계에 넘겨 주는 편이 낫습니다.
+- `Broadcast`가 같은 인자를 구독자마다 `std::forward`로 넘깁니다. 이동 가능한 값을 넘기면 두 번째 구독자부터 빈 값을 받게 됩니다(지금은 포인터·정수뿐이라 문제 없음).
+- 구독 핸들의 세대 값이 항상 1로 고정되어 핸들 재사용을 구분하지 못합니다.
+- 소리 재생 커맨드(`PlayOneShot`)는 종류만 있고 처리 코드가 비어 있습니다.

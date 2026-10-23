@@ -1,0 +1,771 @@
+---
+project: duet
+order: 1
+title: 디퍼드 렌더 파이프라인
+topic: 렌더링
+chips: [Deferred Rendering, HDR, PBR, CSM, Bitmask]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+디퍼드 렌더링은 오브젝트를 그릴 때 색·노멀·깊이 같은 표면 정보만 여러 장의 텍스처(G-Buffer)에 기록해 두고, 조명은 화면 공간에서 픽셀마다 한 번만 계산합니다. 빛을 16비트 부동소수 버퍼(HDR)에 누적하면 1.0을 넘는 밝기를 그대로 보존했다가, 마지막에 톤매핑으로 화면 밝기에 맞출 수 있습니다.
+
+효과마다 필요한 중간 결과를 G-Buffer와 HDR 버퍼로 정리해 두어서, 외곽선·림·블룸 같은 연출을 패스 하나씩 붙여 넣을 수 있었습니다. 1.0을 넘는 발광도 잘리지 않고 블룸까지 전달됩니다.
+
+## 2. 문제
+
+> 나루토 모작의 디퍼드 렌더링은 색·노멀·깊이 세 장을 그려 빛을 한 번 계산하는 구조였고, 색 버퍼가 8비트(LDR)라 밝은 빛이 1.0에서 잘렸습니다. 그림자·환경 차폐·블룸도 없었습니다. 최종 프로젝트는 툰 느낌의 3D 액션이라 캐릭터 외곽선과 림 라이트, 그림자, 스킬 이펙트의 번짐(블룸)이 필요했습니다. 이 효과들은 저마다 다른 중간 결과(깊이, 노멀, 오브젝트 구분, 빛의 세기)를 읽기 때문에, 어느 패스가 무엇을 만들고 무엇을 읽는지부터 정해야 했습니다.
+
+## 3. 구조 요약
+
+렌더 매니저는 패스 순서와 렌더 타깃 연결을 맡고, 각 패스의 계산은 셰이더 패스 하나씩으로 나눴습니다. 오브젝트는 렌더 분류(불투명·그림자·투명 등)에 자신을 넣기만 하고, 어느 패스에서 그려질지는 렌더 매니저가 정합니다.
+
+<Fig n={1} white max={500} src="/img/reviews/duet/01-deferred/class.png" caption="렌더 파이프라인 관련 클래스·리소스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 / 셰이더 | 책임 |
+| --- | --- |
+| `CRender_Manager` | 렌더 분류별 오브젝트 수집, 패스 순서, 렌더 타깃·MRT 생성과 바인딩 |
+| `Shader_Deffered.hlsl` | 조명·SSAO·HDR 합성·외곽선·블룸·톤매핑 화면 패스 |
+| `Light_Defines.hlsl` | G-Buffer 해석, 오브젝트 정보 압축·해제, BRDF·툰 함수 |
+| `CGameObject` | 오브젝트 ID와 외곽선·림 플래그 보관 |
+| WBOIT·왜곡 패스 (팀원 작성) | 투명 물체 가중 블렌딩 합성, 화면 왜곡 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '패스 · G-Buffer', '조명 · HDR', '외곽선 · 오브젝트 정보', '캐스케이드 그림자']}>
+<Tab>
+
+오브젝트가 렌더 분류에 들어오는 입구와, 조명 패스가 G-Buffer를 읽어 광원마다 화면 패스를 그리는 부분입니다.
+
+#### A. 렌더 분류 등록
+
+<Editor file="Render_Manager.cpp" fn="Push_RenderObject(...)">
+
+```cpp
+void CRender_Manager::Push_RenderObject(RENDER_CATEGORY eCategory, CGameObject* pGO)
+{
+	if (pGO == nullptr)
+		return;
+
+	if (eCategory >= RENDER_CATEGORY::END)
+		return;
+
+	Safe_AddRef(pGO);
+	m_renderObjects[ENUM_TO_UINT(eCategory)].push_back(pGO);
+}
+```
+
+</Editor>
+
+오브젝트는 그리기 전에 자기가 속할 분류를 골라 넣기만 하고, 어느 패스에서 그려질지는 렌더 매니저가 정합니다. 넣을 때 참조 카운트를 올려 두므로, 그 프레임 안에 오브젝트가 삭제 요청을 받아도 패스가 끝날 때까지는 해제되지 않습니다.
+
+#### B. 조명 패스
+
+<Editor file="Render_Manager.cpp" fn="Render_Lights()">
+
+```cpp
+HRESULT CRender_Manager::Render_Lights()
+{
+	if (FAILED(m_pGameInstance->Begin_MRT(EMRTLayer::LightAcc)))
+		return E_FAIL;
+
+	if (FAILED(m_pShader->Bind_TransformData(m_matWorld_RT)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Bind_RT_ShaderResource(ERenderTarget::Normal, m_pShader)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Bind_RT_ShaderResource(ERenderTarget::SpecularMask, m_pShader)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Bind_RT_ShaderResource(ERenderTarget::ObjectInfo, m_pShader)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Bind_RT_ShaderResource(ERenderTarget::Diffuse, m_pShader)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Bind_RT_ShaderResource(ERenderTarget::SSAO_Ping, m_pShader)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Bind_RT_ShaderResource(ERenderTarget::Depth, m_pShader)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Bind_RT_ShaderResource(ERenderTarget::Cascade_0, m_pShader)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Bind_RT_ShaderResource(ERenderTarget::Cascade_1, m_pShader)))
+		return E_FAIL;
+
+	if (FAILED(Bind_ActiveBakedSections()))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Render_Lights(m_pShader, m_pVIBuffer)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->End_MRT()))
+		return E_FAIL;
+
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Editor file="Light_Manager.cpp" fn="Render(...)">
+
+```cpp
+HRESULT CLight_Manager::Render(CShader* pShader, CVIBuffer_Rect_Tex* pVIBuffer)
+{
+	for (list<CLight*> &list : m_Lights)
+	{
+		for (CLight* pLight : list)
+		{
+			Setup_Pass(pShader, pLight->Get_Type());
+			Setup_ConstantBuffer(pLight->Get_LightDesc());
+			pShader->Apply();
+			pVIBuffer->Bind_Resource();
+			pVIBuffer->Render();
+		}
+	}
+
+	/* 점조명은 Push 해주기 */
+	m_Lights[ENUM_TO_UINT(LIGHT_TYPE::POINT)].clear();
+	return S_OK;
+}
+```
+
+</Editor>
+
+조명 패스는 빛 누적 타깃(Shade·Specular)을 열고 노멀·재질·오브젝트 정보·색·SSAO·깊이·그림자 맵을 셰이더에 묶은 다음, 실제 그리기는 광원 관리자에게 넘깁니다. 광원 관리자는 광원 종류에 맞춰 패스와 상수 버퍼만 바꾸면서 화면 사각형을 광원 수만큼 그립니다. 점광원은 매 프레임 새로 등록받기 때문에 그린 뒤 목록을 비웁니다.
+
+</Tab>
+<Tab>
+
+한 프레임의 패스 순서를 정하는 부분입니다. 오브젝트는 `Push_RenderObject`로 분류별 목록(`m_renderObjects`)에 들어왔다가 패스가 끝나면 비워지고, `Render()`가 MRT를 열고 닫으며 결과 텍스처를 다음 패스로 넘깁니다. 렌더 타깃 포맷과 패스별 묶음은 `Ready_RT()`/`Ready_MRT()`에서 정합니다.
+
+#### A. 패스 순서
+
+<Editor file="Render_Manager.cpp" fn="Render()">
+
+```cpp
+HRESULT CRender_Manager::Render()
+{
+	m_pGameInstance->Setup_ViewProj_ToCBuffer();
+	m_pGameInstance->Setup_Inv_ToCBuffer();
+
+	if (FAILED(Render_Priority()))
+		return E_FAIL;
+
+	if (FAILED(Render_CascadeShadow()))
+		return E_FAIL;
+
+	if (FAILED(Render_NoneBlend()))
+		return E_FAIL;
+
+	if (FAILED(Render_ComputeLight_Blend()))
+		return E_FAIL;
+
+	m_pGameInstance->Setup_UIViewProj_ToCBuffer();
+
+	if (FAILED(Render_SSAO()))
+		return E_FAIL;
+	// ... 코드 중략
+	if (FAILED(Render_Lights()))
+		return E_FAIL;
+
+	if (FAILED(Render_CombinedHDR()))
+		return E_FAIL;
+
+	m_pGameInstance->Setup_ViewProj_ToCBuffer();
+	// ... 코드 중략
+	m_pGameInstance->Setup_UIViewProj_ToCBuffer();
+
+	if (FAILED(Render_Bloom()))
+		return E_FAIL;
+
+	if (FAILED(Render_ToneMap()))
+		return E_FAIL;
+
+	if (FAILED(Render_UI()))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Render_Fonts()))
+		return E_FAIL;
+
+	if (FAILED(Render_BlendUI()))
+		return E_FAIL;
+	// ... 코드 중략
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={560} src="/img/reviews/duet/01-deferred/passes.png" caption="그림자 → G-Buffer → SSAO → 조명 → HDR 합성 → 후처리 → 톤매핑" />
+
+그림자 맵을 먼저 그리고, 불투명 오브젝트로 G-Buffer를 채운 뒤 SSAO와 조명을 화면 공간에서 계산합니다. 조명 결과는 `SceneHDR`에 합성하고, 그 위에 배경·외곽선·안개와 투명 물체를 쌓은 다음 블룸과 톤매핑으로 마무리합니다(<FigRef n={2} />). 앞 패스가 만든 텍스처를 다음 패스가 읽는 순서 그대로 한 프레임이 이어지는 셈입니다. 화면 전체를 덮는 패스 앞뒤로는 직교 투영(`Setup_UIViewProj_ToCBuffer`)과 원근 투영을 바꿔 넣습니다. 중략한 구간의 투명 물체 가중 블렌딩(WBOIT)과 왜곡 패스는 팀원이 작성했습니다.
+
+#### B. G-Buffer 구성
+
+<Editor file="Render_Manager.cpp" fn="Ready_MRT()">
+
+```cpp
+// For. MRT_GameObjects
+{
+	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Diffuse)))
+		return E_FAIL;
+	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Normal)))
+		return E_FAIL;
+	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::SpecularMask)))
+		return E_FAIL;
+	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Depth)))
+		return E_FAIL;
+	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::ObjectInfo)))
+		return E_FAIL;
+	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Emissive)))
+		return E_FAIL;
+}
+
+// For. MRT_LightAcc
+{
+	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::LightAcc, ERenderTarget::Shade)))
+		return E_FAIL;
+
+	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::LightAcc, ERenderTarget::Specular)))
+		return E_FAIL;
+}
+```
+
+</Editor>
+
+<Editor file="Render_Manager.cpp" fn="Ready_RT()">
+
+```cpp
+// For. Target_Diffuse
+{
+	CRenderTarget::RENDERTARGET_DESC desc = {};
+	desc.ePixelFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	desc.iWidth = iWidth;
+	desc.iHeight = iHeight;
+	desc.vClearColor = Vec4::Zero;
+	if (FAILED(m_pGameInstance->Add_RenderTarget(ERenderTarget::Diffuse, &desc)))
+		return E_FAIL;
+}
+// ... 코드 중략
+// For. Target_ObjectInfo
+{
+	CRenderTarget::RENDERTARGET_DESC desc = {};
+	desc.ePixelFormat = DXGI_FORMAT_R32_UINT;
+	desc.iWidth = iWidth;
+	desc.iHeight = iHeight;
+	desc.vClearColor = Vec4::Zero;
+	if (FAILED(m_pGameInstance->Add_RenderTarget(ERenderTarget::ObjectInfo, &desc)))
+		return E_FAIL;
+}
+```
+
+</Editor>
+
+<Editor file="Struct_Defines.hlsl" fn="PS_OUT_DEFFERED">
+
+```cpp
+struct PS_OUT_DEFFERED
+{
+    float4 vDiffuse : SV_TARGET0;
+    float4 vNormal : SV_TARGET1;
+    float4 vSpecularMask : SV_TARGET2;
+    float4 vDepth : SV_TARGET3;
+    uint4 vObjectInfo : SV_Target4;
+    float4 vEmissive : SV_Target5;
+};
+```
+
+</Editor>
+
+<Fig n={3} white max={700} src="/img/reviews/duet/01-deferred/gbuffer.png" caption="G-Buffer 6장(MRT)의 포맷과 채널 구성" />
+
+불투명 패스는 6장을 한 번에 기록하고, 이후 패스는 화면 공간에서 읽기만 합니다. 색과 발광은 1.0을 넘는 값을 담도록 16비트 부동소수로 두었고, 깊이 타깃에는 NDC 깊이와 뷰 깊이를 함께, 재질 타깃 한 장에는 AO·거칠기·금속도를 넣었습니다(<FigRef n={3} />). 오브젝트 정보는 32비트 정수 한 장이며, 외곽선과 림 라이트가 "이 픽셀이 어느 오브젝트인가"를 여기서 알아냅니다.
+
+</Tab>
+<Tab>
+
+조명과 HDR 합성 셰이더입니다. 화면 사각형 하나를 그리면서 G-Buffer를 읽어 픽셀마다 계산합니다. `PS_MAIN_DIRECTIONAL`이 빛을 Shade·Specular에 누적하면 `PS_MAIN_COMBINED`가 이를 SceneHDR로 합치고, `PS_MAIN_BLOOM_*`와 `PS_MAIN_TONEMAP`이 블룸·노출·ACES·LUT·감마를 거쳐 백버퍼에 씁니다.
+
+#### A. PBR 스펙큘러 + 툰 디퓨즈
+
+<Editor file="Shader_Deffered.hlsl" fn="PS_MAIN_DIRECTIONAL">
+
+```cpp
+PS_OUT_LIGHT PS_MAIN_DIRECTIONAL(PS_IN_POS_TEX input)
+{
+    PS_OUT_LIGHT output;
+
+    // 기본 출력은 검정으로 시작한다.
+    output.vShade = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    output.vSpecular = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    // ... 코드 중략
+    // SSAO 결과를 읽는다.
+    float fSSAO = g_RenderTargetAOTexture.Sample(LinearSampler, input.vUV).r;
+
+    // Material AO와 SSAO를 곱해서 최종 AO를 만든다.
+    float fOcc = saturate(fAO * fSSAO);
+    // ... 코드 중략
+    // Shadow
+    float fDynamicShadow = SampleCascadeShadowPCF(vWorldPos.xyz, vNormal, fNdotL, fViewZ);
+    // ... 코드 중략
+    // toon 명암 값을 계산한다.
+    float fToonDiffuse = ComputeToonDiffuse(vNormal, vLightDir);
+
+    // 기존 PBR diffuse와 같은 의미로 1/PI를 유지한다.
+    float3 vDiffuseBRDF = vKD / PI;
+
+    // Ambient는 AO를 그대로 반영한다.
+    float3 vAmbient = Light.vAmbient.rgb * fOcc;
+
+    // Direct diffuse는 AO를 약하게 반영한다.
+    const float fDirectOccStrength = 0.35f;
+    float fDirectOcc = lerp(1.0f, fOcc, fDirectOccStrength);
+
+    // 광원 색을 가져온다.
+    float3 vRadiance = Light.vDiffuse.rgb;
+
+    // 최종 Toon diffuse를 만든다.
+    float3 vShade = vAmbient + (vRadiance * (fToonDiffuse * fDirectOcc * fFinalShadow)) * vDiffuseBRDF;
+
+    // Specular는 예전 PBR 공식을 그대로 유지한다.
+    float fSpecOcc = lerp(1.0f, fOcc, 0.2f);
+    float3 vSpecular = (vSpecularBRDF * vRadiance) * (fNdotL * fSpecOcc * fFinalShadow);
+    // ... 코드 중략
+    // 최종 shade를 기록한다.
+    output.vShade = float4(vShade, 1.0f);
+
+    // 최종 specular + rim을 기록한다.
+    output.vSpecular = float4(vSpecular + vRim, 1.0f);
+
+    return output;
+}
+```
+
+</Editor>
+
+스펙큘러는 GGX 기반 PBR 식을 그대로 쓰고, 디퓨즈만 툰 명암 함수로 바꿨습니다. 광택과 금속 질감은 물리 기반으로 남기되 명암 경계는 만화풍으로 뚝 끊어 보이게 하려는 선택입니다. AO는 환경광에는 그대로, 직접광에는 약하게만 곱해서 SSAO가 밝은 면까지 탁하게 만들지 않도록 했습니다. 림 라이트는 오브젝트 정보에 림 플래그가 켜진 픽셀에만 얹습니다.
+
+#### B. HDR 합성과 톤매핑
+
+<Editor file="Shader_Deffered.hlsl" fn="PS_MAIN_COMBINED, PS_MAIN_TONEMAP">
+
+```cpp
+PS_OUT_HDR PS_MAIN_COMBINED(PS_IN_POS_TEX input)
+{
+    PS_OUT_HDR output;
+
+    float4 vDepth = g_RenderTargetDepthTexture.Sample(LinearSampler, input.vUV);
+
+    float4 vDiffuse = g_RenderTargetDiffuseTexture.Sample(LinearSampler, input.vUV);
+
+    float4 vSpecular = g_RenderTargetSpecularTexture.Sample(LinearSampler, input.vUV);
+
+    float4 vShade = g_RenderTargetShadeTexture.Sample(LinearSampler, input.vUV);
+
+    float4 vEmissive = g_RenderTargetEmissiveTexture.Sample(LinearSampler, input.vUV);
+
+    output.vColor = float4(vDiffuse.rgb * vShade.rgb + vSpecular.rgb + vEmissive.rgb, 1.f);
+    return output;
+}
+// ... 코드 중략
+
+PS_OUT_BACKBUFFER PS_MAIN_TONEMAP(PS_IN_POS_TEX input)
+{
+    PS_OUT_BACKBUFFER output;
+    float3 vBloom = g_RenderTargetBloomTexture.Sample(LinearClampSampler, input.vUV).rgb;
+    float4 vScene = g_RenderTargetSceneHDRTexture.Sample(LinearClampSampler, input.vUV);
+    // Bloom 합성
+    float3 vHDR = vScene.rgb + vBloom * BloomParam.fIntensity;
+
+    // Exposure
+    vHDR *= HDRparam.fExposure;
+
+    // Tonemap
+    float3 vLDR = ToneMap_ACES(vHDR.rgb);
+
+    // 대비
+    vLDR = max(vLDR, 0.0.xxx);
+    vLDR /= 0.18f;
+    vLDR = pow(vLDR, HDRparam.fGamma);
+    vLDR *= 0.18f;
+
+    vLDR = ApplyLUT_16(vLDR);
+
+    float3 invGamma = 1.f / 2.2f;
+    vLDR = pow(saturate(vLDR), invGamma);
+    output.vColor = float4(vLDR, 1.f);
+    return output;
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={820} src="/img/reviews/duet/01-deferred/hdr.png" caption="HDR 누적 → 블룸 → 노출·ACES·LUT → 감마" />
+
+조명 결과와 발광은 `SceneHDR`에 그대로 더해 두고, 블룸·노출·톤매핑은 맨 마지막에 한 번만 적용합니다(<FigRef n={4} />). 그래서 이펙트 발광처럼 1.0을 크게 넘는 값도 잘리지 않은 채 블룸 추출까지 넘어갑니다. 톤매핑 뒤 색 보정은 LUT 한 장이 맡으므로, 화면 분위기는 셰이더를 고치지 않고 텍스처만 바꿔서 조절할 수 있습니다.
+
+</Tab>
+<Tab>
+
+외곽선과 림 라이트를 오브젝트 단위로 켜고 끄기 위한 정보입니다. 오브젝트가 들고 있는 ID와 플래그(`m_tObjectInfoDesc`, 플래그는 `Set_RenderInfoFlag`로 조절)를 `PackObjectInfo`가 상위 8비트 플래그·하위 24비트 ID의 정수 하나로 묶고, `SilhouetteEdge`가 이웃 픽셀과 비교해 실루엣을 판정합니다.
+
+#### A. ID 기반 실루엣
+
+<Editor file="GameObject.cpp" fn="CGameObject(rhs), Set_RenderInfoFlag(...)">
+
+```cpp
+CGameObject::CGameObject(const CGameObject& rhs)
+    : m_pDevice(rhs.m_pDevice)
+    , m_pDeviceContext(rhs.m_pDeviceContext)
+    , m_bBakedShadow(rhs.m_bBakedShadow)
+    , m_pGameInstance(CGameInstance::GetInstance())
+    , m_eObject_Enum_Tag(rhs.m_eObject_Enum_Tag)
+    , m_bClone(true)
+    , m_iObjectID(++s_iNextID)
+{
+    Safe_AddRef(m_pDevice);
+    Safe_AddRef(m_pDeviceContext);
+    Safe_AddRef(m_pGameInstance);
+    m_tObjectInfoDesc.iObjectID = m_iObjectID;
+    m_Components.fill(nullptr);
+}
+// ... 코드 중략
+
+void CGameObject::Set_RenderInfoFlag(_uint iFlag, _bool bActive)
+{
+    if (bActive == true)
+        Engine_Utils::Add_Flag(m_tObjectInfoDesc.Flags8, iFlag);
+    else
+        Engine_Utils::RemoveHard_Flag(m_tObjectInfoDesc.Flags8, iFlag);
+}
+```
+
+</Editor>
+
+<Editor file="Light_Defines.hlsl" fn="PackObjectInfo, LoadObjectInfo">
+
+```cpp
+uint UnpackFlags8(uint iPacked)
+{
+    return (iPacked >> 24) & 0xFF;
+}
+uint UnpackID24(uint iPacked)
+{
+    return iPacked & 0x00FFFFFF;
+}
+// ... 코드 중략
+
+uint PackObjectInfo(uint iID, uint iFlags)
+{
+    uint iID_24 = iID & 0x00FFFFFF;
+    uint iFlags_8 = iFlags & 0x000000FF;
+    return (iFlags_8 << 24) | iID_24;
+}
+uint LoadObjectInfo(float2 vUV, float2 vInvSize)
+{
+    int2 iPix = int2(vUV / vInvSize);
+    return g_RenderTargetObjInfoTexture.Load(int3(iPix, 0));
+}
+```
+
+</Editor>
+
+<Editor file="Shader_Deffered.hlsl" fn="SilhouetteEdge, PS_MAIN_OUTLINE">
+
+```cpp
+float SilhouetteEdge(float2 vUV)
+{
+    float2 vInvSize = OutlineParam.vInvSize;
+
+    uint iPacked = LoadObjectInfo(vUV, vInvSize);
+    uint iFlags8 = UnpackFlags8(iPacked);
+
+    if (HasOutline(iFlags8) == false)
+        return 0.0f;
+
+    uint iID_Center = UnpackID24(iPacked);
+
+    int iStep = max(1, (int) round(OutlineParam.fThicknessPx));
+    float2 vO = vInvSize * iStep;
+
+    uint pL = LoadObjectInfo(vUV + float2(-vO.x, 0), vInvSize);
+    uint pR = LoadObjectInfo(vUV + float2(vO.x, 0), vInvSize);
+    uint pU = LoadObjectInfo(vUV + float2(0, -vO.y), vInvSize);
+    uint pD = LoadObjectInfo(vUV + float2(0, vO.y), vInvSize);
+
+    uint fL = UnpackFlags8(pL); uint idL = UnpackID24(pL);
+    uint fR = UnpackFlags8(pR); uint idR = UnpackID24(pR);
+    uint fU = UnpackFlags8(pU); uint idU = UnpackID24(pU);
+    uint fD = UnpackFlags8(pD); uint idD = UnpackID24(pD);
+
+    bool bEdgeL = ((HasOutline(fL) == false) || (HasOutline(fL) && (idL != iID_Center)));
+    bool bEdgeR = ((HasOutline(fR) == false) || (HasOutline(fR) && (idR != iID_Center)));
+    bool bEdgeU = ((HasOutline(fU) == false) || (HasOutline(fU) && (idU != iID_Center)));
+    bool bEdgeD = ((HasOutline(fD) == false) || (HasOutline(fD) && (idD != iID_Center)));
+
+    bool bSil = (bEdgeL || bEdgeR || bEdgeU || bEdgeD);
+    return bSil ? 1.0f : 0.0f;
+}
+// ... 코드 중략
+
+PS_OUT_HDR PS_MAIN_OUTLINE(PS_IN_POS_TEX input)
+{
+    PS_OUT_HDR output;
+    float2 vUV = input.vUV;
+
+    float fEdge = SilhouetteEdge(vUV);
+    if (fEdge <= 0.0f)
+    {
+        output.vColor = float4(0, 0, 0, 0);
+        return output;
+    }
+
+    // 필요한 경우에만 Depth 1회 (fade용)
+    float fNdcZ = 0.0f;
+    float fViewZ = 0.0f;
+    DecodeDepth(vUV, fNdcZ, fViewZ);
+
+    if (fNdcZ >= 0.9999f)
+    {
+        output.vColor = float4(0, 0, 0, 0);
+        return output;
+    }
+
+    fEdge *= OutlineParam.fOpacity;
+    fEdge *= ComputeFade(fViewZ);
+
+    output.vColor = float4(OutlineParam.vColor.rgb, OutlineParam.vColor.a * fEdge);
+    return output;
+}
+```
+
+</Editor>
+
+복제된 오브젝트마다 고유 ID를 주고, G-Buffer의 오브젝트 정보 타깃에 ID와 플래그를 함께 기록합니다. 외곽선 패스는 외곽선 플래그가 있는 픽셀에서 상하좌우 이웃을 읽어, 이웃이 다른 오브젝트이거나 외곽선 대상이 아니면 경계로 판정합니다. 깊이나 노멀 차이로 경계를 찾을 때와 달리, 같은 색·같은 깊이로 겹친 두 캐릭터도 ID만 다르면 경계가 생깁니다. 정수 텍스처라서 보간 없이 `Load`로 읽습니다.
+
+</Tab>
+<Tab>
+
+움직이는 오브젝트의 그림자입니다. 카메라 시야를 거리에 따라 두 구간으로 나누고, 가까운 구간은 좁은 범위를 같은 해상도로 그려 더 선명하게 만듭니다. `Compute_ShadowCascade()`가 구간별 광원 투영을 만들면 `Render_CascadeShadow()`가 그림자 맵을 기록하고, 조명 패스는 `SampleCascadeShadowPCF`로 이를 조회합니다.
+
+#### A. 구간별 광원 투영
+
+<Editor file="Render_Manager.cpp" fn="Compute_ShadowCascade()">
+
+```cpp
+HRESULT CRender_Manager::Compute_ShadowCascade()
+{
+	// ... 코드 중략
+	_float fSplits[3] =
+	{
+		fNear,
+		m_tCascadeShadowDesc.fCascadeEnd0,
+		m_tCascadeShadowDesc.fCascadeEnd1
+	};
+
+	for (_uint i = 0; i < SHADOW_CASCADE_COUNT; ++i)
+	{
+		//===========================================
+		// Cascade View Frustum 코너 (NDC에서 World로)
+		//===========================================
+		_float fSplitNear = fSplits[i];
+		_float fSplitFar = fSplits[i + 1];
+
+		// NDC z를 구하기 위해 임시 Proj
+		_float fNdcNear = (fSplitNear * matProj._33 + matProj._43) / fSplitNear;
+		_float fNdcFar = (fSplitFar * matProj._33 + matProj._43) / fSplitFar;
+
+		// NDC 8코너
+		Vec3 corners[8] =
+		{
+			{ -1, -1, fNdcNear }, {  1, -1, fNdcNear },
+			{ -1,  1, fNdcNear }, {  1,  1, fNdcNear },
+			{ -1, -1, fNdcFar  }, {  1, -1, fNdcFar  },
+			{ -1,  1, fNdcFar  }, {  1,  1, fNdcFar  },
+		};
+
+		Matrix matInvVP = (matView * matProj).Invert();
+
+		Vec3 vCenter = Vec3::Zero;
+		for (_int c = 0; c < 8; ++c)
+		{
+			Vec4 vWorld = Vec4::Transform(Vec4(corners[c].x, corners[c].y, corners[c].z, 1.f), matInvVP);
+			corners[c] = Vec3(vWorld.x, vWorld.y, vWorld.z) / vWorld.w;
+			vCenter += corners[c];
+		}
+		vCenter /= 8.f;
+		// ... 코드 중략
+		Matrix matLightView = ::XMMatrixLookAtLH(
+			vCenter - vLightDir * 50.f,  // 뒤로 50m 물러남
+			vCenter,
+			Vec3::Up
+		);
+
+		//=================================
+		// Light Space AABB에서 Ortho Proj로
+		//=================================
+		Vec3 vMin(FLT_MAX), vMax(-FLT_MAX);
+		for (_int c = 0; c < 8; ++c)
+		{
+			Vec3 vLS = Vec3::Transform(corners[c], matLightView);
+			vMin = Vec3::Min(vMin, vLS);
+			vMax = Vec3::Max(vMax, vLS);
+		}
+
+		// 약간 여유
+		_float fZPad = 20.f;
+		vMin.z -= fZPad;
+		vMax.z += fZPad;
+
+		Matrix matLightProj = XMMatrixOrthographicOffCenterLH(
+			vMin.x, vMax.x, vMin.y, vMax.y, vMin.z, vMax.z
+		);
+
+		m_tCascadeShadowDesc.matLightVP[i] = matLightView * matLightProj;
+	}
+	// ... 코드 중략
+	return S_OK;
+}
+```
+
+</Editor>
+
+구간의 가까운·먼 거리를 NDC 깊이로 바꿔 절두체 8꼭짓점을 월드로 되돌리고, 그 중심을 광원 방향에서 바라보는 뷰 행렬을 만듭니다. 꼭짓점들을 광원 공간으로 옮긴 뒤 감싸는 AABB를 직교 투영 범위로 쓰기 때문에, 구간마다 필요한 만큼만 그림자 맵을 차지합니다.
+
+#### B. 그림자 맵 기록과 조회
+
+<Editor file="Render_Manager.cpp" fn="Render_CascadeShadow()">
+
+```cpp
+HRESULT CRender_Manager::Render_CascadeShadow()
+{
+	if (FAILED(Compute_ShadowCascade()))
+		return E_FAIL;
+
+	m_pDeviceContext->RSSetViewports(1, &m_tShadowViewport);
+
+	for (_uint i = 0; i < SHADOW_CASCADE_COUNT; ++i)
+	{
+		EMRTLayer eMRT = (i == 0)
+			? EMRTLayer::Shadow_Cascade0
+			: EMRTLayer::Shadow_Cascade1;
+
+		if(FAILED(m_pGameInstance->Begin_MRT(eMRT, true, m_pShadowDSV)))
+			goto FAIL;
+
+		// CascadeIndex
+		m_tCascadeShadowDesc.fCascadeIndex = (_float)i;
+		if (FAILED(m_pCB_CascadeShadow->Copy_Data(m_tCascadeShadowDesc)))
+			goto FAIL;
+
+		// 동적 오브젝터만 렌더
+		for (auto& pObject : m_renderObjects[ENUM_TO_UINT(RENDER_CATEGORY::SHADOW_DYNAMIC)])
+			pObject->Render_Shadow();
+
+		if (FAILED(m_pGameInstance->End_MRT()))
+			goto FAIL;
+	}
+
+	m_pDeviceContext->RSSetViewports(1, &m_defaultViewport);
+
+	// Shadow카테고리 안전하게 일괄 정리
+	for (auto& pObject : m_renderObjects[ENUM_TO_UINT(RENDER_CATEGORY::SHADOW_DYNAMIC)])
+		Safe_Release(pObject);
+
+	m_renderObjects[ENUM_TO_UINT(RENDER_CATEGORY::SHADOW_DYNAMIC)].clear();
+	return S_OK;
+FAIL:
+	m_pDeviceContext->RSSetViewports(1, &m_defaultViewport);
+	return E_FAIL;	
+}
+```
+
+</Editor>
+
+<Editor file="Shader_Deffered.hlsl" fn="SampleCascadeShadowPCF">
+
+```cpp
+float SampleCascadeShadowPCF(float3 vWorldPos, float3 vWorldNormal, float fNDotL, float fViewZ)
+{
+    int iCascade = (fViewZ > cascadeParam.fCascadeEnd0) ? 1 : 0;
+
+    // 스치는 입사각일수록 더 크게
+    float fNormalOffset = cascadeParam.fNormalBias * (1.0f - fNDotL);
+
+    float3 vBiasedPos = vWorldPos + vWorldNormal * fNormalOffset;
+
+    // World -> LightClip
+    float4 vLightClip = mul(float4(vBiasedPos, 1.f), cascadeParam.matLightVP[iCascade]);
+    float3 vLightNDC = vLightClip.xyz / vLightClip.w;
+
+    // NDC -> UV
+    float2 vShadowUV = NDC_ToUV(vLightNDC.xy);
+
+    // 범위 밖 커트
+    if (vShadowUV.x < 0.f || vShadowUV.x > 1.f ||
+        vShadowUV.y < 0.f || vShadowUV.y > 1.f ||
+        vLightNDC.z < 0.f || vLightNDC.z > 1.f)
+        return 1.f;
+
+    float fCurrentDepth = vLightNDC.z;
+
+    // 3x3 PCF
+    float fShadow = 0.f;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            float2 vOffset = float2(x, y) * cascadeParam.vShadowMapInvSize;
+            float fStoredDepth;
+
+            if (iCascade == 0)
+                fStoredDepth = g_RenderTargetCascadeShadowmap0.Sample(PointClampSampler, vShadowUV + vOffset, 0).r;
+            else
+                fStoredDepth = g_RenderTargetCascadeShadowmap1.Sample(PointClampSampler, vShadowUV + vOffset, 0).r;
+
+            fShadow += ((fCurrentDepth - cascadeParam.fShadowBias) > fStoredDepth) ? 0.f : 1.f;
+        }
+    }
+
+    fShadow /= 9.f;
+    return lerp(1.f - cascadeParam.fShadowStrength, 1.f, fShadow);
+}
+```
+
+</Editor>
+
+조명 패스는 픽셀의 뷰 깊이로 구간을 고르고, 표면을 노멀 방향으로 살짝 밀어낸 위치에서 그림자 맵을 조회합니다. 빛이 비스듬히 닿을수록 더 많이 밀어내 표면에 줄무늬 그림자가 생기는 문제(shadow acne)를 줄이고, 3×3 이웃 비교의 평균으로 경계를 부드럽게 만듭니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**패스 순서와 리소스 연결이 `Render()` 안에 직접 적혀 있습니다.** 패스 하나를 끄거나 순서를 바꾸려면 코드를 고쳐야 하고, 어떤 패스가 어떤 타깃을 읽는지는 함수마다 바인딩을 따라가 봐야 알 수 있습니다. 패스가 읽고 쓰는 타깃을 스스로 선언하는 렌더 그래프 형태였다면, 순서 검증과 타깃 재사용까지 자동으로 처리할 수 있었습니다.
+
+남은 개선점입니다.
+
+- 캐스케이드 그림자의 투영 범위를 매 프레임 절두체에 맞춰 새로 잡으면서 텍셀 단위로 맞추지 않아, 카메라가 움직이면 경계가 떨립니다. 텍셀 단위 반올림과 구간 크기 고정이 필요합니다.
+- G-Buffer 6장 중 절반이 16비트 4채널이라 대역폭이 큽니다. 노멀을 2채널로 압축하거나 깊이를 깊이 버퍼에서 복원하면 줄일 수 있습니다.
+- 셰이더의 `Sample`/`Load`와 샘플러 종류가 패스마다 섞여 있으므로, G-Buffer 읽기 규칙을 함수 하나로 통일하는 편이 안전합니다.

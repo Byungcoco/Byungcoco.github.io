@@ -18,6 +18,12 @@ const prev = siblings[idx - 1];
 const next = siblings[idx + 1];
 const toc = headings.filter((h) => h.depth === 2);
 const href = (r: { id: string }) => `/reviews/${r.id}/`;
+const allReviews = await getCollection('reviews');
+const lineage = [entry.data.lineage ?? []].flat().map((l) => {
+  const t = allReviews.find((r) => href(r) === l.href);
+  const pn = t && projects.find((p) => p.key === t.data.project)!.name;
+  return { href: t ? l.href : undefined, label: t ? `${pn} — ${t.data.title}` : l.label };
+});
 ---
 <Base title={`${entry.data.title} · ${project.name} 코드 리뷰`}>
 <header class="top">
@@ -51,8 +57,8 @@ const href = (r: { id: string }) => `/reviews/${r.id}/`;
 
 <main class="article" id="top">
   <Content />
-  {entry.data.lineage && (
-    <p class="lineage">개선 과정 · 이전 단계: {entry.data.lineage.href ? <a href={entry.data.lineage.href}>{entry.data.lineage.label}</a> : <span>{entry.data.lineage.label}</span>}</p>
+  {lineage.length > 0 && (
+    <p class="lineage">개선 과정 · 이전 단계: {lineage.map((l, i) => <>{i > 0 && <span class="sep"> · </span>}{l.href ? <a href={l.href}>{l.label}</a> : <span>{l.label}</span>}</>)}</p>
   )}
 </main>
 

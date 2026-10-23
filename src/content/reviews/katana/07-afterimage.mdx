@@ -1,0 +1,426 @@
+---
+project: katana
+order: 7
+title: 잔상 이펙트
+topic: 이펙트
+chips: [Data Pool, AlphaBlend, ColorMatrix]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+잔상은 지나간 프레임을 잠깐 남겨 두었다가 서서히 투명하게 지우는 연출입니다. 자주 생기고 금방 사라지기 때문에, 미리 잡아 둔 데이터를 재사용해 생성·삭제 비용을 없애고 색 변환처럼 비싼 처리는 로드 시점에 끝내 두는 것이 일반적입니다.
+
+잔상을 애니메이터의 고정 크기 데이터로 두어 기록할 때 할당이 없고, 잔상이 오브젝트 매니저나 충돌 목록에 들어가지도 않습니다. 색은 로드 시점에 만든 시트로 해결해 실행 중에는 색을 계산하지 않습니다.
+
+## 2. 문제
+
+> 플레이어 구르기와 보스 공격에는 지나간 자리에 색이 입혀진 잔상이 남아야 합니다. 잔상이 생길 때마다 오브젝트를 만들면 0.03초마다 생성·삭제가 반복되고, 잔상까지 충돌·업데이트 목록에 들어갑니다. 잔상마다 GDI+로 색을 바꿔 그리면 매 프레임 색 변환 비용이 들고, 기존 시트에는 투명도 정보가 없어 반투명하게 그릴 수도 없었습니다.
+
+## 3. 구조 요약
+
+잔상은 오브젝트가 아니라 애니메이터가 가진 고정 크기 데이터입니다. 이미지를 복사하지 않고 "어느 시트의 어느 칸을 어디에" 그릴지만 기록하며, 색은 로드 시점에 만든 시트로 해결합니다.
+
+<Fig n={1} white max={480} src="/img/reviews/katana/07-afterimage/class.png" caption="잔상 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CAnimatorComponent` | 잔상 켜기·끄기, 일정 간격으로 현재 칸 기록 요청 |
+| `CAfterImage` | 잔상 데이터 풀, 반투명 렌더, 다 사라진 잔상 회수 |
+| `CResourceManager` | 시트를 만들 때 색 변환 시트도 함께 합성 |
+| `CMyBitmap` | 색 시트를 `AlphaBlend`용 32비트 DIB로 보관 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '잔상 풀', '색 시트', '기록 · 그리는 순서']}>
+<Tab>
+
+잔상이 필요한 상태에 들어갈 때 켜고, 나올 때 끕니다.
+
+#### A. 플레이어 구르기
+
+<Editor file="CPlayerState_Roll.cpp" fn="Enter(), Exit()">
+
+```cpp
+void CPlayerState_Roll::Enter()
+{
+	CAnimatorComponent *AnimComp = static_cast<CAnimatorComponent *>(m_pPlayer->GetComponent<CAnimatorComponent>());
+	m_pPlayer->SetRolliong(true);
+	m_pPlayer->SetAfterImage(true);
+	AnimComp->PlayAnimation(L"Player_Roll", false);
+// ... 코드 중략
+
+void CPlayerState_Roll::Exit()
+{
+	m_pPlayer->SetRolliong(false);
+	m_pPlayer->SetAfterImage(false);
+```
+
+</Editor>
+
+구르기 상태에 들어갈 때 켜고 나올 때 끕니다. 잔상을 쓰는 쪽이 다루는 것은 플래그 하나뿐입니다.
+
+#### B. 보스 공격
+
+<Editor file="CResourceManager.cpp" fn="Initialize()">
+
+```cpp
+Gdiplus::ColorMatrix Red =
+{
+    0.9f, 0, 0, 0, 0,
+    0, 0.05f, 0, 0, 0,
+    0, 0, 0.2f, 0, 0,
+    0, 0, 0, 0.7f, 0,
+    0, 0, 0, 0, 1.f
+};
+// ... 코드 중략
+
+AddCustomColorAnimationWithAfterImage(L"..\\Resource\\Boss\\spr_kissyface_slash", L"Boss_Slash", Red, true);
+```
+
+</Editor>
+
+<Editor file="CBoss.cpp" fn="Slash_Enter(), Slash_Exit()">
+
+```cpp
+void CBoss::Slash_Enter()
+{
+	SetAfterImage(true);
+	SetCompleteCallback();
+	PlayAnimation(L"Boss_Slash", false, false);
+// ... 코드 중략
+
+void CBoss::Slash_Exit()
+{
+	m_bAttacked = false;
+	SetAfterImage(false);
+```
+
+</Editor>
+
+보스 공격 애니메이션은 등록할 때 빨간색 행렬을 넘겨 전용 색 시트를 만들어 둡니다. 재생하는 쪽은 플레이어와 똑같이 잔상을 켜고 끄기만 합니다.
+
+</Tab>
+<Tab>
+
+잔상 데이터를 크기 15의 `m_AfterImageDataPool`로 미리 잡아 두고, 활성 개수 `m_iActiveCount`로 사용 중인 구간을 나눕니다. `Write`는 활성 구간 끝에 기록하고, `Update`는 다 사라진 잔상을 회수하며, `Draw`는 색 시트를 `AlphaBlend`로 반투명하게 그립니다.
+
+#### A. 고정 크기 풀과 기록
+
+<Editor file="CAfterImage.h" fn="AfterImageData, CAfterImage">
+
+```cpp
+typedef struct tagAfterImageData
+{
+	int iPos_x = 0;
+	int iPos_y = 0;
+	CAnimationBitmap *pAnimationBmp;
+	int iSheet_x = 0;
+	int iSheet_y = 0;
+	float fAlpha = 0.5f;
+// ... 코드 중략
+
+} AfterImageData;
+// ... 코드 중략
+
+private:
+	vector<AfterImageData> m_AfterImageDataPool{ DEFAULT_AFTERIMAGE_POOLSIZE };
+	int m_iActiveCount;
+```
+
+</Editor>
+
+<Editor file="CAfterImage.cpp" fn="Write(...)">
+
+```cpp
+void CAfterImage::Write(const Vector2 &_iPos, const Vector2 &_iRectSize, CAnimationBitmap *_pAnimationBmp)
+{
+	if (m_iActiveCount >= m_AfterImageDataPool.size())
+		return;
+
+	m_AfterImageDataPool[m_iActiveCount].pAnimationBmp = _pAnimationBmp;
+	m_AfterImageDataPool[m_iActiveCount].iPos_x = (int)_iPos.x;
+	m_AfterImageDataPool[m_iActiveCount].iPos_y = (int)_iPos.y;
+	m_AfterImageDataPool[m_iActiveCount].iSheet_x = (int)_iRectSize.x;
+	m_AfterImageDataPool[m_iActiveCount].iSheet_y = (int)_iRectSize.y;
+	++m_iActiveCount;
+}
+```
+
+</Editor>
+
+잔상 한 장은 위치·시트 좌표·시트 포인터·알파만 가진 작은 구조체입니다. 이미지를 복사하지 않고 리소스 매니저가 보관한 시트를 가리키기만 합니다. 기록은 활성 구간 끝에 쓰고 개수만 늘리므로 할당이 일어나지 않습니다.
+
+#### B. swap 회수
+
+<Editor file="CAfterImage.cpp" fn="Update(...)">
+
+```cpp
+void CAfterImage::Update(const float _fDeltaTime)
+{
+	for (int i = 0; i < m_iActiveCount; ++i)
+	{
+		if (m_AfterImageDataPool[i].fAlpha <= 0.1f)
+		{
+			--m_iActiveCount;
+			std::swap(m_AfterImageDataPool[i], m_AfterImageDataPool[m_iActiveCount]);
+			m_AfterImageDataPool[m_iActiveCount].Clear();
+			--i;
+		}
+	}
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={440} src="/img/reviews/katana/07-afterimage/pool.png" caption="활성 개수와 swap 회수" />
+
+알파가 0.1 이하로 떨어진 잔상은 마지막 활성 칸과 자리를 바꾸고 개수를 줄입니다(<FigRef n={2} />). 바꿔 온 칸도 검사해야 하므로 `i`를 하나 되돌립니다. 순서는 바뀌지만 잔상끼리는 순서가 상관없어서 O(1)로 회수할 수 있습니다.
+
+#### C. 반투명 렌더
+
+<Editor file="CAfterImage.cpp" fn="Draw(...)">
+
+```cpp
+CAnimationBitmap* m_pAnim = m_AfterImageDataPool[_iIndex].pAnimationBmp;
+AlphaBitmapData DibBmp;
+if (m_pAnim->IsCustomColorAfterImage())
+{
+	DibBmp = m_pAnim->GetDIB_CustomColor();
+}
+else
+{
+	DibBmp = m_AfterImageDataPool[_iIndex].pAnimationBmp->GetDIB((TintColor)(_iIndex % 2));
+}
+// ... 코드 중략
+
+BLENDFUNCTION bf = {};
+bf.BlendOp = AC_SRC_OVER;
+bf.BlendFlags = 0;
+bf.SourceConstantAlpha = static_cast<BYTE>(fAlpha * 255);
+bf.AlphaFormat = AC_SRC_ALPHA;
+
+::AlphaBlend(
+	hDC,
+	RednerPos.x,
+	RednerPos.y,
+	Size.x, Size.y,
+	DibBmp.hDibDC,
+	m_AfterImageDataPool[_iIndex].iSheet_x,
+	m_AfterImageDataPool[_iIndex].iSheet_y,
+	Size.x, Size.y,
+	bf
+);
+
+m_AfterImageDataPool[_iIndex].fAlpha -= (CTimeManager::Get_Instance()->GetDeltaTime() * 1.f);
+```
+
+</Editor>
+
+일반 잔상은 칸 번호에 따라 하늘색·자홍색 시트를 번갈아 쓰고, 보스처럼 전용 색이 있는 애니메이션은 그 시트를 씁니다. 이미 색이 바뀐 시트에서 잘라 와 `AlphaBlend`로 알파만 적용하므로, 실행 중에는 색을 계산하지 않습니다.
+
+</Tab>
+<Tab>
+
+일반 시트를 합성할 때 `bAlpha`가 켜져 있으면, 플레이어용 `lightblue_cm`·`magenta_cm` 색 변환 행렬을 적용한 시트를 같은 칸 배치로 함께 그립니다(보스는 등록할 때 `Red` 행렬을 넘깁니다). 이렇게 만든 색 시트는 `CreateDIB`로 32비트 DIB에 옮겨 색 종류별로 보관합니다.
+
+#### A. 색 변환 시트 합성
+
+<Editor file="CResourceManager.cpp" fn="Make_SpriteSheet(...)">
+
+```cpp
+Gdiplus::ImageAttributes lightblue_Attr;
+Gdiplus::ImageAttributes magenta_Attr;
+if (_bAlpha)
+{
+
+    Gdiplus::ColorMatrix lightblue_cm =
+    {
+        0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0,
+        0, 0, 1, 0, 0,
+        0, 0, 0, 1, 0,
+        0, 1, 1, 0, 1
+    };
+    lightblue_Attr.SetColorMatrix(&lightblue_cm, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
+
+    Gdiplus::ColorMatrix magenta_cm =
+    {
+         1, 0, 0, 0, 0,
+         0, 0.2, 0, 0, 0,
+         0, 0, 1, 0, 0,
+         0, 0, 0, 1, 0,
+         0.5, 0.5, 1, 0, 1
+    };
+    magenta_Attr.SetColorMatrix(&magenta_cm, Gdiplus::ColorMatrixFlagsDefault, Gdiplus::ColorAdjustTypeBitmap);
+}
+// ... 코드 중략
+
+for (int i = 0; i < iFrameCount; ++i)
+{
+    int destX = i * iFrameWidth;
+    graphics.DrawImage(_Bitmaps[i], destX, 0, iFrameWidth, iFrameHeight);
+    if (_bAlpha)
+    {
+        graphics2.DrawImage(
+            _Bitmaps[i],
+            Gdiplus::Rect(Gdiplus::Point{destX, 0}, Gdiplus::Size{ iFrameWidth , iFrameHeight }),
+            0.0f, 0.0f,
+            (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),
+            (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),
+            Gdiplus::UnitPixel,
+            &lightblue_Attr);
+
+        graphics3.DrawImage(
+            _Bitmaps[i],
+            Gdiplus::Rect(Gdiplus::Point{ destX, 0 }, Gdiplus::Size{ iFrameWidth , iFrameHeight }),
+            0.0f, 0.0f,
+            (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),
+            (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),
+            Gdiplus::UnitPixel,
+            &magenta_Attr);
+    }
+// ... 코드 중략
+}
+// ... 코드 중략
+
+if (_bAlpha && pSheet && pSheet2)
+{
+    pNewAnim->CreateDIB(pSheet, TintColor::BLUE);
+    pNewAnim->CreateDIB(pSheet2, TintColor::MAGENTA);
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={560} src="/img/reviews/katana/07-afterimage/tint.png" caption="로드 시점에 만드는 색 시트" />
+
+원본 칸을 그릴 때, 같은 위치에 색 변환 행렬을 적용한 칸도 함께 그립니다. 칸 배치가 같으니 잔상은 원본 시트의 좌표를 그대로 써서 색 시트에서 잘라 올 수 있습니다(<FigRef n={3} />).
+
+#### B. AlphaBlend용 DIB
+
+<Editor file="CMyBitmap.cpp" fn="CreateDIB(...)">
+
+```cpp
+void CMyBitmap::CreateDIB(Gdiplus::Bitmap *pSrcSheet, TintColor _e)
+{
+	UINT w = pSrcSheet->GetWidth();
+	UINT h = pSrcSheet->GetHeight();
+
+	// DIBSection 생성 (top-down)
+	BITMAPINFO bmi = {};
+	bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+	bmi.bmiHeader.biWidth = w;
+	bmi.bmiHeader.biHeight = -static_cast<LONG>(h);
+	bmi.bmiHeader.biPlanes = 1;
+	bmi.bmiHeader.biBitCount = 32;
+	bmi.bmiHeader.biCompression = BI_RGB;
+
+	void *pvBits = nullptr;
+	HBITMAP hDib = CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, &pvBits, nullptr, 0);
+
+	// GDI+ LockBits 로 ARGB 데이터 복사
+	Gdiplus::BitmapData bd;
+	Gdiplus::Rect       rc(0, 0, w, h);
+	pSrcSheet->LockBits(&rc, Gdiplus::ImageLockModeRead, PixelFormat32bppPARGB, &bd);
+
+	for (UINT y = 0; y < h; ++y) {
+		BYTE *srcRow = static_cast<BYTE *>(bd.Scan0) + bd.Stride * y;
+		BYTE *dstRow = static_cast<BYTE *>(pvBits) + w * 4 * y;
+		memcpy(dstRow, srcRow, w * 4);
+	}
+	pSrcSheet->UnlockBits(&bd);
+
+	m_AlphaBitmaps[(uint8_t)_e] = AlphaBitmapData(hDib);
+}
+```
+
+</Editor>
+
+`AlphaBlend`에는 픽셀마다 투명도가 들어 있는 32비트 이미지가 필요합니다. 일반 시트는 투명도 없이 만든 비트맵이라, 색 시트는 DIB로 따로 만들고 GDI+의 픽셀 데이터를 그대로 복사해 둡니다.
+
+</Tab>
+<Tab>
+
+애니메이터는 잔상 풀 `m_AfterImage`를 값으로 갖습니다. `SetAfterImage`로 켜져 있으면 `m_fAfterImageTime`을 누적하다가 0.03초마다 지금 그리는 칸을 풀에 기록합니다.
+
+#### A. 일정 간격 기록
+
+<Editor file="MyDefine.h" fn="DEFAULT_AFTERIMAGE_POOLSIZE, DFEULAT_AFTERIMAGE_TIME">
+
+```cpp
+#define DEFAULT_AFTERIMAGE_POOLSIZE 15
+#define DFEULAT_AFTERIMAGE_TIME 0.03f
+```
+
+</Editor>
+
+<Editor file="CAnimatorComponent.cpp" fn="NormalRender(...)">
+
+```cpp
+if (m_bAfterImage)
+{
+	m_fAfterImageTime += CTimeManager::Get_Instance()->GetDeltaTime();
+	if (m_fAfterImageTime > DFEULAT_AFTERIMAGE_TIME)
+	{
+		m_AfterImage.Write(Obj_LeftTop, { (float)srcX ,(float)srcY }, m_pCurAnimation);
+		m_fAfterImageTime = 0.f;
+	}
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={520} src="/img/reviews/katana/07-afterimage/fade.png" caption="일정 간격 기록과 알파 감소" />
+
+지금 그리는 칸의 좌표를 그대로 넘기므로, 잔상에는 그 순간의 프레임과 방향이 그대로 남습니다. 0.03초마다 한 장씩 기록하고 알파가 0.5에서 0.1까지 약 0.4초 동안 줄어드니, 동시에 필요한 잔상은 많아야 14장 정도입니다. 그래서 풀 크기를 15로 잡았습니다(<FigRef n={4} />).
+
+#### B. 그리는 순서
+
+<Editor file="CAnimatorComponent.cpp" fn="Update(...), Render(...)">
+
+```cpp
+void CAnimatorComponent::Update(const float _fDeltaTime)
+{
+	if (!m_pCurAnimation)
+ 		return;
+
+	m_AfterImage.Update(_fDeltaTime);
+// ... 코드 중략
+
+void CAnimatorComponent::Render(HDC hDC)
+{
+	if (!m_pCurAnimation)
+		return;
+
+	m_AfterImage.Render(hDC);
+```
+
+</Editor>
+
+잔상은 본체보다 먼저 그려서 항상 본체 뒤에 깔립니다. 갱신도 애니메이터의 `Update`에서 함께 처리하므로, 잔상은 오브젝트 매니저나 충돌 목록에 들어가지 않습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**그리기 함수가 잔상의 상태까지 바꾸고 있었습니다.** `Draw`가 그린 뒤 알파를 깎고 `Update`는 회수만 하니, 그리기가 상태를 바꾸는 구조가 됐습니다. 그리기가 호출되지 않으면 잔상도 줄어들지 않습니다. 알파 감소는 `Update`로 옮기고, `Draw`는 그리기만 하도록 나눴어야 했습니다.
+
+남은 개선점입니다.
+
+- 잔상 색이 풀의 칸 번호로 정해져, swap 회수 때 떠 있던 잔상의 색이 바뀔 수 있습니다. 색은 기록할 때 정해 `AfterImageData`에 저장해야 합니다.
+- 색 시트 생성 코드가 시트 생성 함수마다 반복되므로, 색 행렬 목록을 받아 한 번에 만드는 함수로 묶을 수 있습니다.

@@ -1,0 +1,492 @@
+---
+project: mullet
+order: 2
+title: 맵 툴 · 데이터 파이프라인
+topic: 툴·데이터
+chips: [nlohmann/json, Factory Pattern, std::function, std::filesystem, ImGui, std::list]
+lineage:
+  label: 카타나 제로 모작 — 스프라이트시트 생성
+  href: /reviews/katana/06-sprite-sheet/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+데이터 주도 설계는 맵 배치처럼 자주 바뀌는 내용을 코드 밖 데이터 파일로 빼고, 게임이 그 데이터를 읽어 객체를 만들게 하는 방식입니다. 생성 쪽은 보통 팩토리에 (종류 → 생성 함수)를 등록해 두어, 종류가 늘어도 로더는 손대지 않습니다.
+
+등록 테이블 덕분에 새 오브젝트를 추가해도 로더와 팩토리 코드는 그대로이고 등록 한 줄만 늘어납니다. 맵은 빌드 없이 데이터 파일만 고쳐 수정할 수 있습니다.
+
+## 2. 문제
+
+> 3D 스테이지마다 벽·바닥·경사·타일·몬스터를 수백 개씩 배치해야 했습니다. 좌표를 코드에 직접 적으면 고칠 때마다 빌드해야 하고, 팀원들이 같은 방식으로 맵을 만들 수도 없습니다. 오브젝트 종류도 계속 늘어나는데, 로더가 `switch`로 종류를 나누면 종류가 추가될 때마다 로더를 고쳐야 합니다. 도로 스테이지는 도로가 끝없이 이어져야 했습니다.
+
+## 3. 구조 요약
+
+저장·보관·생성을 나눴습니다. 파일 관리자는 JSON과 구조체 사이만 오가고, 그 데이터로 무엇을 만들지는 팩토리에 등록된 생성 함수가 정합니다. 그래서 로더와 스테이지는 오브젝트 종류를 모릅니다.
+
+<Fig n={1} white max={480} src="/img/reviews/mullet/02-map-tool/class.png" caption="맵 데이터 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| 에디터 객체 (`ExportData`) | 자기 상태를 `MAPOBJECTDATA`로 채움. 프리팹 자식이면 로컬, 아니면 월드 행렬 |
+| `CFileManager` | 구조체 ↔ JSON 변환, `GameData/<씬>/<레이어>/data.json` 경로 구성 |
+| `CDataManager` | 읽은 데이터를 레이어별로 보관 |
+| `CMapFactory` | (카테고리, 타입) → 생성 함수 테이블, 생성 대상 씬 지정 |
+| `CPrefab` | 자식 생성은 팩토리에 맡기고, 부모 월드 × 자식 로컬로 배치 |
+| `CPrefabRecycleSystem` | 지나간 도로 구간을 맨 뒤로 옮겨 재사용 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '에디터', '파일 저장 · 로드', '팩토리', '프리팹', '무한 도로']}>
+<Tab>
+
+클라이언트는 시작할 때 생성 함수를 등록하고, 각 스테이지는 데이터를 읽어 팩토리에 넘기기만 합니다.
+
+#### A. 생성 함수 등록
+
+<Editor file="CMainApp.cpp" fn="CMainApp::Ready_MapFactorFunc()">
+
+```cpp
+std::function<CGameObject *(void *)> _func =
+	[](void *pData = nullptr)->CGameObject *
+{
+	_uint iTargetScene = CMapFactory::GetInstance()->GetTargetSceneIndex();
+	return CObjectManager::GetInstance()->Clone_GameObject(L"Prototype_GameObject_DefaultPanel", iTargetScene, L"Wall_Layer", pData);
+};
+pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::WALL_HOR), _func);
+pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::WALL_VER), _func);
+
+_func =
+	[](void *pData = nullptr)->CGameObject *
+{
+	_uint iTargetScene = CMapFactory::GetInstance()->GetTargetSceneIndex();
+	return CObjectManager::GetInstance()->Clone_GameObject(L"Prototype_GameObject_DefaultPanel", iTargetScene, L"Floor_Layer", pData);
+};
+pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::FLOOR), _func);
+pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::INCLINE), _func);
+```
+
+</Editor>
+
+클라이언트가 시작할 때 한 번, 타입마다 어떤 프로토타입을 어느 레이어에 복제할지 등록합니다. 엔진의 팩토리는 클라이언트 객체를 모르고, 클라이언트가 함수로 알려 줍니다.
+
+#### B. 스테이지 로드
+
+<Editor file="CDev.cpp" fn="CDev::SetData(...), CDev::InstancingObjects(...)">
+
+```cpp
+void CDev::SetData(_uint _iSceneIndex)
+{
+    CDataManager::GetInstance()->Clear();
+    CFileManager::GetInstance()->LoadDataFile(_iSceneIndex, L"Wall_Layer");
+    CFileManager::GetInstance()->LoadDataFile(_iSceneIndex, L"Tile_Layer");
+    CFileManager::GetInstance()->LoadDataFile(_iSceneIndex, L"Env_Layer");
+    CFileManager::GetInstance()->LoadDataFile(_iSceneIndex, L"Monster_Layer");
+    for (int i = 0; i < g_PrefabTypeCount; ++i)
+    {
+        CFileManager::GetInstance()->LoadPrefabDataFile(static_cast<PrefabType>(i));
+    }
+    CFileManager::GetInstance()->LoadInstancedPrefabDataFile(_iSceneIndex);
+
+    CMapFactory::GetInstance()->SetTargetSceneIndex(_iSceneIndex);
+}
+
+void CDev::InstancingObjects(const wstring &_Layer)
+{
+    if (vector<MAPOBJECTDATA> *pVecData = CDataManager::GetInstance()->FindData(_Layer))
+    {
+        for (MAPOBJECTDATA &element : *pVecData)
+        {
+            CMapFactory::GetInstance()->Create(element.eCategory, element.iType, &element);
+        }
+    }
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={760} src="/img/reviews/mullet/02-map-tool/pipeline.png" caption="에디터 배치에서 클라이언트 생성까지" />
+
+스테이지는 씬 데이터를 읽어 두고 레이어별로 돌며 `Create`만 호출할 뿐, 어떤 종류가 들어 있는지는 모릅니다. 에디터 객체가 채운 데이터가 JSON으로 저장되고, 클라이언트가 그 파일을 읽어 팩토리에 넘기기까지의 흐름입니다(<FigRef n={2} />).
+
+#### C. 도로 스테이지
+
+<Editor file="CStage_Car.cpp" fn="CStage_Car::Ready_Scene()">
+
+```cpp
+CPrefabRecycleSystem *pPrefabSystem = CPrefabRecycleSystem::GetInstance();
+if (FAILED(pPrefabSystem->Set_Player(CObjectManager::GetInstance()->Get_ObjectList(SCENE_CAR, L"Player_Layer")->front())))
+    return E_FAIL;
+
+if (FAILED(pPrefabSystem->Set_PrefabList(CObjectManager::GetInstance()->Get_ObjectList(SCENE_CAR, L"Prefab_Layer"))))
+    return E_FAIL;
+```
+
+</Editor>
+
+도로 스테이지는 에디터로 깔아 둔 도로 프리팹 레이어를 그대로 순환 시스템에 넘깁니다.
+
+</Tab>
+<Tab>
+
+에디터에 배치한 객체는 저장할 때 각자 가상 함수 `ExportData`로 카테고리·타입·버퍼·텍스처·행렬을 채우고, `ExportObjectData`가 레이어를 돌며 이를 모읍니다. 저장 코드는 객체 종류를 모릅니다. 배치할 때는 `CDummyTile::PosUpdate()`가 피킹 위치에 미리보기 타일을 띄웁니다.
+
+#### A. 객체가 채우는 저장 데이터
+
+<Editor file="CObjectManager.cpp" fn="CObjectManager::ExportObjectData(...)">
+
+```cpp
+std::vector<MAPOBJECTDATA> CObjectManager::ExportObjectData(_uint iSceneID, const _tchar *pLayerTag)
+{
+	list<CGameObject *> *pList = Get_ObjectList(iSceneID, pLayerTag);
+	if (!pList || (*pList).size() <= 0)
+		return {};
+
+	std::vector<MAPOBJECTDATA> returnData;
+	returnData.reserve((*pList).size());
+
+	for (CGameObject *element : (*pList))
+	{
+		MAPOBJECTDATA pSrc;
+		element->ExportData(&pSrc);
+		returnData.push_back(pSrc);
+	}
+
+	return returnData;
+}
+```
+
+</Editor>
+
+<Editor file="CGridPanel.cpp" fn="CGridPanel::ExportData(...)">
+
+```cpp
+void CGridPanel::ExportData(void *pData)
+{
+	if (MAPOBJECTDATA *p = reinterpret_cast<MAPOBJECTDATA *>(pData))
+	{
+		// type
+		p->eCategory = ObjectCategory::WALL;
+		p->iType = GetType();
+		p->bChild = (GetParent() != nullptr);
+		// ... 코드 중략
+		// transform
+		if (p->bChild)
+		{
+			::memcpy(&p->transform.Right, &((*m_pTransformCom->Get_Local()).m[0][0]), sizeof(_vec3));
+			::memcpy(&p->transform.Up, &((*m_pTransformCom->Get_Local()).m[1][0]), sizeof(_vec3));
+			::memcpy(&p->transform.Look, &((*m_pTransformCom->Get_Local()).m[2][0]), sizeof(_vec3));
+			::memcpy(&p->transform.Pos, &((*m_pTransformCom->Get_Local()).m[3][0]), sizeof(_vec3));
+		}
+		else
+		{
+			::memcpy(&p->transform.Right, &((*m_pTransformCom->Get_World()).m[0][0]), sizeof(_vec3));
+			::memcpy(&p->transform.Up, &((*m_pTransformCom->Get_World()).m[1][0]), sizeof(_vec3));
+			::memcpy(&p->transform.Look, &((*m_pTransformCom->Get_World()).m[2][0]), sizeof(_vec3));
+			::memcpy(&p->transform.Pos, &((*m_pTransformCom->Get_World()).m[3][0]), sizeof(_vec3));
+		}
+	}
+```
+
+</Editor>
+
+저장할 때 레이어의 객체마다 `ExportData`를 불러 데이터를 모읍니다. 프리팹에 속한 자식은 부모 기준 로컬 행렬로, 나머지는 월드 행렬로 저장하기 때문에 프리팹은 부모만 옮기면 묶음 전체가 따라옵니다.
+
+#### B. 스냅 배치
+
+<Editor file="CDummyTile.cpp" fn="CDummyTile::PosUpdate()">
+
+```cpp
+if (CGuiManager::GetInstance()->IsSnap())
+{
+	switch (pBuffer->Get_Data()->eType)
+	{
+	case WallType::WALL_HOR:
+	{
+		pTransform->SetDegreeForEditor(_vec3{ 0.f, 0.f,1.f }, 90.f);
+		pickPos.x = (int)pickPos.x + 0.5f * pTransform->Get_Scale().x;
+		pickPos.y = (int)pickPos.y + 0.5f * pTransform->Get_Scale().y;
+		pickPos.z -= 0.001f;
+	} break;
+	case WallType::WALL_VER:
+	{
+		pTransform->SetDegreeForEditor(_vec3{ 0.f,1.f,0.f }, 90.f);
+		pickPos.x += 0.001f;
+		pickPos.y = (int)pickPos.y + 0.5f * pTransform->Get_Scale().y;
+		pickPos.z = (int)pickPos.z + 0.5f * pTransform->Get_Scale().x;
+	} break;
+	// ... 코드 중략
+	}
+}
+```
+
+</Editor>
+
+에디터를 직접 써 보니 타일 위에 다른 타일을 정확히 맞춰 까는 일이 많아 스냅 모드를 넣었습니다. 피킹 위치를 정수 격자에 맞추고, 면이 겹쳐 깜빡이지 않도록 법선 방향으로 0.001만큼 띄웁니다.
+
+</Tab>
+<Tab>
+
+파일 관리자는 구조체와 JSON 사이의 변환(`to_json`·`from_json`)과 파일 경로만 맡고, 데이터로 무엇을 만들지는 모릅니다. `SaveDataFile`은 레이어 데이터를 JSON 배열로 저장하고, `LoadDataFile`은 읽은 데이터를 `CDataManager`에 레이어별로 넣어 둡니다. 프리팹 정의는 `Save/LoadPrefabDataFile`이 따로 다룹니다.
+
+#### A. 구조체 직렬화
+
+<Editor file="CFileManager.cpp" fn="to_json(...), from_json(...)">
+
+```cpp
+void to_json(json &_j, const MAPOBJECTDATA &_tData)
+{
+    _j = json
+    {
+        {"ObjectCategory", _tData.eCategory},
+        {"ObjectType", _tData.iType},
+        {"Color", _tData.dwColor},
+        {"TransformData", _tData.transform},
+        {"TextureData", _tData.texture},
+        {"PanelData", _tData.panelBuffer}
+    };
+}
+
+void from_json(const json &_j, MAPOBJECTDATA &_tData)
+{
+    _j.at("ObjectCategory").get_to(_tData.eCategory);
+    _j.at("ObjectType").get_to(_tData.iType);
+    _j.at("Color").get_to(_tData.dwColor);
+    _j.at("TransformData").get_to(_tData.transform);
+    _j.at("TextureData").get_to(_tData.texture);
+    _j.at("PanelData").get_to(_tData.panelBuffer);
+}
+```
+
+</Editor>
+
+구조체마다 `to_json` / `from_json`을 정의해 두면 nlohmann/json이 트랜스폼·텍스처·패널 크기 같은 중첩 구조체까지 알아서 변환합니다. 사람이 읽을 수 있는 형식이어서, 저장·로드 버그는 파일을 열어 바로 확인할 수 있었습니다.
+
+#### B. 저장과 로드
+
+<Editor file="CFileManager.cpp" fn="CFileManager::SaveDataFile(...), CFileManager::LoadDataFile(...)">
+
+```cpp
+HRESULT CFileManager::SaveDataFile(_uint iSceneID, const _tchar *szLayerTag)
+{
+    std::vector<MAPOBJECTDATA> objectDatas = CObjectManager::GetInstance()->ExportObjectData(iSceneID, szLayerTag);
+    // ... 코드 중략
+    json jArray = json::array();
+    for (const auto &data : objectDatas)
+    {
+        jArray.push_back(data);
+    }
+
+    // " / " 연산자 오버로딩을 통해서 파일 경로 만들기
+    filesystem::path dir = GameDataPath / SceneIdToWstring(iSceneID) / szLayerTag / L"data.json";
+    if (!dir.parent_path().empty())
+    {
+        filesystem::create_directories(dir.parent_path());
+    }
+    // ... 코드 중략
+    // setw(i) 출력될 값의 최소폭을 i 만큼 지정
+    // Json 이므로 4칸 들여쓰기로 출력
+    ofs << std::setw(4) << jArray << std::endl;
+    ofs.close();
+
+    return S_OK;
+}
+// ... 코드 중략
+
+HRESULT CFileManager::LoadDataFile(_uint iSceneID, const _tchar *szLayerTag)
+{
+    filesystem::path dir = GameDataPath / SceneIdToWstring(iSceneID) / szLayerTag / L"data.json";
+    // ... 코드 중략
+    std::ifstream ifs(dir, std::ios::in | std::ios::binary);
+    if (!ifs.is_open())
+    {
+        return E_FAIL;
+    }
+
+    json jArray;
+    ifs >> jArray;
+
+    for (const auto &jObj : jArray)
+    {
+        MAPOBJECTDATA objData = jObj.get<MAPOBJECTDATA>();
+        CDataManager::GetInstance()->AddData(szLayerTag, objData);
+    }
+
+    ifs.close();
+    return S_OK;
+}
+```
+
+</Editor>
+
+경로는 `std::filesystem::path`의 `/` 연산자로 씬과 레이어 이름을 이어 만들고, 없는 폴더는 저장할 때 만듭니다. 읽은 데이터는 바로 객체로 만들지 않고 `CDataManager`에 레이어별로 넣어 두므로, 언제 생성할지는 스테이지가 정합니다.
+
+</Tab>
+<Tab>
+
+팩토리는 카테고리마다 (타입 → 생성 함수) 맵 `m_Register`를 두고, 클라이언트가 시작할 때 `Register`로 생성 함수를 채웁니다. `Create`는 등록된 함수를 찾아 호출하고, 객체를 넣을 씬은 `m_iTargetSceneIndex`로 지정합니다.
+
+#### A. 등록 테이블
+
+<Editor file="CMapFactory.h" fn="CMapFactory">
+
+```cpp
+	using CreateFunction = std::function<CGameObject* (void *)>;
+	// ... 코드 중략
+	void Register(ObjectCategory _eCategory, _uint _iType, CreateFunction _func);
+	CGameObject *Create(ObjectCategory _eCategory, _uint _iType, void* _pData);
+// ... 코드 중략
+
+private:
+	std::map<_uint, CreateFunction> m_Register[g_ObjectCategoryCount];
+```
+
+</Editor>
+
+<Editor file="CMapFactory.cpp" fn="CMapFactory::Create(...)">
+
+```cpp
+CGameObject *CMapFactory::Create(ObjectCategory _eCategory, _uint _iType, void *_pData)
+{
+	// ... 코드 중략
+	_uint iCategory = static_cast<_uint>(_eCategory);
+	auto itr = m_Register[iCategory].find(_iType);
+	if (itr == m_Register[iCategory].end())
+	{
+		MSG_BOX("CMapFactory::Create, std::function is invalid");
+		return nullptr;
+	}
+
+	return (*itr).second(_pData);
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={820} src="/img/reviews/mullet/02-map-tool/factory.png" caption="카테고리별 (타입 → 생성 함수) 테이블" />
+
+`switch` 대신 등록 테이블을 쓰므로 새 오브젝트를 추가해도 로더와 팩토리 코드는 그대로이고, 등록 한 줄만 늘어납니다(<FigRef n={3} />). 로더는 (카테고리, 타입)으로 함수를 찾기만 합니다. 생성 함수는 `void*` 데이터를 받고, 각 객체가 그것을 자기 데이터로 해석합니다.
+
+</Tab>
+<Tab>
+
+프리팹은 여러 객체를 묶은 단위로, 자식 데이터 목록만 가지고 있습니다. `Set_Data`에서 자식 생성을 팩토리에 맡겨 `m_pChildrens`에 담고, `Set_ChildrensMatrix()`로 자식 로컬 행렬에 부모 월드 행렬을 곱해 배치합니다.
+
+#### A. 자식 생성과 배치
+
+<Editor file="CPrefab.cpp" fn="CPrefab::Set_Data(...), CPrefab::Set_ChildrensMatrix()">
+
+```cpp
+// 데이터에 저장된 TransformData는 Local 정보
+for (int i = 0; i < _pData->vecChildrensData.size(); ++i)
+{
+	_pData->vecChildrensData[i].bChild = true;
+	if (CGameObject *pGo = CMapFactory::GetInstance()->Create(
+		_pData->vecChildrensData[i].eCategory,
+		_pData->vecChildrensData[i].iType,
+		&_pData->vecChildrensData[i]))
+	{
+		if (pGo)
+		{
+			m_pChildrens.push_back(pGo);
+			pGo->SetParent(this);
+		}
+	// ... 코드 중략
+	}
+}
+
+Set_ChildrensMatrix();
+// ... 코드 중략
+
+_matrix matResult;
+CTransform *pTransform;
+for (int i = 0; i < m_pChildrens.size(); ++i)
+{
+	if (m_pChildrens[i])
+	{
+		if (pTransform = m_pChildrens[i]->GetTransform())
+		{
+			matResult = (*pTransform->Get_Local()) * (*GetTransform()->Get_World());
+			pTransform->Set_Info(INFO::INFO_RIGHT, (*(_vec3 *)&matResult.m[0]));
+			pTransform->Set_Info(INFO::INFO_UP, (*(_vec3 *)&matResult.m[1]));
+			pTransform->Set_Info(INFO::INFO_LOOK, (*(_vec3 *)&matResult.m[2]));
+			pTransform->Set_Info(INFO::INFO_POS, (*(_vec3 *)&matResult.m[3]));
+		}
+	}
+}
+```
+
+</Editor>
+
+자식도 일반 오브젝트와 같은 팩토리로 만들기 때문에 프리팹은 자식의 구체 타입을 알 필요가 없습니다. 배치는 저장해 둔 자식 로컬 행렬에 부모 월드 행렬을 곱해 정합니다.
+
+</Tab>
+<Tab>
+
+도로 구간(프리팹) 목록 `m_pPrefabList`(`std::list`)를 순환시켜, 새로 만들지 않고도 끝없이 이어지는 도로를 만듭니다. 플레이어가 맨 앞 구간에서 구간 간격 `m_fDistance` 이상 멀어지면 `Sorting()`이 그 구간을 맨 뒤로 옮기고 몬스터를 배치합니다.
+
+#### A. 도로 구간 순환
+
+<Editor file="CPrefabRecycleSystem.cpp" fn="CPrefabRecycleSystem::Set_PrefabList(...), CPrefabRecycleSystem::Update(), CPrefabRecycleSystem::Sorting()">
+
+```cpp
+	m_fDistance = std::fabs(pFirst->GetTransform()->Get_Info(INFO::INFO_POS).z - pSecond->GetTransform()->Get_Info(INFO::INFO_POS).z);
+// ... 코드 중략
+
+void CPrefabRecycleSystem::Update()
+{
+	const _float fStandard_Z = m_pPrefabList.front()->GetTransform()->Get_Info(INFO::INFO_POS).z;
+	const _float fPlayerPosition_Z = m_pPlayer->Get_Position().z;
+
+	if (fPlayerPosition_Z - fStandard_Z >= m_fDistance)
+		Sorting();
+}
+// ... 코드 중략
+
+void CPrefabRecycleSystem::Sorting()
+{
+	CGameObject *pWasFront = m_pPrefabList.front();
+	CGameObject *pBack = m_pPrefabList.back();
+	m_pPrefabList.pop_front();
+	_vec3 vNewPosition = pBack->GetTransform()->Get_Info(INFO::INFO_POS);
+	vNewPosition.z += m_fDistance;
+	pWasFront->GetTransform()->Set_Info(INFO::INFO_POS, vNewPosition);
+	static_cast<CPrefab *>(pWasFront)->Set_ChildrensMatrix();
+	m_pPrefabList.push_back(pWasFront);
+
+	RandomSpawnMonster(vNewPosition);
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={600} src="/img/reviews/mullet/02-map-tool/recycle.png" caption="지나간 도로 구간을 맨 뒤로 옮기기" />
+
+연결 리스트에서 노드를 끊었다가 다시 잇는 모습이 도로 구간을 이어 붙이는 모습과 닮았다는 데서 출발했습니다. 맨 앞 구간을 떼어 맨 뒤 구간 바로 다음 자리로 옮기고, 자식 행렬을 다시 계산한 뒤 목록 끝에 붙입니다(<FigRef n={4} />).
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**팩토리에서 없앤 분기가 파일 관리자로 옮겨 왔습니다.** 맵 오브젝트, 프리팹, 배치된 프리팹마다 `Save...` / `Load...` 함수 쌍이 따로 있어서, 데이터 종류가 늘 때마다 `CFileManager`에 함수가 늘어납니다. 데이터 종류별 직렬화를 각 데이터 클래스에 맡겼다면 파일 관리자는 바뀌지 않았을 것입니다.
+
+남은 개선점입니다.
+
+- 열거형 직렬화 매크로를 다른 네임스페이스에 선언해, 파일에 `"ObjectCategory": 3`처럼 숫자로 저장됩니다. 사람이 읽고 고치기 쉬운 JSON이라는 의도는 절반만 이뤘습니다.
+- `ifs >> jArray`는 JSON이 깨져 있으면 예외를 던지는데 받는 곳이 없어, 파일 하나만 잘못돼도 게임이 종료됩니다.
+- 읽은 데이터가 객체를 만든 뒤에도 다음 씬 로드까지 `CDataManager`에 남습니다. 생성이 끝나면 비워야 합니다.
+- 스테이지마다 `SetData` / `InstancingObjects`를 복사해 쓰고, 도로 구간은 재사용하면서도 구간을 옮길 때마다 드론 9마리는 `Clone_GameObject`로 새로 만듭니다. 공통 로딩 단계로 묶고 몬스터도 풀로 돌리는 편이 일관됩니다.

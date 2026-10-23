@@ -1,0 +1,376 @@
+---
+project: katana
+order: 5
+title: 시간 제어 컨텐츠 — 되감기 · 리플레이 · 슬로모션
+topic: 시간 제어
+chips: [Memento Pattern, std::deque, Time Scale]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+메멘토 패턴은 객체의 내부 상태를 밖으로 드러내지 않은 채 스냅샷으로 저장했다가, 나중에 그 상태로 되돌리는 패턴입니다. 이 스냅샷을 일정 간격으로 쌓아 되감기와 리플레이를 만들고, 슬로모션은 시간 배율로 연출했습니다.
+
+스냅샷의 내용은 오브젝트 계열만 다루므로 저장 항목이 바뀌어도 매니저는 영향을 받지 않고, `deque` 덕분에 되감기와 리플레이 모두 O(1)로 꺼냅니다.
+
+## 2. 문제
+
+> 원작의 되감기·리플레이를 구현하려면 오브젝트의 상태를 시간 순서대로 기록하고, 앞뒤 양쪽에서 꺼낼 수 있어야 합니다. 처음에는 오브젝트가 자기 상태를 직접 `vector`에 저장했는데, 저장 대상이 늘수록 저장 로직이 중복되고 책임이 섞였습니다. 슬로모션 중에도 **실제 시간으로 흘러야 하는 값**(능력 게이지, 제한 시간)을 따로 다룰 방법도 필요했습니다.
+
+## 3. 구조 요약
+
+오브젝트는 자기 상태를 담은 스냅샷(`CMemento`)을 만들고 복원하는 일만 합니다. 언제 기록하고 어느 쪽에서 꺼낼지는 매니저와 씬이 정합니다. 슬로모션은 시간 배율로 처리하면서, 배율과 무관한 실제 시간 델타를 따로 제공합니다.
+
+<Fig n={1} white max={520} src="/img/reviews/katana/05-time-control/class.png" caption="시간 제어 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CObject` 파생 | 무엇을 저장하고 어떻게 복원할지 (`CreateMemento` / `Restore`) |
+| `CMemento` | 상태 값 보관. 필드는 `private`, 오브젝트 계열만 `friend` |
+| `CMementoManager` | 타입별 기록, 되감기(뒤)·리플레이(앞) 순서 |
+| `CScene` | 기록·재생 타이밍(1/60초 간격)과 모드 전환 |
+| `CTimeManager` | 시간 배율, 스케일 적용 델타와 실제 시간 델타 제공 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '스냅샷', '기록 보관', '기록 · 재생 간격', '시간 배율']}>
+<Tab>
+
+슬로모션 중에도 실제 시간으로 흘러야 하는 값만 골라 실제 시간 델타를 씁니다.
+
+#### A. 슬로모션 게이지
+
+<Editor file="CPlayer.cpp" fn="Update(...)">
+
+```cpp
+m_bAbillity = m_fAbilityTime > 1.5f;
+if (m_bAbillity && KEY_BUTTON_HOLD(KeyType::V))
+{
+	CTimeManager::Get_Instance()->SetState(TimeState::SLOW);
+	m_fAbilityTime = max(0.0f, m_fAbilityTime - fUnscaledDeltaTime);
+}
+else
+{
+	CTimeManager::Get_Instance()->SetState(TimeState::NORMAL);
+	m_fAbilityTime = min(11.f, m_fAbilityTime + fUnscaledDeltaTime);
+}
+```
+
+</Editor>
+
+슬로모션 게이지를 배율이 적용된 시간으로 줄이면, 느려진 만큼 게이지도 천천히 줄어 사실상 무한해집니다. 그래서 게이지는 실제 시간으로 줄이고 채웁니다.
+
+#### B. 제한 시간과 이펙트
+
+<Editor file="CScene.cpp" fn="BasicUIUpdate(...)">
+
+```cpp
+void CScene::BasicUIUpdate(const float _fDeltaTime)
+{
+	if (CObject* pPlayer = CObjectManager::Get_Instance()->GetPlayer())
+	{
+		m_fLimitTime -= CTimeManager::Get_Instance()->GetUnscaledDeltaTime();
+```
+
+</Editor>
+
+<Editor file="CEffect.cpp" fn="Update(...)">
+
+```cpp
+void CEffect::Update(const float _fDeltaTime)
+{
+	float fDeltaTime = _fDeltaTime;
+	if (m_bUnscaledDelta)
+		fDeltaTime = CTimeManager::Get_Instance()->GetUnscaledDeltaTime();
+```
+
+</Editor>
+
+스테이지 제한 시간과 일부 히트 이펙트도 실제 시간으로 흐르게 해, 슬로모션 중에 함께 느려지지 않게 했습니다.
+
+</Tab>
+<Tab>
+
+오브젝트 한 프레임의 위치·방향, 애니메이션 키와 프레임(`AnimKey`·`FrameIndex`), 풀 안의 위치(`VisibleIndex`)를 담는 스냅샷입니다. 내용은 `friend`로 지정한 오브젝트 계열만 읽고 쓰며, 저장 항목이 다른 타입은 `CreateMemento()`·`Restore()`를 오버라이드합니다.
+
+#### A. 스냅샷
+
+<Editor file="CMemento.h" fn="CMemento">
+
+```cpp
+class CMemento
+{
+	friend CObject;
+	friend CMonster;
+	friend CBoss;
+
+public:
+	CMemento(Vector2 _Pos = Vector2{}, Vector2 _Dir = Vector2{}, wstring _Animkey = L"", unsigned _FrameIndex = -1, unsigned _iVisible = -1)
+		: VisibleIndex(_iVisible), Position(_Pos), Direction(_Dir), FrameIndex(_FrameIndex), AnimKey(_Animkey)
+	{
+
+	}
+	~CMemento() {};
+private:
+	unsigned VisibleIndex;
+	unsigned FrameIndex;
+	Vector2 Position;
+	Vector2 Direction;
+	wstring AnimKey;
+};
+```
+
+</Editor>
+
+필드는 `private`이고 `friend`는 오브젝트 계열뿐입니다. 매니저는 스냅샷을 보관하고 건네줄 뿐 내용을 볼 수 없으므로, 저장 항목이 바뀌어도 매니저 코드는 그대로입니다.
+
+#### B. 만들기와 복원
+
+<Editor file="CObject.cpp" fn="CreateMemento(), Restore(...)">
+
+```cpp
+CMemento CObject::CreateMemento()
+{
+	CAnimatorComponent *pAnimComp = static_cast<CAnimatorComponent *>(GetComponent<CAnimatorComponent>());
+	assert(pAnimComp != nullptr);
+	CAnimationBitmap *pBitmap = pAnimComp->GetAnimationBitmap();
+	assert(pBitmap != nullptr);
+
+	return CMemento{m_Pos, m_Dir, pBitmap->GetAnimKey(), pAnimComp->GetCurrentFrameIndex() };
+}
+
+void CObject::Restore(const CMemento &_m)
+{
+	CAnimatorComponent *pAnimComp = static_cast<CAnimatorComponent *>(GetComponent<CAnimatorComponent>());
+
+	pAnimComp->PlayAnimation(_m.AnimKey, false);
+	pAnimComp->SetCurrentFrameIndex(_m.FrameIndex);
+	SetPos(_m.Position);
+	SetDir(_m.Direction);
+}
+```
+
+</Editor>
+
+오브젝트는 지금 상태로 스냅샷을 만들고, 받은 스냅샷대로 애니메이션·프레임·위치·방향을 되돌립니다. 몬스터는 풀 안의 위치까지 저장하도록 이 두 함수를 오버라이드합니다.
+
+</Tab>
+<Tab>
+
+스냅샷을 타입별 `deque`(`m_Snapshots`)에 쌓아 두고, 되감기와 리플레이 순서에 맞춰 꺼냅니다. `Store()`는 뒤에 쌓고, `Restore()`는 뒤에서, `Replay()`는 앞에서 꺼냅니다. 플레이어 기록이 비면(`IsEmpty()`) 재생이 끝납니다.
+
+#### A. 양방향 기록
+
+<Editor file="CMementoManager.h" fn="CMementoManager">
+
+```cpp
+unordered_map<ObjectType, deque<CMemento>> m_Snapshots;
+```
+
+</Editor>
+
+<Editor file="CMementoManager.cpp" fn="Store(), Restore(), Replay()">
+
+```cpp
+void CMementoManager::Store()
+{
+	// ... 코드 중략
+	if(pPlayer)
+		m_Snapshots[ObjectType::PLAYER].push_back(pPlayer->CreateMemento());
+
+	if(pBoss)
+		m_Snapshots[ObjectType::BOSS].push_back(pBoss->CreateMemento());
+}
+// ... 코드 중략
+
+void CMementoManager::Restore()
+{
+	// ... 코드 중략
+	pPlayer->Restore(m_Snapshots[ObjectType::PLAYER].back());
+	m_Snapshots[ObjectType::PLAYER].pop_back();
+
+	if (pBoss)
+	{
+		pBoss->Restore(m_Snapshots[ObjectType::BOSS].back());
+		m_Snapshots[ObjectType::BOSS].pop_back();
+	}
+}
+// ... 코드 중략
+
+void CMementoManager::Replay()
+{
+	// ... 코드 중략
+	pPlayer->Restore(m_Snapshots[ObjectType::PLAYER].front());
+	m_Snapshots[ObjectType::PLAYER].pop_front();
+
+	if (pBoss)
+	{
+		pBoss->Restore(m_Snapshots[ObjectType::BOSS].front());
+		m_Snapshots[ObjectType::BOSS].pop_front();
+	}
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={480} src="/img/reviews/katana/05-time-control/record.png" caption="기록 · 되감기 · 리플레이" />
+
+처음에는 `vector`를 썼습니다. 되감기처럼 맨 뒤에서 빼는 것은 문제없었지만, 리플레이처럼 맨 앞에서 빼면 O(n)이었습니다. `deque`로 바꾼 뒤로는 뒤에 쌓고, 되감기는 뒤에서, 리플레이는 앞에서 모두 O(1)로 꺼냅니다(<FigRef n={2} />).
+
+</Tab>
+<Tab>
+
+언제 기록하고 언제 재생할지는 씬이 정합니다. 매니저는 한 번 저장하고 한 번 복원하는 일만 알고, 씬이 `m_CurSceneMode`(`NORMAL`·`REWIND`·`REPLAY`)에 따라 `m_fElapsedTime`을 누적하다가 1/60초마다 `Store()`·`Rewind()`·`Replay()`로 요청합니다.
+
+#### A. 고정 간격 기록·재생
+
+<Editor file="MyDefine.h" fn="CAPTURETIME">
+
+```cpp
+#define CAPTURETIME 1.f/60.f
+```
+
+</Editor>
+
+<Editor file="CScene.cpp" fn="Store(), Rewind(...), Replay(...)">
+
+```cpp
+void CScene::Store()
+{
+	m_fElapsedTime += CTimeManager::Get_Instance()->GetDeltaTime();
+	if (m_fElapsedTime >= CAPTURETIME)
+	{
+		CTimeManager::Get_Instance()->SetState(TimeState::NORMAL);
+		CMementoManager::Get_Instance()->Store();
+		m_fElapsedTime -= CAPTURETIME;
+	}
+}
+
+void CScene::Rewind(float _fDeltaTime)
+{
+	if (!CMementoManager::Get_Instance()->IsEmpty())
+	{
+		m_fElapsedTime += _fDeltaTime;
+		if (m_fElapsedTime >= CAPTURETIME)
+		{
+			CMementoManager::Get_Instance()->Restore();
+			m_fElapsedTime -= CAPTURETIME;
+		}
+	}
+}
+
+void CScene::Replay(float _fDeltaTime)
+{
+	if (!CMementoManager::Get_Instance()->IsEmpty())
+	{
+		m_fElapsedTime += _fDeltaTime;
+		if (m_fElapsedTime >= CAPTURETIME)
+		{
+			CMementoManager::Get_Instance()->Replay();
+			m_fElapsedTime -= CAPTURETIME;
+		}
+	}
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={440} src="/img/reviews/katana/05-time-control/capture.png" caption="1/60초 고정 간격 기록" />
+
+스냅샷을 델타타임마다 기록했을 때는 오버헤드가 있었습니다. 그래서 델타타임을 누적하다 1/60초를 넘을 때마다 한 번씩 기록하도록 바꿔, 프레임 간격과 상관없이 기록 횟수를 일정하게 맞췄습니다(<FigRef n={3} />). 되감기와 리플레이도 같은 간격으로 꺼내므로 기록할 때와 같은 속도로 재생됩니다.
+
+#### B. 기록 시점
+
+<Editor file="CScene.cpp" fn="Late_Update()">
+
+```cpp
+switch (m_CurSceneMode)
+{
+case SceneMode::NORMAL:
+{
+	CObjectManager::Get_Instance()->Late_Update();
+	CCollisionManager::Get_Instance()->Update();
+	Store();
+} break;
+```
+
+</Editor>
+
+기록은 일반 모드에서만, 충돌 처리까지 끝난 뒤에 합니다. 한 프레임의 결과가 확정된 상태를 저장하기 위해서입니다.
+
+</Tab>
+<Tab>
+
+`SetState`로 시간 상태를 배율 `m_fTimeScale`(보통 1, 슬로우 0.3, 빠름 2, 정지 0)에 반영합니다. 게임 로직이 쓰는 배율 적용 델타 `GetDeltaTime()`과, 슬로모션과 무관한 실제 시간 델타 `GetUnscaledDeltaTime()`을 함께 제공합니다.
+
+#### A. 배율과 두 가지 델타
+
+<Editor file="CTimeManager.cpp" fn="SetState(...), Update()">
+
+```cpp
+inline void CTimeManager::SetState(const TimeState &_eState)
+{
+	if (_eState >= TimeState::NONE || _eState == m_eState)
+		return;
+
+	switch (_eState)
+	{
+	case TimeState::NORMAL:
+		m_fTimeScale = 1.f;
+		break;
+	case TimeState::SLOW:
+		m_fTimeScale = 0.3f;
+		break;
+	case TimeState::FAST:
+		m_fTimeScale = 2.0f;
+		break;
+	case TimeState::PAUSE:
+		m_fTimeScale = 0.f;
+		break;
+	}
+
+	m_eState = _eState;
+}
+// ... 코드 중략
+
+void CTimeManager::Update()
+{
+	::QueryPerformanceCounter(reinterpret_cast <LARGE_INTEGER *>(&m_tCurTime));
+
+	float fElapsed = (m_tCurTime - m_tPrevTime) / static_cast<float>(m_tFreq);
+	m_tPrevTime = m_tCurTime;
+	m_fUnscaledDeltaTime = fElapsed;
+	m_fScaledDeltaTime = fElapsed * m_fTimeScale;
+	m_fTotalTime += m_fUnscaledDeltaTime;
+```
+
+</Editor>
+
+<Fig n={4} white max={480} src="/img/reviews/katana/05-time-control/scale.png" caption="스케일 적용 시간과 실제 시간" />
+
+한 프레임의 실제 경과 시간을 먼저 구하고, 거기에 배율을 곱한 값을 따로 둡니다. 게임 로직은 배율이 적용된 시간을, 게이지와 제한 시간은 실제 시간을 씁니다(<FigRef n={4} />). 오브젝트는 기본으로 배율 적용 델타를 받으므로, 슬로모션이 걸리면 오브젝트 전체가 함께 느려집니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**저장·되감기·리플레이가 타입별로 복사한 루프를 각자 들고 있었습니다.** 매니저의 세 함수마다 몬스터 타입별 루프가 세 번씩 들어 있어서, 몬스터 종류가 하나 늘면 세 함수를 모두 고쳐야 합니다. 기록 대상 타입 목록을 루프 하나로 순회해 세 함수가 같은 코드를 쓰게 했어야 했습니다.
+
+남은 개선점입니다.
+
+- 이펙트용 스냅샷(`CEffectMemento`)과 저장·복원 함수는 틀만 있고 내용이 비어 있어, 되감기 중에는 이펙트가 복원되지 않습니다.
+- 되감기·리플레이에서 풀의 오브젝트 목록을 값으로 복사해 쓰고 있어, 참조로 받아야 합니다.

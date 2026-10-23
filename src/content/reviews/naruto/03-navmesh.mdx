@@ -1,0 +1,700 @@
+---
+project: naruto
+order: 3
+title: 네비게이션 메시 툴 · 셀 이동
+topic: 지형·이동
+chips: [Ear Clipping, NavMesh, Plane Equation, ImGui]
+lineage:
+  - label: 이전 단계
+    href: /reviews/katana/08-movement/
+  - label: 뮬렛 매드잭 모작 — 패널 기반 지형 높이 계산
+    href: /reviews/mullet/03-terrain-height/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+네비게이션 메시는 걸을 수 있는 영역을 삼각형 셀로 나누고, 셀마다 이웃 셀을 기록해 둔 데이터입니다. 캐릭터는 지금 셀과 그 이웃만 확인하며 움직이므로, 맵 전체를 검사하지 않고도 이동 가능 여부와 높이를 알 수 있습니다. 귀 자르기(Ear Clipping)는 다각형에서 볼록한 꼭짓점을 하나씩 잘라 내 삼각형으로 나누는 알고리즘입니다.
+
+외곽선만 찍으면 셀과 이웃이 만들어져 맵 작업이 빨라졌습니다. 게임에서는 지나간 셀만 검사하는 가벼운 이동 판정과 벽 타기까지 같은 네비메시로 처리합니다.
+
+## 2. 문제
+
+> 뮬렛 매드잭 모작에서는 바닥 패널을 Z 순서로 정렬하고 현재 패널 주변만 찾아 높이를 구했습니다. 이 방식은 맵이 한 방향으로 길다는 가정 위에 서 있었고, 위아래로 겹친 바닥은 구분하지 못했습니다. 이번 맵은 계단·벽·여러 층의 발판이 섞여 있어 걸을 수 있는 영역을 따로 정의해야 했습니다. 그렇다고 삼각형 셀을 점 세 개씩 손으로 찍으면 작업량이 셀 수만큼 늘고, 기둥처럼 가운데가 뚫린 영역이나 따로 만든 두 영역을 잇는 작업도 필요했습니다.
+
+## 3. 구조 요약
+
+툴에서는 외곽선만 찍으면 삼각형 셀과 이웃 관계를 자동으로 만들고, 게임에서는 셀의 이웃 번호를 따라가며 이동 가능 여부와 높이를 구합니다. 정렬 순서 대신 이웃 그래프를 쓰므로 맵 모양에 대한 가정이 필요 없습니다.
+
+<Fig n={1} white max={520} src="/img/reviews/naruto/03-navmesh/class.png" caption="네비게이션 메시 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CPolygonNavigationCellMaker` (툴) | 외곽선 삼각형 분할, 구멍 잇기, 이웃·변 법선 계산, 영역 합치기 |
+| `CCreateMode_Polygon` / `WithHole` / `Link` (툴) | 외곽선·구멍·다리 정점을 찍는 편집 모드 |
+| `CCell` | 세 점, 세 변의 바깥 법선과 이웃 번호, 면 법선. 안쪽 판정과 높이 계산 |
+| `CNavigation` | 현재 셀 번호 유지, 이웃을 따라 이동 가능 여부 판단, 셀 위로 위치 보정 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '귀 자르기 · 구멍', '이웃 · 영역 잇기', '셀 이동']}>
+<Tab>
+
+캐릭터 이동은 셀 검사를 통과할 때만 위치를 바꾸고, 벽 타기는 셀의 면 법선을 기준으로 자세를 맞춥니다.
+
+#### A. 이동 검사
+
+<Editor file="Transform.cpp" fn="CTransform::Go_Dir(...)">
+
+```cpp
+inline void CTransform::Go_Dir(const _float fTimeDelta, _fvector vTargetDir, CNavigation* pNavigation)
+{
+	_vector vPosition = Get_Info(TRANSFORM_INFO_STATE::POS);
+	_vector vDir = ::XMVector3Normalize(vTargetDir);
+
+	vPosition += vDir * m_fMovePerSec * m_fMoveScale * fTimeDelta;
+
+	if (pNavigation == nullptr || pNavigation->Is_Move(vPosition))
+		Set_Info(TRANSFORM_INFO_STATE::POS, vPosition);
+}
+```
+
+</Editor>
+
+이동 함수는 네비게이션을 받으면 옮길 위치를 먼저 `Is_Move`로 검사하고, 셀 안일 때만 위치를 바꿉니다.
+
+#### B. 벽 타기
+
+<Editor file="MainPlayer.cpp" fn="CMainPlayer::Update_Late(...), CMainPlayer::Movement_Wall(...)">
+
+```cpp
+void CMainPlayer::Update_Late(const _float fTimeDelta)
+{
+    Super::Update_Late(fTimeDelta);
+
+    CPlayerControlContext* pControlContext = Get_Component<CPlayerControlContext>();
+    if (pControlContext == nullptr)
+        return;
+
+    if (pControlContext->Is_WallMode())
+    {
+        Movement_Wall(fTimeDelta);
+    }
+    else
+        Movement_Ground(fTimeDelta);
+}
+// ... 코드 중략
+
+void CMainPlayer::Movement_Wall(const _float fTimeDelta)
+{
+    // ... 코드 중략
+    _vector vCellUp = pNavigation->Get_CellNormal_World();
+    _vector vPrevPosition = pTransform->Get_Info(TRANSFORM_INFO_STATE::POS);
+    _vector vNewLook = vPrevLook - ::XMVector3Dot(vPrevLook, vCellUp) * vCellUp;
+    if (::XMVectorGetX(::XMVector3LengthSq(vNewLook)) <= g_XMEpsilon.f[0])
+    {
+        vNewLook = vPrevRight - ::XMVector3Dot(vPrevRight, vCellUp) * vCellUp;
+    }
+
+    vNewLook = ::XMVector3Normalize(vNewLook);
+    _vector vNewRight = ::XMVector3Normalize(::XMVector3Cross(vCellUp, vNewLook));
+
+    pTransform->Set_Info(TRANSFORM_INFO_STATE::RIGHT, vNewRight * vScale.x);
+    pTransform->Set_Info(TRANSFORM_INFO_STATE::UP, vCellUp * vScale.y);
+    pTransform->Set_Info(TRANSFORM_INFO_STATE::LOOK, vNewLook * vScale.z);
+
+    if (pControlContext->Get_JumpCount() <= 0)
+    {
+        _vector vNewPosition = pNavigation->Project_OnNavigation(vPrevPosition);
+        pTransform->Set_Info(TRANSFORM_INFO_STATE::POS, vNewPosition);
+    }
+```
+
+</Editor>
+
+벽 타기 상태에서는 현재 셀의 면 법선을 캐릭터의 위쪽으로 삼아 축을 다시 세우고, 위치를 셀 평면에 투영합니다. 바닥 이동과 벽 이동이 같은 네비메시 하나로 처리됩니다.
+
+</Tab>
+<Tab>
+
+툴에서 찍은 다각형을 삼각형 셀로 바꾸는 클래스입니다. `Compute_SignedAreaXZ`로 감기 방향을 맞춘 뒤 `Compute_Triangle_EarClippingXZ`가 귀(`Is_Ear`)를 잘라 나가고, 구멍이 있으면 `Build_CellsFromPolygon`이 다리로 이어 다각형 하나로 만듭니다. 결과 셀은 파일로 저장되어 게임의 `CNavigation`이 읽습니다.
+
+#### A. 감기 방향과 귀 자르기
+
+<Editor file="PolygonNavigationCellMaker.cpp" fn="CPolygonNavigationCellMaker::Compute_Triangle_EarClippingXZ(...)">
+
+```cpp
+void CPolygonNavigationCellMaker::Compute_Triangle_EarClippingXZ(const std::vector<_float3>& vecPoints, OUT std::vector<_ushort>& vecOutIndices, _bool bCCW)
+{
+	vecOutIndices.clear();
+	const _int iCount = static_cast<_int>(vecPoints.size());
+	if (iCount < 3)
+		return;
+
+	// 폴리곤 방향체크
+	_float fArea = Compute_SignedAreaXZ(vecPoints);
+	_float fExpectedSign = bCCW == true ? 1.f : -1.f;
+
+	// 현재 다각형을 구성하는 정점 인덱스 리스트
+	std::vector<_int> vecIndexList;
+	vecIndexList.resize(iCount);
+	for (_int i = 0; i < iCount; ++i)
+		vecIndexList[i] = i;
+
+	// CW -> fArea < 0.f 가 정상
+	// CCW -> fArea > 0.f
+	if (fArea * fExpectedSign < 0.f)
+	{
+		std::reverse(vecIndexList.begin(), vecIndexList.end());
+	}
+	// ... 코드 중략
+	_int iGuard = { 0 };
+	const _int iMax = iCount * iCount;
+
+	// indexList에 남는 정점이 3개가 될 때까지 반복
+	while (vecIndexList.size() > 3 && iGuard++ < iMax)
+	{
+		_bool bEarFound = { false };
+		const _int iIndexCount = static_cast<_int>(vecIndexList.size());
+
+		// 귀인가유?
+		for (_int i = 0; i < iIndexCount; ++i)
+		{
+			if (Is_Ear(vecPoints, vecIndexList, i, bCCW) == false)
+				continue;
+
+			const _int iIndex_1 = vecIndexList[i];
+			const _int iIndex_0 = vecIndexList[(i + iIndexCount - 1) % iIndexCount];
+			const _int iIndex_2 = vecIndexList[(i + 1) % iIndexCount];
+
+			// Ear면 최종 Index에 추가
+			vecOutIndices.push_back(static_cast<_ushort>(iIndex_0));
+			vecOutIndices.push_back(static_cast<_ushort>(iIndex_1));
+			vecOutIndices.push_back(static_cast<_ushort>(iIndex_2));
+
+			// 현재 폴리곤 Indexlist에서 EarIndex 제거
+			// 귀를 자르고 새로운 다각형을 기준으로 검사 진행해야하니 break
+			vecIndexList.erase(vecIndexList.begin() + i);
+			bEarFound = true;
+			break;
+		}
+
+		if (!bEarFound)
+			break;
+	}
+
+	if (vecIndexList.size() == 3)
+	{
+		vecOutIndices.push_back(static_cast<_ushort>(vecIndexList[0]));
+		vecOutIndices.push_back(static_cast<_ushort>(vecIndexList[1]));
+		vecOutIndices.push_back(static_cast<_ushort>(vecIndexList[2]));
+	}
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={760} src="/img/reviews/naruto/03-navmesh/earclip.png" caption="외곽선에서 귀를 하나씩 잘라 삼각형 만들기" />
+
+툴에서는 점을 시계·반시계 어느 방향으로든 찍을 수 있으므로, 먼저 부호 있는 넓이로 감기 방향을 확인하고 기대한 방향과 다르면 인덱스 목록을 뒤집습니다. 그다음 귀를 하나 찾을 때마다 삼각형으로 내보내고 그 꼭짓점을 목록에서 지운 뒤, 줄어든 다각형에서 처음부터 다시 찾습니다. 이렇게 N−2개의 삼각형이 만들어집니다(<FigRef n={2} />). 귀를 못 찾거나 반복이 N²을 넘으면 멈추므로, 잘못 찍은 다각형에서도 무한 루프에 빠지지 않습니다.
+
+#### B. 귀 판정
+
+<Editor file="PolygonNavigationCellMaker.cpp" fn="CPolygonNavigationCellMaker::Is_Ear(...), CPolygonNavigationCellMaker::Point_InTriangleXZ(...)">
+
+```cpp
+_bool CPolygonNavigationCellMaker::Is_Ear(const std::vector<_float3>& vecPoints, const std::vector<_int>& vecIndexList, _int i, _bool bCCW)
+{
+	const _int iCount = static_cast<_int>(vecIndexList.size());
+	const _int iIndex_0 = vecIndexList[(i + iCount - 1) % iCount]; // i -1
+	const _int iIndex_1 = vecIndexList[i]; // i
+	const _int iIndex_2 = vecIndexList[(i + 1) % iCount]; // i + 1
+
+	_float3 vA = vecPoints[iIndex_0];
+	_float3 vB = vecPoints[iIndex_1];
+	_float3 vC = vecPoints[iIndex_2];
+
+	// concave? 평각인지 ?
+	_float fCross = Compute_Cross2DXZ(vA, vB, vC);
+	_float fOrientSign = bCCW ? 1.f : -1.f;
+
+	if (fCross * fOrientSign <= 0.f)
+		return false;
+
+	// 다른 정점이 삼각형 내부에 있는가?
+	for (_int j = 0; j < iCount; ++j)
+	{
+		const _int iK = vecIndexList[j];
+		if (iK == iIndex_0 || iK == iIndex_1 || iK == iIndex_2)
+			continue;
+
+		if (Point_InTriangleXZ(vecPoints[iK], vA, vB, vC))
+			return false;
+	}
+
+	return true;
+}
+// ... 코드 중략
+
+_bool CPolygonNavigationCellMaker::Point_InTriangleXZ(const _float3& vPoint, const _float3& vA, const _float3& vB, const _float3& vC)
+{
+	// p3 -> p1 방향벡터 (p1 - p3)
+	// p3 -> p2 방향벡터 (p2 - p3)
+	// 외적
+	auto sign = [](const _float3& p1, const _float3& p2, const _float3& p3)
+	{
+		return (p1.x - p3.x) * (p2.z - p3.z) -
+			(p2.x - p3.x) * (p1.z - p3.z);
+	};
+
+	const _float d1 = sign(vPoint, vA, vB); // 변 AB 기준
+	const _float d2 = sign(vPoint, vB, vC); // 변 BC 기준
+	const _float d3 = sign(vPoint, vC, vA); // 변 CA 기준
+
+	// 삼각형 내부의 점(변위에 있는점은 포함하지않는다, WithHole 만들때 좀 복잡해짐)은 모든 변에 대해 같은 방향의 부호를 가진다. 즉 아래 bool flag 둘중에 하나가 false
+	// 하지만 외부으 점은 어떤 변은 음수, 어떤변은 양수 일 수 있다. 아래 boolFlag가 모두 true
+	const _bool bHasNeg = (d1 < 0.f) || (d2 < 0.f) || (d3 < 0.f);
+	const _bool bHasPos = (d1 > 0.f) || (d2 > 0.f) || (d3 > 0.f);
+	const _bool bOnEdge = (fabsf(d1) <= g_XMEpsilon.f[0] || fabsf(d2) <= g_XMEpsilon.f[0] || fabsf(d3) <= g_XMEpsilon.f[0]);
+
+	if (bOnEdge)
+		return false;
+
+	return !(bHasNeg && bHasPos);
+}
+```
+
+</Editor>
+
+귀가 되려면 두 조건을 모두 만족해야 합니다. 앞뒤 꼭짓점과 이루는 외적의 부호가 감기 방향과 같아 볼록해야 하고, 그 삼각형 안에 다른 꼭짓점이 없어야 합니다. 변 위에 놓인 점은 안쪽으로 치지 않습니다. 구멍을 이을 때 같은 위치의 점이 두 번 들어가므로, 이 점까지 안쪽으로 보면 다리 끝점을 쓰는 삼각형은 하나도 귀가 될 수 없기 때문입니다.
+
+#### C. 구멍을 다리로 잇기
+
+<Editor file="PolygonNavigationCellMaker.cpp" fn="CPolygonNavigationCellMaker::Build_CellsFromPolygon(outer, holes, bridges)">
+
+```cpp
+vector<vector<_float3>> vecHolesVertices;
+vecHolesVertices.resize(iHoleCount);
+for (size_t i = 0; i < iHoleCount; ++i)
+{
+	const vector<CVertexObject*>& vecHolePolyPoints = vecHolePolygons[i]->Get_Vertices();
+	const size_t iHolePointsCount = vecHolePolyPoints.size();
+	vecHolesVertices[i].reserve(iHolePointsCount);
+	for (size_t j = 0; j < iHolePointsCount; ++j)
+	{
+		CVertexObject* const pHoleVertex = vecHolePolyPoints[j];
+		if (!pHoleVertex)
+			continue;
+
+		_float3 vPos = {};
+		::XMStoreFloat3(&vPos, pHoleVertex->Get_Component<CTransform>()->Get_Info(TRANSFORM_INFO_STATE::POS));
+		vecHolesVertices[i].push_back(vPos);
+	}
+
+	_float fHoleArea = Compute_SignedAreaXZ(vecHolesVertices[i]);
+	_bool bHoleIsCW = fHoleArea < 0.f;
+	// Outer와 반대로
+	if (bOuterIsCW == bHoleIsCW)
+	{
+		std::reverse(vecHolesVertices[i].begin(), vecHolesVertices[i].end());
+		for (auto& bridge : vecBridges)
+		{
+			if (bridge.iHolePolyIndex == i)
+			{
+				bridge.iHoleVertexIndex =
+					((iHolePointsCount - 1) - bridge.iHoleVertexIndex);
+			}
+		}
+	}
+}
+// ... 코드 중략
+
+std::sort(vecBridges.begin(), vecBridges.end(),
+	[](const HoleBridges& a, const HoleBridges& b)->bool
+	{
+		return a.iOuterVertexIndex < b.iOuterVertexIndex;
+	});
+
+_uint iBridgeStep = { 0 };
+for (size_t iOuter = 0; iOuter < iOuterPointsCount; ++iOuter)
+{
+	vecFinalVertices.push_back(vecOuterVertices[iOuter]);
+
+	if (iBridgeStep < vecBridges.size() && iOuter == vecBridges[iBridgeStep].iOuterVertexIndex)
+	{
+		const HoleBridges& bridge = vecBridges[iBridgeStep];
+		const vector<_float3>& vecHoleVrts = vecHolesVertices[bridge.iHolePolyIndex];
+		const size_t iHoleVerticesCount = vecHoleVrts.size();
+		const size_t iHoleStart = bridge.iHoleVertexIndex;
+
+		for (size_t iHole = 0; iHole < iHoleVerticesCount; ++iHole)
+		{
+			// Vertex를 Hole과 연결된곳을 Start로 순회
+			size_t iIndex = (iHoleStart + iHole) % iHoleVerticesCount;
+			vecFinalVertices.push_back(vecHoleVrts[iIndex]);
+		}
+
+		vecFinalVertices.push_back(vecHolesVertices[bridge.iHolePolyIndex][iHoleStart]);
+		vecFinalVertices.push_back(vecOuterVertices[iOuter]);
+		++iBridgeStep;
+	}
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={640} src="/img/reviews/naruto/03-navmesh/hole.png" caption="구멍을 다리 변으로 이어 다각형 하나로 만들기" />
+
+귀 자르기는 구멍 없는 다각형 하나만 다룰 수 있습니다. 그래서 구멍의 감기 방향을 외곽과 반대로 맞추고, 툴에서 고른 외곽 점과 구멍 점을 다리 변으로 이어 "외곽 → 다리 → 구멍 한 바퀴 → 다리 → 외곽" 순서의 정점 목록 하나로 펼칩니다(<FigRef n={3} />). 구멍을 뒤집을 때 다리가 가리키던 구멍 점 번호도 함께 바꾸므로, 사용자가 고른 점이 그대로 유지됩니다.
+
+</Tab>
+<Tab>
+
+삼각형을 만든 뒤 `SetUp_Neighbors`가 변마다 이웃 번호를, `SetUp_Normals`가 변의 바깥 법선을 채웁니다. 따로 만든 영역은 `CCreateMode_PolygonLink`로 그린 다리 셀과 함께 `Merge_Cells`로 합칩니다. 게임은 이 정보만으로 이동을 판단하므로 모두 툴에서 미리 계산해 저장합니다.
+
+#### A. 이웃과 변 법선
+
+<Editor file="PolygonNavigationCellMaker.cpp" fn="CPolygonNavigationCellMaker::SetUp_Neighbors(...), CPolygonNavigationCellMaker::SetUp_Normals(...)">
+
+```cpp
+HRESULT CPolygonNavigationCellMaker::SetUp_Neighbors(vector<CCell*>& vecCells)
+{
+	for (auto& pSourCell : vecCells)
+	{
+		for (auto& pDestCell : vecCells)
+		{
+			if (pSourCell == pDestCell)
+				continue;
+
+			if (true == pDestCell->Compare(pSourCell->Get_Point(EPOINT::A), pSourCell->Get_Point(EPOINT::B)))
+				pSourCell->Set_Neighbor(ELINE::AB, pDestCell);
+
+			if (true == pDestCell->Compare(pSourCell->Get_Point(EPOINT::B), pSourCell->Get_Point(EPOINT::C)))
+				pSourCell->Set_Neighbor(ELINE::BC, pDestCell);
+
+			if (true == pDestCell->Compare(pSourCell->Get_Point(EPOINT::C), pSourCell->Get_Point(EPOINT::A)))
+				pSourCell->Set_Neighbor(ELINE::CA, pDestCell);
+		}
+	}
+
+	return S_OK;
+}
+
+HRESULT CPolygonNavigationCellMaker::SetUp_Normals(vector<CCell*>& vecCells)
+{
+	for (auto& pCell : vecCells)
+	{
+		_vector vLine = {};
+		_vector vPoint_A = pCell->Get_Point(EPOINT::A);
+		_vector vPoint_B = pCell->Get_Point(EPOINT::B);
+		_vector vPoint_C = pCell->Get_Point(EPOINT::C);
+
+		vLine = ::XMVector3Normalize(::XMVectorSetY((vPoint_B - vPoint_A), 0.f));
+		pCell->Set_Normal(ELINE::AB, _float3(::XMVectorGetZ(vLine) * -1.f, 0.f, ::XMVectorGetX(vLine)));
+
+		vLine = ::XMVector3Normalize(::XMVectorSetY((vPoint_C - vPoint_B), 0.f));
+		pCell->Set_Normal(ELINE::BC, _float3(::XMVectorGetZ(vLine) * -1.f, 0.f, ::XMVectorGetX(vLine)));
+
+		vLine = ::XMVector3Normalize(::XMVectorSetY((vPoint_A - vPoint_C), 0.f));
+		pCell->Set_Normal(ELINE::CA, _float3(::XMVectorGetZ(vLine) * -1.f, 0.f, ::XMVectorGetX(vLine)));
+	}
+
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Editor file="Cell.cpp" fn="CCell::Compare(...)">
+
+```cpp
+_bool CCell::Compare(_fvector vSourPoint, _fvector vDestPoint)
+{
+	if (::XMVector3Equal(vSourPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::A)])) == true)
+	{
+		if (::XMVector3Equal(vDestPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::B)])) == true)
+			return true;
+		if (::XMVector3Equal(vDestPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::C)])) == true)
+			return true;
+	}
+
+	if (::XMVector3Equal(vSourPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::B)])) == true)
+	{
+		if (::XMVector3Equal(vDestPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::C)])) == true)
+			return true;
+		if (::XMVector3Equal(vDestPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::A)])) == true)
+			return true;
+	}
+
+	if (::XMVector3Equal(vSourPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::C)])) == true)
+	{
+		if (::XMVector3Equal(vDestPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::A)])) == true)
+			return true;
+		if (::XMVector3Equal(vDestPoint, ::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::B)])) == true)
+			return true;
+	}
+
+	return false;
+}
+```
+
+</Editor>
+
+다른 셀이 내 변의 두 점을 모두 가지고 있으면 그 셀을 이 변의 이웃으로 기록합니다. 변 법선은 Y를 뺀 변 방향을 XZ 평면에서 90도 돌려 만들고, 게임에서 "어느 변 밖으로 나갔는가"를 판단할 때 씁니다.
+
+#### B. 두 영역 잇기
+
+<Editor file="CreateMode_PolygonLink.cpp" fn="CCreateMode_PolygonLink::Create_VertexObject(...)">
+
+```cpp
+HRESULT CCreateMode_PolygonLink::Create_VertexObject(CVertexObject* pColiidedVertex)
+{
+    // ... 코드 중략
+    _fvector vDummyPos = pColiidedVertex->Get_Component<CTransform>()->Get_Info(TRANSFORM_INFO_STATE::POS);
+    _fvector vFirstCellPos = m_pBridgePolygon->Get_FirstCell_Position();
+    _float fDistance = ::XMVectorGetX(::XMVector3Length(vFirstCellPos - vDummyPos));
+
+    if (fDistance <= 0.125f /* snap distance */)
+    {
+        Safe_Release(pVertexObject);
+        m_pBridgePolygon->Remove_Dummy();
+        m_pBridgePolygon->CreatePolygon();
+        m_pMaker->Build_CellsFromPolygon(m_pBridgePolygon);
+        m_bDone = true;
+        Change_State(State::PickTarget);
+    }
+    else
+    {
+        AddVertex_ToPolygon(pVertexObject, vDummyPos);
+        m_bDone = false;
+    }
+    return S_OK;
+}
+```
+
+</Editor>
+
+<Editor file="PolygonNavigationCellMaker.cpp" fn="CPolygonNavigationCellMaker::Merge_Cells(...)">
+
+```cpp
+HRESULT CPolygonNavigationCellMaker::Merge_Cells(vector <CCell*>& vecTargetCells, vector <CCell*>& vecSourCells, vector <CCell*>& vecBridgeCells)
+{
+	vecTargetCells.reserve(vecTargetCells.capacity() + vecBridgeCells.size() + vecSourCells.size());
+
+	for (size_t i = 0; i < vecBridgeCells.size(); ++i)
+	{
+		Safe_AddRef(vecBridgeCells[i]);
+		vecTargetCells.push_back(vecBridgeCells[i]);
+	}
+	for (size_t i = 0; i < vecSourCells.size(); ++i)
+	{
+		Safe_AddRef(vecSourCells[i]);
+		vecTargetCells.push_back(vecSourCells[i]);
+	}
+
+	for (size_t i = 0; i < vecTargetCells.size(); ++i)
+	{
+		vecTargetCells[i]->Set_Index((_int)i);
+	}
+
+	if (FAILED(SetUp_Neighbors(vecTargetCells)))
+		return E_FAIL;
+
+	if (FAILED(SetUp_Normals(vecTargetCells)))
+		return E_FAIL;
+
+	return S_OK;
+}
+```
+
+</Editor>
+
+따로 만든 두 영역은 사이에 다리 다각형을 그려 잇습니다. 다리는 기존 영역의 정점을 클릭해야만 찍히고, 클릭한 정점의 위치를 그대로 복사합니다. 덕분에 다리 셀과 기존 셀이 공유하는 점이 정확히 같은 좌표가 되어, 합친 뒤 이웃 계산에서 자연스럽게 연결됩니다.
+
+</Tab>
+<Tab>
+
+게임 오브젝트에 붙는 컴포넌트입니다. 현재 셀 번호(`m_iCurrentCellIndex`) 하나만 유지하면서 `Is_Move`로 이웃을 따라 들어갈 셀을 찾습니다. 처음 셀은 `Sync_Index`로, 높이는 `SetUp_OnNavigation`/`Project_OnNavigation`으로 맞춥니다.
+
+#### A. 이웃을 따라 셀 찾기
+
+<Editor file="Cell.cpp" fn="CCell::Is_In(...)">
+
+```cpp
+_bool CCell::Is_In(_fvector vResultPos, _int* pNeighborIndex)
+{
+	for (size_t i = 0; i < ENUM_TO_UINT(ELINE::END); ++i)
+	{
+		_vector vDir = vResultPos - ::XMLoadFloat3(&m_vPoints[i]);
+		_vector vDist450 = ::XMVector3Dot(::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(EPOINT::A)]) - vResultPos, ::XMLoadFloat3(&m_vNormals[ENUM_TO_UINT(ELINE::AB)]));
+		if (g_XMEpsilon.f[0] < ::XMVectorGetX(::XMVector3Dot(vDir, ::XMLoadFloat3(&m_vNormals[i]))))
+		{
+			*pNeighborIndex = m_iNeighbors[i];
+			return false;
+		}
+	}
+
+	return true;
+}
+```
+
+</Editor>
+
+<Editor file="Navigation.cpp" fn="CNavigation::Is_Move(...)">
+
+```cpp
+_bool CNavigation::Is_Move(_fvector vResultPos)
+{
+	if (-1 == m_iCurrentCellIndex)
+		return false;
+
+	_vector     vCellPos = vResultPos;
+	if (m_pParentMatrix)
+		vCellPos = XMVector3TransformCoord(vResultPos, XMMatrixInverse(nullptr, ::XMLoadFloat4x4(m_pParentMatrix)));
+
+	_int        iNeighborIndex = { -1 };
+	if (m_vecCells[m_iCurrentCellIndex]->Is_In(vCellPos, &iNeighborIndex))
+		return true;
+
+	if (iNeighborIndex == -1)
+		return false;
+
+	// 무한루프 방지
+	const _int iMaxCounting = static_cast<_int>(m_vecCells.size()) + 100;
+	_int iCount = { 0 };
+
+	_int iCurrentIndex = iNeighborIndex;
+	while (iCount++ < iMaxCounting)
+	{
+		if (true == m_vecCells[iCurrentIndex]->Is_In(vCellPos, &iNeighborIndex))
+		{
+			m_iCurrentCellIndex = iCurrentIndex;
+			return true;
+		}
+
+		if (iNeighborIndex == -1)
+			return false;
+
+		iCurrentIndex = iNeighborIndex;
+	}
+
+	return false;
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={560} src="/img/reviews/naruto/03-navmesh/walk.png" caption="벗어난 변의 이웃 셀을 따라가며 현재 셀 갱신" />
+
+이동할 위치가 세 변 중 하나의 바깥에 있으면 그 변의 이웃 셀 번호를 돌려줍니다. `Is_Move`는 그 이웃 셀에서 다시 검사하고, 또 벗어나면 그 변의 이웃으로 건너가기를 반복합니다(<FigRef n={4} />). 한 프레임에 여러 셀을 지나도 경로를 따라 찾아가고, 이웃이 없는 변(-1)으로 나가면 벽으로 보고 이동을 막습니다. 전체 셀을 뒤지지 않으므로 셀이 늘어도 검사량은 지나간 셀 수만큼입니다.
+
+#### B. 셀 위로 붙이기
+
+<Editor file="Cell.cpp" fn="CCell::Project_OnPlane(...), CCell::Compute_Height(...)">
+
+```cpp
+_vector CCell::Project_OnPlane(_fvector vPos) const
+{
+	_vector vA = Get_Point(EPOINT::A);
+	_vector vB = Get_Point(EPOINT::B);
+	_vector vC = Get_Point(EPOINT::C);
+
+	_vector vNormal = Get_UpNormal();
+
+	_vector vA_Pos = vPos - vA;
+	_float fDist = ::XMVectorGetX(::XMVector3Dot(vA_Pos, vNormal));
+	return vPos - vNormal * fDist;
+}
+// ... 코드 중략
+
+_float CCell::Compute_Height(_vector vCellPos)
+{
+	_vector vPlane = ::XMPlaneFromPoints(
+		::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(ENUM_TO_UINT(EPOINT::A))]),
+		::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(ENUM_TO_UINT(EPOINT::B))]),
+		::XMLoadFloat3(&m_vPoints[ENUM_TO_UINT(ENUM_TO_UINT(EPOINT::C))]));
+
+	// ax + by + cz + d  = 0
+	// y = (-ax - cz - d) / b
+	_float x = ::XMVectorGetX(vCellPos);
+	_float y = ::XMVectorGetY(vCellPos);
+	_float z = ::XMVectorGetZ(vCellPos);
+
+	_float a = ::XMVectorGetX(vPlane);
+	_float b = ::XMVectorGetY(vPlane);
+	_float c = ::XMVectorGetZ(vPlane);
+	_float d = ::XMVectorGetW(vPlane);
+
+	return ((-a * x) - (c * z) - d) / b;
+}
+```
+
+</Editor>
+
+<Editor file="Navigation.cpp" fn="CNavigation::Sync_Index(...)">
+
+```cpp
+void CNavigation::Sync_Index(_fvector vWorldPos)
+{
+	_vector vCellPos = ::XMVectorSetW(vWorldPos, 1.f);
+
+	if(m_pParentMatrix)
+		vCellPos = ::XMVector3TransformCoord(vCellPos, ::XMMatrixInverse(nullptr, ::XMLoadFloat4x4(m_pParentMatrix)));
+
+	m_iCurrentCellIndex = -1;
+	_float fBestDist = FLT_MAX;
+	for (size_t i = 0; i < m_vecCells.size(); ++i)
+	{
+		CCell* pCell = m_vecCells[i];
+
+		_vector vA = pCell->Get_Point(EPOINT::A);
+		_vector vUpNormal = pCell->Get_UpNormal();
+
+		_float fDist = ::XMVectorGetX(::XMVector3Dot(vCellPos - vA, vUpNormal));
+
+		_vector vProj = vCellPos - vUpNormal * fDist;
+
+		_int iSrc = -1;
+		if (pCell->Is_In(vProj, &iSrc) == false)
+			continue;
+
+		_float fAbsDist = ::fabsf(fDist);
+		if (fAbsDist < fBestDist)
+		{
+			fBestDist = fAbsDist;
+			m_iCurrentCellIndex = pCell->Get_Index();
+		}
+	}
+// ... 코드 중략
+}
+```
+
+</Editor>
+
+셀 위에 붙이는 방법은 두 가지입니다. 바닥에서는 평면 식으로 Y를 구해 높이만 맞추고, 벽처럼 기울어진 셀에서는 면 법선 방향으로 평면에 투영합니다. 처음 셀을 찾을 때는 위치를 각 셀 평면에 투영해 보고, 안쪽에 들어오는 셀 중 평면까지 가장 가까운 셀을 고릅니다. 그래서 위아래로 겹친 바닥에서도 발밑의 셀이 선택됩니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**셀의 이웃 연결은 좌표가 정확히 같을 때만 이어졌습니다.** `Compare`가 `XMVector3Equal`로 점을 비교하므로, 툴이 위치를 복사해 주는 경우에만 셀이 연결됩니다. 정점을 조금 옮기거나 다른 경로로 같은 위치를 찍으면 연결이 조용히 끊기고, 그 변은 벽(-1)이 됩니다. 정점 번호를 공유하거나 허용 오차로 비교했어야 합니다.
+
+남은 개선점입니다.
+
+- `Is_Move`가 실패하면 위치를 그대로 두기 때문에, 벽에 비스듬히 부딪쳐도 걸린 듯 멈춥니다. 이미 저장된 변 법선 성분을 이동 벡터에서 빼면 벽을 따라 미끄러지게 할 수 있습니다.
+- `SetUp_Neighbors`가 모든 셀 쌍을 비교하고, 영역을 합칠 때마다 전체를 다시 계산합니다. 변을 키로 하는 해시 맵을 쓰면 셀 수에 비례하는 비용으로 줄일 수 있습니다.
+- `CCell::Is_In` 안에 쓰지 않는 내적 계산(`vDist450`)이 남아 있어, 이동 검사마다 세 번씩 헛계산합니다.

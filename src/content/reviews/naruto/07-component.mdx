@@ -1,0 +1,509 @@
+---
+project: naruto
+order: 7
+title: 컴포넌트 · 스크립트 컴포넌트
+topic: GameObject·컴포넌트
+chips: [Component Pattern, Prototype Pattern, unordered_map, std::array, constexpr]
+lineage:
+  label: 카타나 제로 모작 — 컴포넌트 설계
+  href: /reviews/katana/01-component/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+컴포넌트 패턴은 기능을 상속 대신 독립된 부품으로 만들어 오브젝트에 붙이는 방식입니다. 엔진과 게임 코드가 나뉜 구조에서는 엔진이 미리 아는 부품과 게임이 나중에 만드는 부품을 어떻게 같은 오브젝트에 붙일지도 함께 정해야 합니다.
+
+엔진 컴포넌트와 클라이언트 컴포넌트를 나눈 덕분에 게임 기능을 추가해도 엔진을 고치지 않게 되었고, 엔진 컴포넌트를 조회할 때의 캐스팅도 사라졌습니다.
+
+## 2. 문제
+
+> 카타나 제로 모작의 컴포넌트 조회 함수는 부모 타입 포인터를 돌려줘서, 꺼낼 때마다 호출부에서 다시 캐스팅해야 했습니다. 컴포넌트 갱신도 오브젝트가 하나씩 직접 불러야 했습니다. 이번 엔진은 엔진과 클라이언트가 DLL로 나뉩니다. 트랜스폼·모델·충돌체처럼 엔진이 제공하는 컴포넌트와 달리, 체력·스킬·락온처럼 게임마다 다른 컴포넌트는 엔진이 알 수 없습니다. 모든 컴포넌트를 엔진의 열거형 슬롯에 넣으면 게임 기능을 하나 추가할 때마다 엔진을 고쳐야 했습니다.
+
+## 3. 구조 요약
+
+엔진 컴포넌트와 클라이언트 컴포넌트를 다른 그릇에 담았습니다. 엔진이 아는 컴포넌트는 타입 번호를 인덱스로 쓰는 고정 배열에, 게임 쪽 컴포넌트는 이름을 키로 쓰는 맵에 둡니다. 그래서 엔진은 클라이언트 컴포넌트의 타입을 몰라도 등록·갱신·해제를 할 수 있습니다.
+
+<Fig n={1} white max={720} src="/img/reviews/naruto/07-component/class.png" caption="컴포넌트 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 / 구조체 | 책임 |
+| --- | --- |
+| `CGameObject` | 엔진 컴포넌트 슬롯 배열과 스크립트 컴포넌트 맵 소유. 추가·조회·해제, 스크립트 일괄 갱신 |
+| `EComponentType` / `_ID` | 엔진 컴포넌트 종류와 슬롯 번호. 타입마다 `constexpr static`으로 선언 |
+| `CComponent` | 소유자 연결과 복제 인터페이스(`Clone`)를 가진 공통 기반 |
+| `CMonoBehaviour` | 클라이언트 컴포넌트의 기반. `Awake`·`Update`를 가지며 슬롯 대신 이름으로 관리 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '엔진 슬롯', '스크립트', '프로토타입 복제']}>
+<Tab>
+
+오브젝트가 초기화 때 두 종류의 컴포넌트를 붙이고, 다른 시스템이 이름으로 꺼내 쓰는 부분입니다.
+
+#### A. 오브젝트 구성
+
+<Editor file="MainPlayer.cpp" fn="CMainPlayer::Initialize(...), CMainPlayer::Ready_Ability()">
+
+```cpp
+HRESULT CMainPlayer::Initialize(void* pArg)
+{
+    if (FAILED(Super::Initialize(pArg)))
+        return E_FAIL;
+
+    if (FAILED(Ready_Ability()))
+        return E_FAIL;
+
+    if (FAILED(Ready_Weapons()))
+        return E_FAIL;
+
+    if (FAILED(Add_Component<CPlayerControlContext>(0 /*static*/, L"Prototype_Component_PlayerControlContext", nullptr)))
+        return E_FAIL;
+
+    if (FAILED(Ready_Colliders()))
+        return E_FAIL;
+
+    if (FAILED(Ready_Ray()))
+        return E_FAIL;
+
+    if (FAILED(Add_Script_Component(L"Lockon", L"Prototype_Component_Lockon", nullptr)))
+        return E_FAIL;
+
+    m_pLockonComp = static_cast<CLockon*>(Get_Script_Component(L"Lockon"));
+    return S_OK;
+}
+    // ... 코드 중략
+    {
+        CStatComponent::STATCOMP_DESC desc = {};
+        desc.iHealth = 100;
+        if (FAILED(Add_Script_Component(L"StatComponent", L"Prototype_Component_Stat", &desc)))
+            return E_FAIL;
+
+        m_pStatComp = static_cast<CStatComponent*>(Get_Script_Component(L"StatComponent"));
+    }
+```
+
+</Editor>
+
+입력 컴포넌트는 엔진 슬롯에, 락온·스킬·체력은 이름을 붙여 스크립트 맵에 넣습니다. 자주 쓰는 스크립트는 붙인 직후 한 번 조회해 멤버 포인터로 들고 있습니다.
+
+#### B. 이름으로 찾아 쓰기
+
+<Editor file="UI_Hpbar.cpp" fn="CUI_Hpbar::Awake(...)">
+
+```cpp
+    CGameObject* pGo = m_pGameInstance->Get_GameObject_Back(iCurrentLevelID, m_wstrOwnerLayer);
+    if (pGo == nullptr)
+        return E_FAIL;
+
+    CMonoBehaviour* pMonoStat = pGo->Get_Script_Component(L"StatComponent");
+    if (pMonoStat == nullptr)
+        return E_FAIL;
+
+    m_pOwnerStatComp = static_cast<CStatComponent*>(pMonoStat);
+```
+
+</Editor>
+
+<Editor file="Player.cpp" fn="CPlayer::Update(...)">
+
+```cpp
+void CPlayer::Update(const _float fTimeDelta)
+{
+    if (CPlayerActionState* pPlayerState = Get_Component<CPlayerActionState>())
+    {
+        pPlayerState->Update(fTimeDelta);
+    }
+
+    Super::Update(fTimeDelta);
+}
+```
+
+</Editor>
+
+체력바 UI는 레벨이 준비된 뒤 대상 오브젝트에서 `"StatComponent"`라는 이름으로 체력 컴포넌트를 찾아 연결합니다. 대상이 플레이어인지 적인지 몰라도, 같은 이름의 컴포넌트만 있으면 됩니다. 반면 상태 컴포넌트처럼 엔진 슬롯에 있는 컴포넌트는 여전히 오브젝트가 직접 갱신합니다.
+
+</Tab>
+<Tab>
+
+엔진이 제공하는 컴포넌트는 `_ID` 값을 인덱스로 쓰는 고정 배열(`m_Components`)의 칸 하나에 들어갑니다. 카타나 제로 모작의 슬롯 방식을 이어받되, `Get_Component`가 조회 결과를 요청한 타입으로 바로 돌려주고 `Add_Component`는 기존 것을 해제한 뒤 교체합니다.
+
+#### A. 슬롯 번호
+
+<Editor file="Engine_Enum.h" fn="EComponentType">
+
+```cpp
+enum class EComponentType : unsigned int
+{
+	TRANSFORM = 0,
+	MODEL,
+	NAVIGATION,
+	TEXTURE,
+	COLLIDER,
+	VIBUFFER,
+	CONTROLCONTEXT,
+	ACTIONSTATE,
+	CAMERA,
+	SHADER,
+	//
+	SCRIPT,
+	END
+}; 
+inline constexpr size_t g_ComponentTypeCount = static_cast<size_t>(EComponentType::END) - 1;
+```
+
+</Editor>
+
+<Editor file="Transform.h" fn="CTransform">
+
+```cpp
+class ENGINE_DLL CTransform final : public CComponent
+{
+	using Super = CComponent;
+public:
+	constexpr static EComponentType _ID = EComponentType::TRANSFORM;
+```
+
+</Editor>
+
+열거값이 곧 슬롯 번호이고, 컴포넌트 클래스는 자기 번호를 `_ID`로 선언합니다. 마지막 `SCRIPT`는 배열 크기에서 빼므로(`END - 1`), 스크립트 컴포넌트에는 배열 칸이 없습니다.
+
+#### B. 타입 그대로 조회·추가
+
+<Editor file="GameObject.h" fn="CGameObject::Get_Component<T>(), CGameObject::Add_Component<T>(...)">
+
+```cpp
+template <typename T>
+inline T* CGameObject::Get_Component()
+{
+	static_assert(T::_ID >= EComponentType::TRANSFORM || T::_ID < EComponentType::END, "ComponentType ID is invalid");
+	static_assert(T::_ID != EComponentType::SCRIPT, "Script type components dont support this feature. Please check the function name");
+	return static_cast<T*>(m_Components[ENUM_TO_UINT(T::_ID)]);
+}
+
+template <typename T>
+inline HRESULT CGameObject::Add_Component(_uint iLevelIndex, const wstring& wstrPrototypeTag, void* pArg)
+{
+	static_assert(T::_ID >= EComponentType::TRANSFORM || T::_ID < EComponentType::END, "ComponentType ID is invalid");
+	static_assert(T::_ID != EComponentType::SCRIPT, "Script type components dont support this feature. Please check the function name");
+
+	if (m_Components[ENUM_TO_UINT(T::_ID)])
+		Safe_Release(m_Components[ENUM_TO_UINT(T::_ID)]);
+
+	if (!((m_Components[ENUM_TO_UINT(T::_ID)] =
+		dynamic_cast<CComponent*>(CGameInstance::GetInstance()->Clone_Prototype(EPrototypeType::COMPONENT, iLevelIndex, wstrPrototypeTag, pArg)))))
+		return E_FAIL;
+
+	m_Components[ENUM_TO_UINT(T::_ID)]->Set_Owner(this);
+	return S_OK;
+}
+```
+
+</Editor>
+
+조회 함수가 `static_cast<T*>`까지 맡으므로, 호출하는 쪽은 `Get_Component<CTransform>()`처럼 타입만 적으면 바로 그 타입을 받습니다. 카타나 제로 모작에서 호출부마다 반복하던 캐스팅이 템플릿 안으로 들어간 것입니다. 추가할 때는 프로토타입 태그로 원본을 복제해 칸에 넣고 소유자를 연결하며, 같은 종류가 이미 있으면 해제하고 새것으로 바꿉니다. 스크립트 타입을 넘기면 `static_assert`가 컴파일 단계에서 막아, 두 그릇이 섞이지 않게 했습니다.
+
+#### C. 파생 타입은 같은 슬롯
+
+<Editor file="ControlContext.h" fn="CControlContext">
+
+```cpp
+class ENGINE_DLL CControlContext abstract : public CComponent
+{
+	using Super = CComponent;
+public:
+	constexpr static EComponentType _ID = EComponentType::CONTROLCONTEXT;
+```
+
+</Editor>
+
+<Editor file="PlayerControlContext.h" fn="CPlayerControlContext">
+
+```cpp
+class CPlayerControlContext final : public CControlContext
+{
+	using Super = CControlContext;
+```
+
+</Editor>
+
+<Editor file="MainPlayer.cpp" fn="CMainPlayer::Update_Late(...)">
+
+```cpp
+void CMainPlayer::Update_Late(const _float fTimeDelta)
+{
+    Super::Update_Late(fTimeDelta);
+    
+    CPlayerControlContext* pControlContext = Get_Component<CPlayerControlContext>();
+    if (pControlContext == nullptr)
+        return;
+```
+
+</Editor>
+
+<Fig n={2} white max={640} src="/img/reviews/naruto/07-component/slot.png" caption="컴포넌트 타입의 _ID가 배열 인덱스, 파생 타입은 부모의 슬롯을 그대로 사용" />
+
+파생 클래스는 부모의 `_ID`를 물려받아 같은 칸을 씁니다(<FigRef n={2} />). 플레이어와 적은 서로 다른 입력 컴포넌트를 붙이지만 둘 다 `CONTROLCONTEXT` 칸에 들어가므로, 상태 코드는 `Get_Component<CControlContext>()` 하나로 둘을 모두 다룹니다. 파생 타입이 필요한 곳에서는 `Get_Component<CPlayerControlContext>()`로 같은 칸을 파생 타입으로 꺼냅니다.
+
+</Tab>
+<Tab>
+
+클라이언트가 만드는 컴포넌트의 기반입니다. 엔진은 이 기반 타입만 알고, 실제 종류는 `Add_Script_Component`로 등록할 때 붙인 이름(`m_ScriptComponents`의 키)으로 구분합니다. 등록된 스크립트는 `Update_Script_Components`가 모두 갱신합니다.
+
+#### A. 스크립트 기반
+
+<Editor file="MonoBehaviour.h" fn="CMonoBehaviour">
+
+```cpp
+class ENGINE_DLL CMonoBehaviour abstract : public CComponent
+{
+	using Super = CComponent;
+public:
+	constexpr static EComponentType _ID = EComponentType::SCRIPT;
+	typedef struct tagMonoBehaviourDesc
+	{
+
+	}MONO_DESC;
+protected:
+	CMonoBehaviour();
+	explicit CMonoBehaviour(const CMonoBehaviour& rhs);
+	virtual ~CMonoBehaviour() = default;
+
+	virtual HRESULT Initialize_Prototype() PURE;
+public:
+	virtual HRESULT Awake(_uint iLevelIndex) { return S_OK; }
+	virtual HRESULT Initialize(void* pArg) PURE;
+	virtual void Update(const _float fTimeDelta) PURE;
+protected:
+
+public:
+	virtual CComponent* Clone(void* pArg) PURE;
+	virtual void Free() override;
+};
+```
+
+</Editor>
+
+스크립트 컴포넌트는 `_ID`가 모두 `SCRIPT`라서 슬롯 번호로는 구분할 수 없습니다. 그래서 종류는 오브젝트가 등록할 때 붙인 이름이 대신합니다. 레벨이 준비된 뒤 다른 오브젝트를 찾을 수 있도록 `Awake`를 따로 두었습니다.
+
+#### B. 이름으로 등록·조회
+
+<Editor file="GameObject.cpp" fn="CGameObject::Get_Script_Component(...), CGameObject::Add_Script_Component(...)">
+
+```cpp
+inline CMonoBehaviour* CGameObject::Get_Script_Component(const wstring& wstrComponentTag)
+{
+    unordered_map<wstring, CMonoBehaviour*>::iterator itr = m_ScriptComponents.find(wstrComponentTag);
+    if (itr == m_ScriptComponents.end())
+        return nullptr;
+    else
+        return itr->second;
+}
+// ... 코드 중략
+
+HRESULT CGameObject::Add_Script_Component(const wstring &wstrComponentTag, const wstring& wstrPrototypeTag, void* pArg)
+{
+    CMonoBehaviour* pComp = { nullptr };
+    if ( nullptr == (pComp = dynamic_cast<CMonoBehaviour*>(m_pGameInstance->Clone_Prototype(EPrototypeType::COMPONENT, 0/* STATIC */, wstrPrototypeTag, pArg))))
+        return E_FAIL;
+
+    unordered_map<wstring, CMonoBehaviour*>::iterator itr = m_ScriptComponents.find(wstrComponentTag);
+    if (itr != m_ScriptComponents.end())
+        return E_FAIL;
+
+    m_ScriptComponents.insert(unordered_map<wstring, CMonoBehaviour*>::value_type(wstrComponentTag, pComp));
+    pComp->Set_Owner(this);
+    return S_OK;
+}
+```
+
+</Editor>
+
+등록은 엔진 컴포넌트와 같은 프로토타입 복제 경로를 쓰고, 결과를 `CMonoBehaviour*`로 확인한 뒤 이름으로 맵에 넣습니다. 엔진 코드는 `CStatComponent`나 `CLockon` 같은 클라이언트 타입을 한 번도 언급하지 않으므로, 게임 기능을 추가해도 엔진 열거형과 엔진 코드는 바뀌지 않습니다.
+
+#### C. 일괄 갱신과 해제
+
+<Editor file="GameObject.cpp" fn="CGameObject::Update(...), CGameObject::Update_Script_Components(...), CGameObject::Free()">
+
+```cpp
+void CGameObject::Update(const _float fTimeDelta)
+{
+    Update_Script_Components(fTimeDelta);
+}
+// ... 코드 중략
+
+void CGameObject::Update_Script_Components(const _float fTimeDelta)
+{
+    for (auto& Pair : m_ScriptComponents)
+    {
+        if (Pair.second)
+            Pair.second->Update(fTimeDelta);
+    }
+}
+
+void CGameObject::Safe_Release_Component()
+{
+    for (CComponent*& pElement : m_Components)
+    {
+        Safe_Release(pElement);
+    }
+    m_Components.fill(nullptr);
+}
+
+void CGameObject::Safe_Release_ScriptComponent()
+{
+    for (auto itr = m_ScriptComponents.begin();
+        itr != m_ScriptComponents.end();
+        ++itr)
+    {
+        if (itr->second)
+        {
+            CMonoBehaviour* pMono = itr->second;
+            Safe_Release(pMono);
+        }
+    }
+    m_ScriptComponents.clear();
+}
+
+void CGameObject::Free()
+{
+    Super::Free();
+    Safe_Release_Component();
+    Safe_Release_ScriptComponent();
+    Safe_Release(m_pGameInstance);
+    Safe_Release(m_pDeviceContext);
+    Safe_Release(m_pDevice);
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={640} src="/img/reviews/naruto/07-component/script.png" caption="클라이언트 컴포넌트는 이름 키 맵에 등록, 오브젝트 갱신 때 함께 갱신" />
+
+오브젝트의 기본 `Update`가 맵을 돌며 스크립트를 모두 갱신합니다(<FigRef n={3} />). 파생 오브젝트가 `Super::Update`만 부르면 붙어 있는 스크립트가 함께 갱신되므로, 카타나 제로 모작처럼 컴포넌트마다 갱신 호출을 적지 않아도 됩니다. 해제도 오브젝트가 사라질 때 슬롯 배열과 맵을 차례로 비워 한 번에 끝납니다.
+
+</Tab>
+<Tab>
+
+모든 컴포넌트는 원본(프로토타입)을 `Initialize_Prototype()`으로 준비해 로딩 때 한 번 등록합니다. 오브젝트가 붙일 때는 `Clone(pArg)`으로 복제해 받은 뒤 `Set_Owner`로 소유자를 연결합니다.
+
+#### A. 원본 등록
+
+<Editor file="Component.h" fn="CComponent">
+
+```cpp
+protected:
+	CComponent();
+	explicit CComponent(const CComponent& rhs);
+	virtual ~CComponent() = default;
+	
+	virtual HRESULT Initialize_Prototype();
+	virtual HRESULT Initialize(void* pArg) PURE;
+public:
+	virtual void Render() {};
+	_bool IsClone() const { return m_bClone; }
+public:
+	HRESULT Set_Owner(CGameObject* pOwner);
+	CGameObject* Get_Owner() { return m_pOwner; }
+private:
+	_bool m_bClone = { false };
+protected:
+	CGameObject* m_pOwner = { nullptr };
+	CGameInstance* m_pGameInstance = { nullptr };
+public:
+	virtual CComponent* Clone(void *pArg) PURE;
+	virtual void Free() override;
+```
+
+</Editor>
+
+<Editor file="MainApplication.cpp" fn="Prototype_Component_Transform 등록">
+
+```cpp
+	// For. Prototype_Component_Transform
+	{
+		if (FAILED(m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC),
+			L"Prototype_Component_Transform",
+			CTransform::Create())))
+			return E_FAIL;
+	}
+```
+
+</Editor>
+
+<Editor file="Loader.cpp" fn="CLoader 스크립트 컴포넌트 원본 등록">
+
+```cpp
+	// For. Prototype_Component_Lockon
+	m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Lockon", CLockon::Create());
+	// For. Prototype_Component_Stat
+	m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Stat", CStatComponent::Create());
+```
+
+</Editor>
+
+<Fig n={4} white max={820} src="/img/reviews/naruto/07-component/clone.png" caption="로딩 때 원본 등록 → 오브젝트가 태그로 복제 요청 → 소유자 설정" />
+
+엔진 컴포넌트와 스크립트 컴포넌트 모두 같은 프로토타입 관리자에 태그로 등록됩니다(<FigRef n={4} />). 트랜스폼처럼 모든 오브젝트가 쓰는 원본은 앱 시작 때, 게임 쪽 원본은 로딩 단계에서 등록합니다.
+
+#### B. 복제본 초기화
+
+<Editor file="StatComponent.cpp" fn="CStatComponent::Initialize(...), CStatComponent::Clone(...)">
+
+```cpp
+HRESULT CStatComponent::Initialize(void* pArg)
+{
+	if (pArg == nullptr)
+		return E_FAIL;
+
+	if (FAILED(Super::Initialize(pArg)))
+		return E_FAIL;
+
+	STATCOMP_DESC* pDesc = static_cast<STATCOMP_DESC*>(pArg);
+	m_iMaxHealth = pDesc->iHealth;
+	m_iHealth = pDesc->iHealth;
+
+	return S_OK;
+}
+// ... 코드 중략
+
+CComponent* CStatComponent::Clone(void* pArg)
+{
+	CStatComponent* pInstance = new CStatComponent();
+	if (FAILED(pInstance->Initialize(pArg)))
+	{
+		MSG_BOX("CStatComponent::Clone, Failed");
+		Safe_Release(pInstance);
+	}
+	return pInstance;
+}
+```
+
+</Editor>
+
+복제본은 붙이는 쪽이 넘긴 설명 구조체로 초기화됩니다. 같은 체력 컴포넌트 원본에서 플레이어는 체력 100, 적은 각자의 값으로 복제본을 받으므로, 원본 하나로 여러 오브젝트가 서로 다른 값을 가집니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**스크립트 컴포넌트를 조회할 때 캐스팅 문제가 다시 생겼습니다.** `Get_Script_Component`는 `CMonoBehaviour*`를 돌려주므로, 상태 코드마다 `static_cast<CStatComponent*>(Get_OwnerObject()->Get_Script_Component(L"StatComponent"))`처럼 이름 문자열과 캐스팅을 함께 적습니다. 이름에 오타가 있어도 컴파일은 되고, 실행 중에 `nullptr`을 역참조합니다. `Get_Script_Component<CStatComponent>()`처럼 타입을 받아 `dynamic_cast`까지 하는 템플릿을 두거나, 이름 상수를 한곳에 모았어야 합니다.
+
+남은 개선점입니다.
+
+- 스크립트는 기본 `Update`가 모아 갱신하지만 슬롯의 상태 컴포넌트는 `CPlayer::Update`가 직접 부릅니다. 새 컴포넌트를 붙일 때마다 갱신 위치를 따로 확인해야 합니다.
+- `Get_Component` 등의 범위 검사(`T::_ID >= TRANSFORM || T::_ID < END`)는 항상 참입니다. `&&`여야 잘못된 `_ID`를 컴파일 단계에서 막을 수 있습니다.
+- `Remove_Script_Component`는 맵에서 지우기만 하고 해제하지 않아, 호출하면 컴포넌트가 남습니다(아직 사용처는 없음).

@@ -1,0 +1,481 @@
+---
+project: katana
+order: 3
+title: 상태 머신 · AI
+topic: 상태 머신·AI
+chips: [State Pattern, FSM]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+오브젝트의 행동을 상태 단위로 나누고, 상태마다 진입·갱신·종료와 다음 상태로 넘어가는 조건을 따로 갖게 했습니다. State 패턴에서는 각 상태가 클래스이고, 오브젝트는 현재 상태 객체에 처리를 맡깁니다.
+
+상태마다 자기 로직과 전환 조건만 갖게 되면서 `Update` 하나에 몰려 있던 분기가 사라졌고, 수정할 때 손대는 범위도 그 상태 하나로 좁아졌습니다.
+
+## 2. 문제
+
+> 처음에는 `Update` 하나에 모든 상태 분기를 넣었는데, 상태가 늘수록 조건문이 많아져 유지보수가 어려워졌습니다. 플레이어는 달리기·점프·구르기·벽 잡기처럼 상태가 많고 전환 조건도 상태마다 달라서, **상태마다 자기 로직과 전환 조건만 갖도록** 나눌 필요가 있었습니다.
+
+## 3. 구조 요약
+
+플레이어는 열거값을 인덱스로 쓰는 배열에 상태 객체를 미리 만들어 두는 State 패턴으로, 보스는 열거형과 `switch`로 구현했습니다. 보스는 상태 구성이 비교적 단순하고 구현 기간도 짧아 클래스로 나누지 않았습니다.
+
+<Fig n={1} white max={520} src="/img/reviews/katana/03-state-machine/class.png" caption="상태 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CObjectState` | 상태의 생명주기 인터페이스(`Enter`·`Exit`·`Update`·`HandleInput`) |
+| `CPlayerState` | 플레이어 상태들의 공통 처리(좌우 입력), `CPlayer` 포인터 보관 |
+| `CPlayerState_*` | 자기 상태의 로직과 다음 상태로의 전환 조건 |
+| `CPlayer` | 상태 객체 소유, 전환 실행(`Exit` → `Enter`) |
+| `CBoss` | 열거형 상태값과 `switch`로 행동 처리, 패턴 선택 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '상태 계층', '플레이어 · 전환', '개별 상태', '보스']}>
+<Tab>
+
+상태 밖에서 일어난 사건(피격)과 여러 상태가 함께 쓰는 입력(구르기)이 상태를 바꾸는 부분입니다.
+
+#### A. 피격으로 인한 전환
+
+<Editor file="CPlayer.cpp" fn="OnCollision(...)">
+
+```cpp
+void CPlayer::OnCollision(CColliderComponent *_pOther)
+{
+	__super::OnCollision(_pOther);
+	if (IsRolling())
+		return;
+
+	CObject *OtherObject = _pOther->GetOwner();
+	if (GetState() < PLAYERSTATE::HURT_BEGIN)
+	{
+		if (OtherObject->GetType() == ObjectType::BULLET)
+		{
+			if (static_cast<CBullet *>(OtherObject)->GetOwnerType() != GetType())
+			{
+				ChangeState(PLAYERSTATE::HURT_BEGIN);
+			}
+		}
+	}	
+}
+```
+
+</Editor>
+
+충돌은 상태가 아니라 플레이어가 받고, 피격 상태로의 전환도 플레이어가 직접 요청합니다. 구르는 중에는 맞지 않고, 이미 피격·사망 계열 상태라면 다시 바꾸지 않습니다. 이 구분은 열거형에서 피격 상태들을 `HURT_BEGIN` 뒤에 모아 둔 순서로 합니다.
+
+#### B. 여러 상태가 공유하는 전환
+
+<Editor file="CPlayer.cpp" fn="CanRolling()">
+
+```cpp
+void CPlayer::CanRolling()
+{
+	if (KEY_BUTTON_DOWN(KeyType::LeftShift))
+	{
+		ChangeState(PLAYERSTATE::ROLL);
+	}
+}
+```
+
+</Editor>
+
+<Editor file="CPlayerState_Run.cpp" fn="HandleInput(...)">
+
+```cpp
+void CPlayerState_Run::HandleInput(const float _fDeltaTime)
+{
+	__super::HandleInput(_fDeltaTime);
+
+	
+	if (!KEY_BUTTON_HOLD(KeyType::A) && !KEY_BUTTON_HOLD(KeyType::D))
+	{
+		m_pPlayer->ChangeState(PLAYERSTATE::RUNTOIDLE);
+		return;
+	}		
+
+	if (KEY_BUTTON_DOWN(KeyType::SpaceBar))
+	{
+		m_pPlayer->ChangeState(PLAYERSTATE::JUMP);
+		return;
+	}
+
+	m_pPlayer->CanRolling();
+}
+```
+
+</Editor>
+
+구르기는 대기·달리기·멈춤 어느 상태에서나 나갈 수 있어서, 판단은 플레이어 함수 하나에 두고 각 상태는 입력 처리 끝에 부르기만 합니다. 상태는 자기 전환을 먼저 검사하고 바뀌면 바로 빠져나가므로, 이런 공통 전환은 우선순위가 가장 낮습니다.
+
+</Tab>
+<Tab>
+
+오브젝트 공통 인터페이스, 플레이어 공통 처리, 개별 상태로 이어지는 3단 계층입니다. 상태는 `Enter()`·`Exit()`으로 들어오고 나가며, 매 프레임 로직은 `Update`가, 입력에 따른 전환은 `HandleInput`이 맡습니다. 플레이어 상태는 소유자를 `CPlayer*`로 한 번 캐스팅해 `m_pPlayer`에 보관합니다.
+
+#### A. 상태 인터페이스
+
+<Editor file="CObjectState.h" fn="CObjectState">
+
+```cpp
+class CObjectState abstract
+{
+public:
+	explicit CObjectState(CObject *_pOnwer);
+	virtual ~CObjectState();
+	virtual void Enter() PURE;
+	virtual void Exit() PURE;
+	virtual void Update(const float _fDeltaTime) PURE;
+	virtual void HandleInput(const float _fDeltaTime) PURE;
+protected:
+	CObject *m_pOwner;
+	float m_fElapsedTime;
+};
+```
+
+</Editor>
+
+모든 상태가 같은 네 함수를 구현합니다. 입력 처리(`HandleInput`)와 매 프레임 로직(`Update`)을 나눠, 전환 조건이 입력에서 오는지 상태 진행에서 오는지 구분했습니다.
+
+#### B. 플레이어 공통 처리
+
+<Editor file="CPlayerState.h" fn="CPlayerState">
+
+```cpp
+class CPlayerState : public CObjectState
+{
+public:
+	explicit CPlayerState(CObject *_pOwner);
+	virtual ~CPlayerState();
+public:
+	virtual void Enter() override;
+	virtual void Exit() override;
+	virtual void Update(const float _fDeltaTime) override;
+	virtual void HandleInput(const float _fDeltaTime) override;
+protected:
+	bool m_bAnimEnd;
+	CPlayer *m_pPlayer;
+};
+```
+
+</Editor>
+
+<Editor file="CPlayerState.cpp" fn="HandleInput(...)">
+
+```cpp
+void CPlayerState::HandleInput(const float _fDeltaTime)
+{
+	if (KEY_BUTTON_HOLD(KeyType::A))
+	{
+		m_pPlayer->SetDir_X(-1.f);
+
+	}
+	else if (KEY_BUTTON_HOLD(KeyType::D))
+	{
+		m_pPlayer->SetDir_X(1.f);
+	}
+}
+```
+
+</Editor>
+
+좌우 방향 입력처럼 모든 플레이어 상태에 필요한 처리는 상위 클래스에 둡니다. 개별 상태는 `__super::HandleInput`을 부른 뒤 자기 전환만 처리합니다.
+
+</Tab>
+<Tab>
+
+플레이어는 `PLAYERSTATE` 값을 인덱스로 쓰는 배열 `m_arrayStates`에 상태 객체를 모두 소유하고, `ChangeState`로 전환합니다. 실행 중인 상태 객체는 `m_pCurState`, 현재·직전 열거값은 `m_eCurState`·`m_ePrevState`에 둡니다.
+
+#### A. 상태 객체 미리 생성
+
+<Editor file="CPlayer.cpp" fn="Initialize()">
+
+```cpp
+// State
+{
+	m_arrayStates[(uint8_t)PLAYERSTATE::IDLE] = new CPlayerState_Idle(this);
+	m_arrayStates[(uint8_t)PLAYERSTATE::IDLETORUN] = new CPlayerState_IdletoRun(this);
+	m_arrayStates[(uint8_t)PLAYERSTATE::RUN] = new CPlayerState_Run(this);
+	m_arrayStates[(uint8_t)PLAYERSTATE::RUNTOIDLE] = new CPlayerState_RuntoIdle(this);
+	// ... 코드 중략
+	m_arrayStates[(uint8_t)PLAYERSTATE::DUMMY] = new CPlayerState_Dummy(this);
+
+	ChangeState(PLAYERSTATE::IDLE);
+}
+```
+
+</Editor>
+
+상태 객체는 플레이어가 만들어질 때 모두 만들어 둡니다. 전환할 때는 `new` / `delete`가 일어나지 않습니다.
+
+#### B. 전환
+
+<Editor file="CPlayer.h" fn="ChangeState(...)">
+
+```cpp
+void ChangeState(PLAYERSTATE _eState)
+{
+	if (_eState == m_eCurState)
+		return;
+
+	if (_eState < PLAYERSTATE::IDLE || _eState >= PLAYERSTATE::END)
+		return;
+
+	if (m_pCurState)
+		m_pCurState->Exit();
+
+	m_pCurState = m_arrayStates[(uint8_t)_eState];
+	m_ePrevState = m_eCurState;
+	m_eCurState = _eState;
+	m_pCurState->Enter();
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={440} src="/img/reviews/katana/03-state-machine/change.png" caption="상태를 바꿀 때" />
+
+현재 상태를 `Exit`하고, 배열에서 다음 상태를 꺼내 `Enter`합니다. 전환 비용은 배열 접근과 두 함수 호출이 전부이고, `Exit`과 `Enter`는 언제나 짝을 맞춰 불립니다(<FigRef n={2} />).
+
+#### C. 상태에 위임
+
+<Editor file="CPlayer.cpp" fn="Update(...)">
+
+```cpp
+void CPlayer::Update(const float _fDeltaTime)
+{
+ 	// ... 코드 중략
+ 	m_pCurState->HandleInput(_fDeltaTime);
+	m_pCurState->Update(_fDeltaTime);
+```
+
+</Editor>
+
+플레이어의 `Update`는 입력 처리와 갱신을 현재 상태에 맡길 뿐, 어떤 상태인지에 따라 분기하지 않습니다.
+
+</Tab>
+<Tab>
+
+상태마다 자기 로직과 다음 상태로 가는 조건만 갖습니다.
+
+<div class="tbl">
+
+| 상태 | 다음 상태로 가는 조건 |
+| --- | --- |
+| `Idle` | A·D 입력 → `IdletoRun`, Space → `Jump` |
+| `IdletoRun` | 애니메이션 끝 → `Run`, 입력 해제 → `RuntoIdle`, 공중 → `Fall` |
+| `Run` | 입력 해제 → `RuntoIdle`, Space → `Jump` |
+| `RuntoIdle` | 애니메이션 끝 → `Idle`, 다시 입력 → `IdletoRun` |
+
+</div>
+
+#### A. Idle
+
+<Editor file="CPlayerState_Idle.cpp" fn="Enter(), HandleInput(...)">
+
+```cpp
+void CPlayerState_Idle::Enter()
+{
+	CAnimatorComponent *AnimComp = static_cast<CAnimatorComponent*>(m_pPlayer->GetComponent<CAnimatorComponent>());
+	AnimComp->PlayAnimation(L"Player_Idle", true);
+	m_pPlayer->SetAfterImage(false);
+	m_pPlayer->SetVel_Y(0.f);
+	m_pPlayer->SetVel_X(0.f);
+}
+// ... 코드 중략
+
+void CPlayerState_Idle::HandleInput(const float _fDeltaTime)
+{
+	__super::HandleInput(_fDeltaTime);
+	if (KEY_BUTTON_DOWN(KeyType::A) || KEY_BUTTON_HOLD(KeyType::A))
+	{
+		m_pPlayer->ChangeState(PLAYERSTATE::IDLETORUN);
+		return;
+	}
+	else if (KEY_BUTTON_DOWN(KeyType::D) || KEY_BUTTON_HOLD(KeyType::D))
+	{
+		m_pPlayer->ChangeState(PLAYERSTATE::IDLETORUN);
+		return;
+	}
+
+	if (KEY_BUTTON_DOWN(KeyType::SpaceBar))
+	{
+		m_pPlayer->ChangeState(PLAYERSTATE::JUMP);
+		return;
+	}
+
+	m_pPlayer->CanRolling();
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={620} src="/img/reviews/katana/03-state-machine/move.png" caption="이동 관련 상태 전환" />
+
+`Enter`에서 애니메이션과 속도를 정하고, `HandleInput`에서 입력에 따라 다음 상태를 고릅니다. 각 상태가 자기 전환 조건을 알고 직접 다음 상태를 고르므로(<FigRef n={3} />), 고칠 일이 생겨도 그 상태 안에서 끝납니다.
+
+#### B. IdletoRun
+
+<Editor file="CPlayerState_IdletoRun.cpp" fn="Enter(), Update(...)">
+
+```cpp
+void CPlayerState_IdletoRun::Enter()
+{
+	CAnimatorComponent *AnimComp = static_cast<CAnimatorComponent *>(m_pPlayer->GetComponent<CAnimatorComponent>());
+	AnimComp->PlayAnimation(L"Player_IdletoRun", false);
+	AnimComp->SetCompleteCallback([this]() ->void {m_bAnimEnd = true; });
+// ... 코드 중략
+}
+// ... 코드 중략
+
+void CPlayerState_IdletoRun::Update(const float _fDeltaTime)
+{
+	// ... 코드 중략
+	if (m_bAnimEnd)
+	{
+		m_pPlayer->ChangeState(PLAYERSTATE::RUN);
+		return;
+	}
+}
+```
+
+</Editor>
+
+애니메이션이 끝나면 콜백이 `m_bAnimEnd`를 세우고, `Update`가 이를 보고 `Run`으로 넘어갑니다. 두 동작 사이를 잇기 위한 연결 상태입니다.
+
+</Tab>
+<Tab>
+
+보스는 상태 클래스 대신 `BossState` 열거값 `m_eCurState`와 `switch`로 구현했습니다. 패턴 쿨타임(2초)이 차면 `m_bCanPattern`이 다음 패턴 선택을 허용하고, `ChangeState_Boss`는 플레이어와 같은 규칙으로 `StateExit` → 교체 → `StateEnter`를 부릅니다.
+
+#### A. 패턴 선택
+
+<Editor file="CBoss.cpp" fn="Update(...)">
+
+```cpp
+void CBoss::Update(const float _fDeltaTime)
+{
+	CheckBlocked();
+	CheckCanMove();
+	if (CheckFindTarget())
+	{
+		if (m_eCurState == BossState::WALK || m_eCurState == BossState::IDLE_BATTLE)
+		{
+			m_fElapsedTime += _fDeltaTime;
+
+			if (m_fElapsedTime >= m_fPatternCoolTime)
+			{
+				m_bCanPattern = true;
+			}
+		}
+	}
+	// ... 코드 중략
+	if (m_bCanPattern)
+	{
+		if (m_fLength <= 150.f)
+		{
+			int src = MyUtils::RandomInt(1, 2);
+			if (src == 1)
+			{
+				ChangeState_Boss(BossState::SLASH);
+			}
+			else
+			{
+				ChangeState_Boss(BossState::JUMP_PRE);
+			}
+		}
+		else
+		{
+			int src = MyUtils::RandomInt(1, 5);
+			if (src == 1)
+			{
+				ChangeState_Boss(BossState::WALK);
+			}
+			else if (src == 2 || src == 3)
+			{
+				ChangeState_Boss(BossState::LUNGE_PRE);
+			}
+			else
+			{
+				ChangeState_Boss(BossState::AXE_THROW);
+			}
+		}
+
+		m_fElapsedTime = 0.f;
+		m_bCanPattern = false;
+	}
+```
+
+</Editor>
+
+<Fig n={4} white max={600} src="/img/reviews/katana/03-state-machine/boss.png" caption="보스 패턴 선택" />
+
+쿨타임이 지나면 플레이어와의 거리(150)로 근거리·원거리 패턴 묶음을 나누고, 그 안에서 랜덤으로 하나를 뽑습니다(<FigRef n={4} />). 패턴을 고른 뒤에는 쿨타임을 처음부터 다시 쌓습니다.
+
+#### B. 열거형 상태 전환
+
+<Editor file="CBoss.cpp" fn="Update(...), ChangeState_Boss(...)">
+
+```cpp
+	switch (m_eCurState)
+	{
+	case IDLE_CASUAL:
+	{
+		Idle_Casual(_fDeltaTime);
+	} break;
+	case IDLE_SHARPENAXE:
+	{
+		Idle_SharpenAxe(_fDeltaTime);
+	} break;
+	case IDLE_BATTLE:
+	{
+		Idle_Battle(_fDeltaTime);
+	} break;
+// ... 코드 중략
+
+void CBoss::ChangeState_Boss(BossState _eState)
+{
+	if (_eState == m_eCurState)
+		return;
+
+	if (_eState < BossState::IDLE_CASUAL || _eState >= BossState::END)
+		return;
+
+	StateExit();
+	m_eCurState = _eState;
+	StateEnter();
+}
+```
+
+</Editor>
+
+상태 클래스는 없지만, 전환 규칙(같은 상태·범위 검사 → `Exit` → 교체 → `Enter`)은 플레이어와 똑같이 맞췄습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**동작 사이를 잇기만 하는 연결 상태 클래스가 계속 늘어났습니다.** 애니메이션이 시작·진행·종료로 잘게 나뉘어 있어 `IdletoRun`, `RuntoIdle` 같은 상태가 생겼습니다. 전환 정보를 데이터(`TransitionData`)로 정의하는 전환 전용 상태를 설계했지만 적용까지 이어지지는 못했습니다. 연결 상태는 데이터로 정의해 하나의 전환 상태로 묶었어야 했습니다.
+
+남은 개선점입니다.
+
+- 플레이어는 클래스, 보스는 열거형으로 구현 방식이 갈려, 비슷한 행동도 로직이 따로 있습니다.
+- 보스 패턴을 랜덤으로 고르면 같은 패턴이 연달아 나오기 쉽습니다. 우선순위나 직전 패턴 제외 같은 규칙이 필요합니다.
+- 플레이어와 AI가 같은 상태 클래스를 쓰려면, 상태가 입력 장치가 아니라 추상화된 입력을 받아야 합니다.

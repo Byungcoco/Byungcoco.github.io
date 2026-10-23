@@ -1,0 +1,382 @@
+---
+project: katana
+order: 2
+title: 오브젝트 관리 · 오브젝트 풀
+topic: 오브젝트 풀
+chips: [Object Pool, Event Queue, if constexpr, Type Traits, std::function]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+두 가지를 함께 썼습니다. 오브젝트 생성·삭제 요청은 바로 실행하지 않고 큐에 쌓았다가 프레임 끝에 한 번에 처리하고, 자주 생기는 오브젝트는 미리 만들어 둔 풀에서 꺼내 재사용합니다.
+
+생성·삭제를 프레임 끝 `Flush`로 미루면서, 순회 도중 오브젝트가 사라져 생기던 런타임 크래시가 없어졌습니다.
+
+## 2. 문제
+
+> 오브젝트를 즉시 삭제하던 초기에는, 이미 해제된 오브젝트를 다른 곳에서 참조해 **런타임 크래시가 자주 발생**했습니다. 총알·몬스터처럼 자주 생기는 오브젝트는 `new`/`delete` 비용이 쌓였고, 타입마다 "풀을 쓰는지, 동적·정적 중 어디에 등록할지"를 가르는 분기 코드도 계속 늘어났습니다.
+
+## 3. 구조 요약
+
+생성·삭제는 요청과 실행을 나눴습니다. 호출하는 쪽은 요청만 하고, 실제 등록·해제는 메인 루프가 정한 한 시점에 일어납니다. 총알과 몬스터는 미리 만든 풀에서 스폰하고 회수합니다.
+
+<Fig n={1} white max={560} src="/img/reviews/katana/02-object-pool/class.png" caption="오브젝트 관리 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CObjectManager` | 생성·삭제 요청 접수, 타입별 컨테이너 등록·해제, 조회 |
+| `CEventManager` | 요청(`std::function`)을 쌓아 두었다가 프레임 끝에 실행 |
+| `ObjectTraits<T>` | 타입별 메타 정보(풀 사용 여부, 동적·정적 분류) |
+| `CObjectPool<T>` | 미리 만든 객체의 활성·비활성 경계 관리 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '요청 · 등록', '타입 특성', '이벤트 큐', '오브젝트 풀']}>
+<Tab>
+
+호출하는 쪽은 타입과 콜백만 넘깁니다. 풀을 쓰는지, 언제 실행되는지는 신경 쓰지 않습니다.
+
+#### A. 플레이어 생성
+
+<Editor file="CGameScene.cpp" fn="Initialize()">
+
+```cpp
+ObjMgr->CreateObject<CPlayer>([](CObject *_p) {
+	_p->SetPos({ 128.f, 660.f });
+	CCameraManager::Get_Instance()->SetTarget(_p);
+	});
+```
+
+</Editor>
+
+처음에는 람다가 지역 변수를 참조로 캡처해서, 지연 실행 시점에 대상이 이미 사라진 댕글링 참조가 반복해서 생겼습니다. 그래서 콜백이 생성된 객체를 인자로 받고, 필요한 값을 그 시점에 직접 설정하도록 바꿨습니다.
+
+#### B. 총알 생성과 회수
+
+<Editor file="CKatanaComponent.cpp" fn="PlayerAttack()">
+
+```cpp
+CObjectManager::Get_Instance()->CreateObject<CBullet>(
+	[this](CBullet *pBullet)
+	{
+		CColliderComponent *colComp = static_cast<CColliderComponent *>(pBullet->GetComponent<CColliderComponent>());
+colComp->SetSize(Vector2{ 50.f, 50.f });
+pBullet->SetOwner(this);
+	// ... 코드 중략
+	});
+```
+
+</Editor>
+
+<Editor file="CBullet.cpp" fn="Update(...)">
+
+```cpp
+if (m_bCountdown)
+{
+	m_fElapsedTime += _fDeltaTime;
+	if(m_fElapsedTime >= m_fDuration)
+	{
+		CObjectManager::Get_Instance()->DeleteObject(this);
+		m_fElapsedTime = 0.f;
+	}
+}
+```
+
+</Editor>
+
+총알은 `CreateObject<CBullet>`으로 요청하면 풀에서 스폰되고, 수명이 끝나면 스스로 `DeleteObject`를 요청해 회수됩니다. 갱신 도중에 자기 삭제를 요청해도 실제 회수는 `Flush`까지 미뤄지므로, 풀을 순회하는 동안 배열이 바뀌지 않습니다.
+
+</Tab>
+<Tab>
+
+오브젝트를 만들고 지우는 입구이자, 전체·동적·정적 목록(`m_AllObjects`·`m_DynamicObjects`·`m_StaticObjects`)과 타입별 풀(`m_BulletPool` 등)을 모두 가진 관리자입니다. `CreateObject<T>`·`DeleteObject<T>`는 요청을 큐에 넣기만 하고, 실제 등록·해제는 `Flush` 때 `Register<T>`·`Unregister<T>`가 처리합니다.
+
+#### A. 생성·삭제 요청
+
+<Editor file="CObjectManager.h" fn="CreateObject<T>(...), DeleteObject<T>(...)">
+
+```cpp
+template<IsObject T>
+void CObjectManager::CreateObject(std::function<void(T*)> _callback)
+{
+	CEventManager *EvtMng = CEventManager::Get_Instance();
+	EvtMng->PushEvent(EventType::CREATE_OBJECT,
+		[this, _callback]() mutable ->void {	this->template Register<T>(_callback); });
+}
+
+template<IsObject T>
+void CObjectManager::DeleteObject(T*_pObject)
+{
+	CEventManager *EvtMng = CEventManager::Get_Instance();
+	EvtMng->PushEvent(EventType::DELETE_OBJECT, [this, _pObject]()->void { this->Unregister<T>(_pObject); });
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={760} src="/img/reviews/katana/02-object-pool/defer.png" caption="생성·삭제 요청이 처리되는 시점" />
+
+실제 등록·해제(`Register` / `Unregister`)는 이벤트로 감싸 큐에 넣습니다. 오브젝트를 순회하는 동안에는 요청만 쌓이고, 생성·해제는 프레임 끝 `Flush`에서 한 번에 일어납니다(<FigRef n={2} />). 실행 시점을 한 곳에서 통제한 것이 크래시를 없앤 핵심이었습니다.
+
+#### B. 컴파일 타임 등록 분기
+
+<Editor file="CObjectManager.h" fn="Register<T>(...)">
+
+```cpp
+template<IsObject T>
+inline void CObjectManager::Register(std::function<void(T *)> _callback)
+{
+	CObject *pNewObject = nullptr;
+	if constexpr (ObjectTraits<T>::bUsePool)
+	{
+		GetPool<T>().Spawn(_callback);
+		return;
+	}
+	pNewObject = new T;
+	pNewObject->Initialize();
+	if (_callback)
+		_callback(static_cast<T *>(pNewObject));
+
+	if constexpr (ObjectTraits<T>::bIsDynamic)
+	{
+		RegistToDynamic(pNewObject);
+	}
+	else
+	{
+		RegistToStatic(pNewObject);
+	}
+	RegistToAll(pNewObject);
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={560} src="/img/reviews/katana/02-object-pool/register.png" caption="타입 특성에 따른 등록 분기" />
+
+`if constexpr`라서 조건이 컴파일 타임에 정해지고, 타입마다 해당하는 분기만 컴파일됩니다(<FigRef n={3} />). 호출하는 쪽은 `CreateObject<CBullet>`처럼 타입만 지정하면 되고, 풀을 쓸지 어느 목록에 넣을지는 몰라도 됩니다.
+
+</Tab>
+<Tab>
+
+타입마다 풀 사용 여부(`bUsePool`)와 동적·정적 분류(`bIsDynamic`)를 정해 두는 타입 특성 구조체입니다. 특수화가 없는 타입은 풀 없는 동적 오브젝트가 되고, 풀을 쓰는 타입은 `GetPool<T>` 특수화로 자기 풀 멤버와 연결됩니다.
+
+#### A. 기본값과 특수화
+
+<Editor file="CObjectManager.h" fn="ObjectTraits<T>">
+
+```cpp
+template<typename T>
+struct ObjectTraits
+{
+	static constexpr bool bUsePool = false;
+	static constexpr bool bIsDynamic = true;
+};
+
+template <>
+struct ObjectTraits<CBullet>
+{
+	static constexpr bool bUsePool = true;
+	static constexpr bool bIsDynamic = true;
+};
+// ... 코드 중략
+
+class CTriggerButton;
+template<>
+struct ObjectTraits<CTriggerButton>
+{
+	static constexpr bool bUsePool = false;
+	static constexpr bool bIsDynamic = false;
+};
+```
+
+</Editor>
+
+기본값은 "풀 없음, 동적"이고, 다른 타입만 특수화로 덮어씁니다. 총알과 몬스터는 풀을 쓰고, 트리거는 정적 목록에 들어갑니다.
+
+#### B. 타입별 풀 연결
+
+<Editor file="CObjectManager.h" fn="GetPool<T>()">
+
+```cpp
+template<typename T>
+CObjectPool<T> &GetPool();
+template<>
+CObjectPool<CGrunt> &GetPool<CGrunt>() { return m_GruntPool; }
+template<>
+CObjectPool<CGangster> &GetPool<CGangster>() { return m_GangsterPool; }
+template<>
+CObjectPool<CPomp> &GetPool<CPomp>() { return m_PompPool; }
+template<>
+CObjectPool<CBullet> &GetPool<CBullet>() { return m_BulletPool; }
+// ... 코드 중략
+// Pool
+CObjectPool<CBullet> m_BulletPool;
+CObjectPool<CGrunt> m_GruntPool;
+CObjectPool<CGangster> m_GangsterPool;
+CObjectPool<CPomp> m_PompPool;
+```
+
+</Editor>
+
+풀은 타입마다 따로 만든 템플릿 인스턴스이고, 매니저가 멤버로 소유합니다. 그래서 풀 하나를 추가하려면 풀 멤버, `GetPool<T>` 특수화, `ObjectTraits` 특수화 세 곳을 고쳐야 했습니다.
+
+</Tab>
+<Tab>
+
+요청을 함수 객체로 쌓아 두었다가 정해진 시점에 한꺼번에 실행하는 큐입니다. `PushEvent`는 실행할 내용을 `std::function<void()>`로 받아 `m_Events`에 쌓기만 하고, `Flush()`가 쌓인 요청을 순서대로 모두 실행합니다.
+
+#### A. 이벤트 큐
+
+<Editor file="CEventManager.h" fn="GameEvent, PushEvent(...), Flush()">
+
+```cpp
+typedef struct tagGameEvent
+{
+	EventType type;
+	std::function<void()> action = nullptr;
+}GameEvent;
+	// ... 코드 중략
+	void PushEvent(EventType _eType, std::function<void()> _action) { m_Events.push(GameEvent{_eType, std::move(_action)}); }
+	void Flush() { while (!m_Events.empty()) {
+		m_Events.front().action();
+		m_Events.pop(); } }
+private:
+	static CEventManager *m_pInstance;
+	queue<GameEvent> m_Events;
+```
+
+</Editor>
+
+이벤트가 실행할 동작을 `std::function`으로 들고 있으므로, 큐는 요청의 내용을 알 필요가 없습니다.
+
+#### B. 실행 시점
+
+<Editor file="CMainGame.cpp" fn="Render()">
+
+```cpp
+void CMainGame::Render()
+{
+	CSceneManager::Get_Instance()->Render(m_hBackDC);
+	// ... 코드 중략
+	::BitBlt(m_hDC, 0, 0, WINCX, WINCY, m_hBackDC, 0, 0, SRCCOPY);
+	::PatBlt(m_hBackDC, 0, 0, WINCX, WINCY, BLACKNESS);
+
+	CEventManager::Get_Instance()->Flush();
+}
+```
+
+</Editor>
+
+`Flush`는 그리기까지 끝난 프레임 마지막에 호출됩니다. 갱신·충돌·렌더 중에는 오브젝트 목록이 바뀌지 않으니, 순회 도중 오브젝트가 사라질 일이 없습니다.
+
+</Tab>
+<Tab>
+
+미리 만든 객체 배열 `m_Objects`의 앞쪽은 활성, 뒤쪽은 비활성으로 두고 경계 `m_iActiveTopIndex`만 움직입니다. `Spawn`과 `Despawn`은 모두 O(1)이고, 갱신과 렌더는 활성 구간만 순회합니다.
+
+#### A. 미리 생성
+
+<Editor file="CObjectManager.cpp" fn="Initialize()">
+
+```cpp
+// BulletPool Init
+{
+	auto &list = m_BulletPool.GetObjectList();
+	list.reserve(50);
+	size_t iCapacity = list.capacity();
+	CBullet *pNewBullet = nullptr;
+	for (int i = 0; i < iCapacity; ++i)
+	{
+		pNewBullet = new CBullet;
+		list.push_back(pNewBullet);
+		m_AllObjects[static_cast<unsigned int>(pNewBullet->GetType())].push_back(pNewBullet);
+	}
+	m_BulletPool.Initialize();
+}
+```
+
+</Editor>
+
+매니저를 초기화할 때 풀 크기만큼 객체를 미리 만들어 둡니다. 플레이 중에는 이 객체들을 스폰하고 회수하기만 합니다.
+
+#### B. 스폰
+
+<Editor file="CObjectPool.h" fn="Spawn(...)">
+
+```cpp
+template<IsObject T>
+inline CObject *CObjectPool<T>::Spawn(std::function<void(T *)> _callback)
+{
+	// ... 코드 중략
+	if (m_iActiveTopIndex + 1 >= (int)m_Objects.size())
+		return nullptr;
+	++m_iActiveTopIndex;
+	CObject *p = m_Objects[m_iActiveTopIndex];
+	p->Initialize();
+	static_cast<T *>(p)->SetVisibleIndex(m_iActiveTopIndex);  // 반드시 갱신
+	if (_callback) _callback(static_cast<T *>(p));
+	static_cast<T *>(p)->SetVisible();
+	return p;
+}
+```
+
+</Editor>
+
+스폰할 객체는 언제나 경계 바로 다음 칸에 있어 찾을 필요가 없습니다. 자기 위치를 `SetVisibleIndex`로 기록해 두는 것은 회수할 때 쓰기 위해서입니다.
+
+#### C. 회수
+
+<Editor file="CObjectPool.h" fn="Despawn(...)">
+
+```cpp
+template<IsObject T>
+inline void CObjectPool<T>::Despawn(T *_pObject)
+{
+	// ... 코드 중략
+	int src = _pObject->GetVisibleIndex();
+	int dst = m_iActiveTopIndex;
+	if (src < 0 || src > dst) return;
+
+	// swap active<->last active
+	std::swap(m_Objects[src], m_Objects[dst]);
+	static_cast<T*>(m_Objects[src])->SetVisibleIndex(src);
+	static_cast<T*>(m_Objects[dst])->SetVisibleIndex(dst);
+
+	// 비활성화
+	_pObject->SetInvisible();
+	--m_iActiveTopIndex;
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={400} src="/img/reviews/katana/02-object-pool/despawn.png" caption="B를 회수할 때 배열 상태 변화" />
+
+회수할 객체의 위치는 기록해 둔 인덱스로 바로 알 수 있습니다. B 자리를 마지막 활성 객체 D로 채우고 경계를 한 칸 줄이면, 활성 구간에 빈칸이 생기지 않습니다(<FigRef n={4} />).
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**풀 하나를 늘리려면 세 곳을 함께 고쳐야 했습니다.** 풀 멤버 변수, `GetPool<T>` 특수화, `ObjectTraits` 특수화가 모두 따로 있어서 풀을 늘릴 때마다 초기화가 번거로웠습니다. 풀을 타입에서 떼어 내, 풀 하나를 한 줄로 추가할 수 있게 만들었어야 했습니다.
+
+남은 개선점입니다.
+
+- `ObjectTraits`는 타입이 늘어날 때의 실수를 막으려고 도입했지만, 프로젝트 규모가 크지 않아 기대만큼 효용이 크지 않았습니다.
+- `CEventManager::Clear`는 `size()`와 비교하며 `pop()`을 반복하다 큐의 절반만 비웁니다. `while (!empty())`로 바꿔야 합니다.
+- `Register` / `Unregister`가 `public`이라 이벤트 큐를 우회하는 경로가 열려 있습니다. `private`으로 막아야 요청과 실행의 분리가 보장됩니다.

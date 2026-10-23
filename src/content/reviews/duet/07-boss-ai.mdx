@@ -1,0 +1,810 @@
+---
+project: duet
+order: 7
+title: 데이터 기반 몬스터 · 보스 AI
+topic: 상태 머신·AI
+chips: [FSM, Data-Driven, std::function, nlohmann/json, Cooldown, Bitmask]
+lineage:
+  label: 나루토 모작 — 상태 머신 · 입력 추상화
+  href: /reviews/naruto/01-state-machine/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+데이터 기반 AI는 "어떤 조건에서 어떤 행동으로 넘어가는가"를 코드가 아니라 데이터 파일에 적습니다. 코드는 거리 판정이나 이동 같은 재료 함수만 이름으로 제공하고, 상태 전이 규칙은 데이터에서 그 이름들을 조합해 만듭니다. 패턴을 바꿀 때 다시 빌드할 필요가 없고, 같은 코드로 여러 몬스터를 만들 수 있습니다.
+
+판단 재료는 코드에, 조합은 데이터에 두었기 때문에 일반 몬스터와 보스가 같은 상태 클래스를 쓰고, 패턴 확률·쿨타임·전이는 빌드 없이 바꿀 수 있습니다.
+
+## 2. 문제
+
+> 나루토 모작에서는 입력 인터페이스를 나눠 적과 플레이어가 같은 상태 클래스를 쓰게 했지만, 적의 "판단"(언제 공격하고, 언제 거리를 벌리는가)은 여전히 C++ 코드 안에 있었습니다. 행동 하나를 바꾸려 해도 상태 클래스를 고치고 다시 빌드해야 했습니다. 최종 프로젝트에는 일반 몬스터와 패턴이 많은 보스가 함께 있었습니다. 몬스터 종류만큼 상태 클래스를 만들면 "거리 안이면 공격, 맞으면 경직, 쿨타임이 끝난 패턴 중 하나를 고른다"는 같은 규칙이 클래스마다 되풀이됩니다. 규칙의 재료(조건과 동작)는 코드로 한 번만 만들고, 그 조합은 데이터로 바꿀 수 있어야 했습니다.
+
+## 3. 구조 요약
+
+판단 재료와 판단 규칙을 나눴습니다. 거리·방향·피격 종류 같은 판단 재료는 컨트롤 컨텍스트가 계산하고, 이를 묻는 조건·동작 함수는 팩토리에 이름으로 한 번 등록합니다. 어떤 상태에서 어떤 조건으로 어디로 넘어갈지는 몬스터별 JSON이 정합니다.
+
+<Fig n={1} white max={560} src="/img/reviews/duet/07-boss-ai/class.png" caption="데이터 기반 몬스터 AI 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 / 구조체 | 책임 |
+| --- | --- |
+| `MONSTER_STATEBASE_DESC` / `STATE_TRANSITION` | 상태 하나의 정의: 애니메이션, 쿨타임, 전이(조건 이름 + 다음 상태 후보·가중치), 실행할 기능 |
+| `CMonsterState_Factory` | 조건·기능 함수를 이름으로 등록하고 조회하는 싱글톤 |
+| `CStateBase_Monster` | 정의를 받아 함수를 묶어 두고, 매 프레임 전이 검사와 기능 실행 |
+| `CMonsterActionState` | 몬스터별 JSON을 읽어 상태 목록 생성, 상태별 쿨타임 갱신 |
+| `CMonsterControlContext` | 대상과의 거리·방향, 피격·그로기·사망 같은 판단 재료 계산 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '상태 데이터', '조건 · 기능 등록', '전이 판정', '상태 로드', '판단 재료']}>
+<Tab>
+
+보스를 만들 때 상태 JSON과 판단 거리를 지정하는 부분입니다.
+
+#### A. 보스 구성
+
+<Editor file="Boss_Xibi.cpp" fn="Ready_Components(...)">
+
+```cpp
+	CMonsterActionState::MONSTERACTIONSTATE_DESC desc = {};
+	desc.pOwnerModel = pBody->Get_Component<CModel>();
+	desc.pOwnerWeaponModel = pSword->Get_Component<CModel>();
+	desc.pOwnerAnimECS = pBodyAnimECS;
+	desc.pOwnerWeaponAnimECS = pSwordAnimECS;
+	desc.wstrMonsterStateTag = pDesc->wstrMonsterStateTag;
+	desc.iLevelIndex = pDesc->iLevelIndex;
+	if (FAILED(Add_Component<CMonsterActionState>(0, L"Prototype_Component_ActionState_Monster", &desc)))
+		return E_FAIL;
+// ... 코드 중략
+
+CMonsterControlContext::MONSTER_CONTROLCONTEXT_DESC desc{};
+desc.fMeleeRange = 2.f;
+desc.fAttackRange = 8.f;
+desc.fCloseRange = 1.f;
+desc.fDetectionRange = 13.f;
+desc.fSpeed = 1.f;
+// ... 코드 중략
+
+if (FAILED(Add_Component<CMonsterControlContext>(0 /*static*/, L"Prototype_Component_ControlContext_Monster", &desc)))
+	return E_FAIL;
+```
+
+</Editor>
+
+보스 본체 코드가 정하는 것은 어떤 JSON을 쓸지와 근접·공격·감지 거리뿐입니다. 패턴 구성과 확률, 쿨타임은 모두 `MonsterState` 폴더의 JSON에 있어서, 일반 몬스터와 보스가 같은 상태 컴포넌트·상태 클래스를 씁니다.
+
+</Tab>
+<Tab>
+
+상태 하나(`MONSTER_STATEBASE_DESC`)와 전이 하나(`STATE_TRANSITION`)를 표현하는 데이터 구조입니다. 조건·기능은 함수 이름과 인자(`CONDITION_ENTRY`, `FEATURE_ENTRY`, 인자는 `STATE_PARAM`)로 담기고, 모두 `nlohmann/json`으로 읽고 씁니다.
+
+#### A. 상태와 전이의 형식
+
+<Editor file="DTO_MonsterState.h" fn="STATE_PARAM, CONDITION_ENTRY, FEATURE_ENTRY, CONDITIONFEATURE_ENTRY">
+
+```cpp
+typedef struct tagStateParam
+{
+	int		iParam[4]{ 0 };
+	float	fParam[4]{ 0.f };
+	bool	bParam[4]{ 0 };
+}STATE_PARAM;
+// ... 코드 중략
+
+typedef struct tagConditionEntry
+{
+	string strCondition{ "" };
+	STATE_PARAM tParam{};
+}CONDITION_ENTRY;
+// ... 코드 중략
+
+typedef struct tagFeatureEntry
+{
+	string strFeature{ "" };
+	STATE_PARAM tParam{};
+	bool IsOnce = { false };
+	bool IsExecuted = { false };
+}FEATURE_ENTRY;
+// ... 코드 중략
+
+typedef struct tagConditionFeatureEntry
+{
+	CONDITION_ENTRY cond{};
+	FEATURE_ENTRY   feat{};
+}CONDITIONFEATURE_ENTRY;
+```
+
+</Editor>
+
+<Editor file="DTO_MonsterState.h" fn="STATE_TRANSITION, MONSTER_STATEBASE_DESC">
+
+```cpp
+typedef struct tagStateTransition
+{
+	vector<CONDITION_ENTRY> vecConditionEntry;
+	// state name, weight
+	map<string, float> mapRandomStatePool;
+
+	vector<int> vecConditionIdx;
+	map<int, float> mapRandomStatePoolIdx;
+	float fTotalWeight;
+}STATE_TRANSITION;
+// ... 코드 중략
+
+typedef struct tagMonsterStateBaseDesc
+{
+	string strName = { "Sample" };
+
+	int iStateIdx = {};
+
+	bool bIsBoss = { false };
+	bool bIsCombo = { false };
+	bool bIsCustom = { false };
+
+	unsigned int FAniFlags = { 0 };
+	bool bBlend = { false };
+	bool bLoop = { false };
+	bool bCancellation = { false };
+	float fAnimationSpeed = { 1.f };
+
+	MONSTERTIME_COUNTER tStateLifeTime = {};
+	MONSTERTIME_COUNTER tStateCoolDownTime = {};
+
+	// state names
+	std::set<string>		setStates;
+
+	// state name, anim name, weapon anim name
+	map<string, string>		mapPreAnimNames;
+	vector<string>			vecMainAnimNames;
+	vector<string>			vecWeaponAnimNames;
+
+	// condition(function), to state name
+	vector<STATE_TRANSITION> vecGlobalStateTransition;
+
+	// condition(function), to state name
+	vector<STATE_TRANSITION> vecStateTransition;
+
+	// condition feature
+	vector<CONDITIONFEATURE_ENTRY> vecConditionFeature;
+
+	// start - condition feature
+	vector<CONDITIONFEATURE_ENTRY> vecStartConditionFeature;
+	// end - condition feature
+	vector<CONDITIONFEATURE_ENTRY> vecEndConditionFeature;
+
+	vector<FEATURE_ENTRY> vecFeatureEntry;
+	vector<int> vecFeatureIdx;
+}MONSTER_STATEBASE_DESC;
+```
+
+</Editor>
+
+전이는 "모든 조건이 참이면 후보 상태 중 하나로 간다"는 한 줄짜리 규칙입니다. 조건과 기능은 함수가 아니라 이름(`strCondition` / `strFeature`)과 인자로 저장되므로, JSON만 고쳐도 같은 몬스터의 행동이 바뀝니다. 기능은 실행 시점에 따라 매 프레임(`vecFeatureEntry`), 조건이 맞을 때(`vecConditionFeature`), 상태 시작·종료 때(`vecStart...` / `vecEnd...`)로 나눠 적습니다.
+
+#### B. 옛 형식 호환
+
+<Editor file="DTO_MonsterState.h" fn="from_json(const json&, STATE_TRANSITION&)">
+
+```cpp
+inline void from_json(const json& j, STATE_TRANSITION& d)
+{
+	if (j.contains("vecConditionEntry"))
+	{
+		j.at("vecConditionEntry").get_to(d.vecConditionEntry);
+	}
+	else if (j.contains("vecCondition"))
+	{
+		auto vec = j.at("vecCondition").get<vector<string>>();
+		for (auto& str : vec)
+		{
+			CONDITION_ENTRY entry{};
+			entry.strCondition = str;
+			d.vecConditionEntry.push_back(entry);
+		}
+	}
+	j.at("mapRandomStatePool").get_to(d.mapRandomStatePool);
+}
+```
+
+</Editor>
+
+조건에 인자가 필요해지면서 형식이 `vecCondition`(이름 목록)에서 `vecConditionEntry`(이름 + 인자)로 바뀌었습니다. 읽을 때 옛 형식도 받아 새 구조로 옮기므로, 이미 만들어 둔 JSON 파일을 다시 쓸 필요가 없었습니다.
+
+</Tab>
+<Tab>
+
+조건·기능 함수를 이름으로 등록해 두는 곳입니다. 모든 함수가 같은 시그니처(`ConditionFunc`, `FeatureFunc`)를 가지므로, `Ready_Condition()`/`Ready_Feature()`가 조건 약 45개·기능 약 40개를 등록해 두면 상태는 `GetCondition`/`GetFeature`로 이름만 보고 꺼내 씁니다.
+
+#### A. 이름 → 함수 등록
+
+<Editor file="MonsterState_Factory.h" fn="ConditionFunc, FeatureFunc, CMonsterState_Factory">
+
+```cpp
+using ConditionFunc = std::function<_bool(class CStateBase_Monster*, const DTO::STATE_PARAM&)>;
+using FeatureFunc = std::function<void(class CStateBase_Monster*, const _float&, const DTO::STATE_PARAM&)>;
+// ... 코드 중략
+
+private:
+	map<string, ConditionFunc> m_mapCondition;
+	map<string, FeatureFunc> m_mapFeature;
+```
+
+</Editor>
+
+<Editor file="MonsterState_Factory.cpp" fn="등록 매크로">
+
+```cpp
+#define REGISTER_CONDITION(NAME, FUNC) if(FAILED(RegisterCondition(NAME, FUNC))) return E_FAIL;
+#define REGISTER_FEATURE(NAME, FUNC)   if(FAILED(RegisterFeature(NAME, FUNC))) return E_FAIL;
+
+#define MONSTERACTIONSTATE(STATE) GetActionState(STATE)
+#define MONSTERCC(STATE)          GetControlContext(STATE)
+
+// 시그니처 통일
+#define CONDITION [](class CStateBase_Monster* state, const DTO::STATE_PARAM& param)->_bool
+#define FEATURE   [](class CStateBase_Monster* state, const _float& fTimeDelta, const DTO::STATE_PARAM& param)
+```
+
+</Editor>
+
+<Editor file="MonsterState_Factory.cpp" fn="Ready_Condition(), Ready_Feature()">
+
+```cpp
+REGISTER_CONDITION("condition_target_encount", CONDITION{ return MONSTERCC(state)->IsTargetFound(); });
+
+REGISTER_CONDITION("condition_in_melee_range", CONDITION{ return MONSTERCC(state)->IsTargetInMeleeRange(); });
+
+REGISTER_CONDITION("condition_in_attack_range", CONDITION{ return MONSTERCC(state)->IsTargetInAttackRange(); });
+// ... 코드 중략
+
+REGISTER_CONDITION("condition_normal_groggy_requested", CONDITION{ return MONSTERCC(state)->IsNormalGroggyRequested(); });
+
+REGISTER_CONDITION("condition_final_groggy_requested", CONDITION{ return MONSTERCC(state)->IsFinalGroggyRequested(); });
+// ... 코드 중략
+
+REGISTER_CONDITION("param_condition_IsTrackPositionBetween", CONDITION{ return MONSTERACTIONSTATE(state)->Is_AnimTrackPositionBetweenRaw(param.fParam[0], param.fParam[1]); });
+
+REGISTER_CONDITION("param_condition_IsTrackPositionAt", CONDITION{ return MONSTERACTIONSTATE(state)->Is_AnimTrackPositionAtRaw(param.fParam[0]); });
+// ... 코드 중략
+
+REGISTER_FEATURE("feat_walk", FEATURE{ MONSTERCC(state)->UpdateWalk(fTimeDelta); state->Align_Movement(fTimeDelta); });
+
+REGISTER_FEATURE("feat_chase", FEATURE{ MONSTERCC(state)->UpdateChase(fTimeDelta); state->Align_Movement(fTimeDelta); });
+
+REGISTER_FEATURE("feat_align_attack", FEATURE{ MONSTERCC(state)->UpdateChase(fTimeDelta); state->Turn_byCam(fTimeDelta); });
+// ... 코드 중략
+
+REGISTER_FEATURE("feat_consume_groggy", FEATURE{ MONSTERCC(state)->Consume_GroggyRequest(); });
+REGISTER_FEATURE("feat_end_groggy", FEATURE{ MONSTERCC(state)->End_Groggy(); });
+// ... 코드 중략
+
+REGISTER_FEATURE("feat_skill_spawn_trigger", FEATURE{ MONSTERCC(state)->SkillSpawnTrigger(param.iParam[0]); });
+```
+
+</Editor>
+
+조건과 기능은 대부분 한 줄짜리 람다입니다. 실제 계산은 컨트롤 컨텍스트에 있고, 팩토리는 "이 이름이면 이 질문을 한다"는 연결만 맡습니다. 시그니처는 매크로로 고정해, 람다마다 인자 형식이 달라지지 않게 했습니다. 인자가 필요한 조건은 이름에 `param_`을 붙이고 JSON의 `tParam`에서 값을 꺼내 씁니다. 같은 이름을 두 번 등록하면 초기화가 실패하므로, 오타로 함수가 덮이는 실수는 시작 시점에 잡힙니다.
+
+</Tab>
+<Tab>
+
+JSON에서 읽은 상태 정의를 실행 가능한 상태로 만드는 부분입니다. 상태가 만들어질 때 `Bind_Transition` 등이 이름을 함수와 인덱스로 바꿔 실행 단위(`BOUND_CONDITION` 등)로 묶어 두고, 매 프레임에는 `Check_Transition()`이 조건과 쿨타임(`m_tStateCoolDownTime`)을 보고 다음 상태를 고릅니다.
+
+#### A. 생성 시 한 번 묶기
+
+<Editor file="StateBase_Monster.h" fn="CStateBase_Monster">
+
+```cpp
+typedef struct tagBoundCondition
+{
+	std::function<_bool(const DTO::STATE_PARAM&)> func;
+	DTO::STATE_PARAM tParam{};
+}BOUND_CONDITION;
+// For. ConditionFeature
+typedef struct tagBoundConditionFeature
+{
+	std::function<_bool(const DTO::STATE_PARAM&)>               condition;
+	std::function<void(const _float&, const DTO::STATE_PARAM&)> feature;
+
+	_bool bIsOnce = { false };
+	_bool bIsExecuted = { false };
+
+	DTO::STATE_PARAM condParam;
+	DTO::STATE_PARAM featParam;
+}BOUND_CONDFEATURE;
+// For. Feature
+typedef struct tagBoundFeature
+{
+	std::function<void(const _float&, const DTO::STATE_PARAM&)> func;
+	DTO::STATE_PARAM tParam{};
+
+	_bool bIsOnce = { false };
+	_bool bIsExecuted = { false };
+}BOUND_FEATURE;
+```
+
+</Editor>
+
+<Editor file="StateBase_Monster.cpp" fn="Bind_Transition(...)">
+
+```cpp
+HRESULT CStateBase_Monster::Bind_Transition(vector<DTO::STATE_TRANSITION>& transition)
+{
+	auto factory = CMonsterState_Factory::GetInstance();
+
+	for (auto& trans : transition)
+	{
+		trans.vecConditionIdx.clear();
+		trans.mapRandomStatePoolIdx.clear();
+		trans.fTotalWeight = 0.f;
+
+		// CONDITION_ENTRY 순회 런타임 바인딩
+		for (auto& entry : trans.vecConditionEntry)
+		{
+			auto func = factory->GetCondition(entry.strCondition);
+			if (func == nullptr)
+				return E_FAIL;
+
+			_uint idx = (_uint)m_vecCondition.size();
+
+			BOUND_CONDITION bound{};
+			bound.func = std::bind(func, this, std::placeholders::_1);
+			bound.tParam = entry.tParam;
+
+			m_vecCondition.push_back(bound);
+			trans.vecConditionIdx.push_back(idx);
+		}
+
+		// 전이 상태 id 매핑
+		for (auto& value : trans.mapRandomStatePool)
+		{
+			trans.fTotalWeight += value.second;
+
+			auto itr = m_umapState.find(value.first);
+			if (itr == m_umapState.end())
+				return E_FAIL;
+			_int stateIdx = itr->second;
+			trans.mapRandomStatePoolIdx.emplace(stateIdx, value.second);
+		}
+	}
+
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Editor file="StateBase_Monster.cpp" fn="Bind_StartConditionFeature()">
+
+```cpp
+for (auto& conditionfeature : m_pDesc->vecStartConditionFeature)
+{
+	// feature는 필수
+	auto featFunc = factory->GetFeature(conditionfeature.feat.strFeature);
+	if (!featFunc)
+		return E_FAIL;
+
+	// cond는 비면 always로 치환
+	string condName = conditionfeature.cond.strCondition.empty()
+		? "condition_true_always"
+		: conditionfeature.cond.strCondition;
+	auto condFunc = factory->GetCondition(condName);
+	if (!condFunc) return E_FAIL;
+
+	BOUND_CONDFEATURE bound{};
+	bound.condParam = conditionfeature.cond.tParam;
+	bound.featParam = conditionfeature.feat.tParam;
+
+	bound.condition = std::bind(condFunc, this, std::placeholders::_1);
+	bound.feature = std::bind(featFunc, this, std::placeholders::_1, std::placeholders::_2);
+
+	m_vecStartConditionFeature.push_back(bound);
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={820} src="/img/reviews/duet/07-boss-ai/bind.png" caption="JSON의 조건·기능 이름 → 팩토리에서 함수 조회 → 상태에 묶어 두기" />
+
+이름을 함수로 바꾸는 일은 상태가 만들어질 때 한 번만 합니다(<FigRef n={2} />). 팩토리 함수의 첫 인자(상태)는 `std::bind`로 `this`에 고정하고, 인자는 JSON 값을 함께 저장해 둡니다. 다음 상태 이름도 이때 인덱스로 바꿔 두므로, 매 프레임에는 문자열 비교 없이 함수 호출과 인덱스만 남습니다. 등록되지 않은 이름이 있으면 상태 생성이 실패해, 오타가 있는 JSON은 실행 전에 걸러집니다. 시작·종료 기능은 조건을 비워 두면 항상 참인 조건으로 바꾸므로, JSON에 "항상" 조건을 일일이 적지 않아도 됩니다.
+
+#### B. 전이 검사와 가중치 선택
+
+<Editor file="StateBase_Monster.cpp" fn="Update(...)">
+
+```cpp
+void CStateBase_Monster::Update(const _float fTimeDelta)
+{
+	Super::Update(fTimeDelta);
+
+	// 만약 이전 애니메이션때 변화하기 싫은데 아직 preAni가 끝나지 않았다면 : key 입력 처리를 하지 않음
+	if (Engine_Utils::Has_Flag(m_FAniFlags, STATEANI_FLAG::SA_PreNonEvent) &&
+		!Engine_Utils::Has_Flag(m_FAniFlags, STATEANI_FLAG::SA_PreAniDone))
+		return;
+
+	// 글로벌 전이부터 검사 ( Die, Damage 등)
+	if (Check_Transition(m_pDesc->vecGlobalStateTransition))
+		return;
+
+	// 로컬 상태 전이
+	if (Check_Transition(m_pDesc->vecStateTransition))
+		return;
+
+	// 기능 실행
+	for (auto& feat : m_vecFeature)
+	{
+		if (feat.bIsOnce && feat.bIsExecuted)
+			continue;
+
+		feat.func(fTimeDelta, feat.tParam);
+
+		feat.bIsExecuted = true;
+	}
+
+	for (auto& conditionfeature : m_vecConditionFeature)
+	{
+		if (conditionfeature.condition(conditionfeature.condParam))
+		{
+			if (conditionfeature.bIsOnce && conditionfeature.bIsExecuted)
+				continue;
+
+			conditionfeature.feature(fTimeDelta, conditionfeature.featParam);
+
+			conditionfeature.bIsExecuted = true;
+		}
+	}
+}
+```
+
+</Editor>
+
+<Editor file="StateBase_Monster.cpp" fn="Check_Transition(...)">
+
+```cpp
+_bool CStateBase_Monster::Check_Transition(vector<DTO::STATE_TRANSITION>& transition)
+{
+	for (auto& trans : transition)
+	{
+		_bool allClear = { true };
+		for (auto& condIdx : trans.vecConditionIdx)
+		{
+			if (m_vecCondition[condIdx].func(m_vecCondition[condIdx].tParam) == false)
+			{
+				allClear = false;
+				break;
+			}
+		}
+
+		// 모든 조건 통과
+		if (allClear)
+		{
+			if (trans.fTotalWeight <= 0.f || trans.mapRandomStatePoolIdx.empty())
+				continue;
+
+			//_int total = (_int)trans.fTotalWeight;
+			//if (total <= 0)
+			//	continue;
+
+			_int total = {};
+			for (auto& to : trans.mapRandomStatePoolIdx)
+			{
+				if (static_cast<CMonsterActionState*>(m_pOwnerStateComp)->IsStateReady(to.first) == true)
+					total += (_int)to.second;
+			}
+
+			if (total <= 0)
+				continue;
+
+			_float randomValue = (_float)(rand() % total);
+
+			_float curWeight = {};
+			for (auto& to : trans.mapRandomStatePoolIdx)
+			{
+				if (static_cast<CMonsterActionState*>(m_pOwnerStateComp)->IsStateReady(to.first) == false)
+					continue;
+
+				curWeight += to.second;
+				if (randomValue < curWeight)
+				{
+					Change_MonsterState(to.first); // 다음 state로 change
+					// ... 코드 중략
+					return m_iThisStateIndex != to.first;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={820} src="/img/reviews/duet/07-boss-ai/transition.png" caption="글로벌 전이 → 로컬 전이 → 쿨타임이 끝난 후보 중 가중치 랜덤" />
+
+매 프레임 사망·피격 같은 글로벌 전이를 먼저 보고, 그다음 이 상태만의 로컬 전이를 봅니다(<FigRef n={3} />). 기능은 전이가 일어나지 않았을 때만 실행하므로, 상태를 떠나는 프레임에 이전 상태의 이동이 섞이지 않습니다. 조건을 모두 통과한 전이는 후보 가운데 쿨타임이 끝난 상태만 모아 가중치 합을 구하고, 그 안에서 랜덤으로 하나를 고릅니다. 덕분에 같은 "공격 범위 안" 조건에서도 패턴마다 확률과 재사용 대기 시간을 다르게 줄 수 있고, 방금 쓴 패턴은 쿨타임 동안 후보에서 빠집니다.
+
+#### C. 패턴 쿨타임
+
+<Editor file="StateBase_Monster.cpp" fn="Update_CooldownTime(...), IsCooldownTimeSatisfy()">
+
+```cpp
+void CStateBase_Monster::Update_CooldownTime(_float fTimeDelta, _bool bEntryStart)
+{
+	if (m_tStateCoolDownTime.bCountTime)
+	{
+		if (bEntryStart)
+			m_tStateCoolDownTime.fTimeAcc = 0.f;
+		else if (m_tStateCoolDownTime.fTimeAcc != m_tStateCoolDownTime.fMaxTime)
+		{
+			m_tStateCoolDownTime.fTimeAcc += fTimeDelta;
+			if (m_tStateCoolDownTime.fTimeAcc >= m_tStateCoolDownTime.fMaxTime)
+				m_tStateCoolDownTime.fTimeAcc = m_tStateCoolDownTime.fMaxTime;
+		}
+	}
+}
+// ... 코드 중략
+
+_bool CStateBase_Monster::IsCooldownTimeSatisfy()
+{
+	if (!m_tStateCoolDownTime.bCountTime)
+		return true;
+
+	return m_tStateCoolDownTime.fTimeAcc >= m_tStateCoolDownTime.fMaxTime;
+}
+```
+
+</Editor>
+
+<Editor file="MonsterActionState.cpp" fn="Update(...), IsStateReady(...)">
+
+```cpp
+void CMonsterActionState::Update(const _float fTimeDelta)
+{
+	Super::Update(fTimeDelta);
+
+	Update_CooldownTime(fTimeDelta);
+}
+// ... 코드 중략
+
+_bool CMonsterActionState::IsStateReady(_uint iIdx)
+{
+	return static_cast<CStateBase_Monster*>(m_vecStates[iIdx])->IsCooldownTimeSatisfy();
+}
+```
+
+</Editor>
+
+쿨타임은 상태에 들어갈 때 0으로 돌아가고, 상태 컴포넌트가 현재 상태와 관계없이 모든 상태의 쿨타임을 매 프레임 늘립니다. 그래서 다른 상태에 있는 동안에도 패턴의 재사용 대기 시간은 계속 흐릅니다. 처음에는 최대값에서 시작하므로, 등장 직후에는 모든 패턴을 고를 수 있습니다.
+
+</Tab>
+<Tab>
+
+몬스터 종류별 JSON을 읽어 상태 목록을 만드는 상태 컴포넌트입니다. `LoadStates`가 `MonsterState/{tag}.json`을 읽고 `Bind_State`로 상태 이름을 인덱스에 대응시키며, 전용 클래스가 필요한 상태에는 `Get_StateDesc`로 정의를 넘겨줍니다.
+
+#### A. 몬스터별 JSON 로드
+
+<Editor file="MonsterActionState.cpp" fn="Bind_State(...), LoadStates(...)">
+
+```cpp
+HRESULT CMonsterActionState::Bind_State(std::set<string> setState)
+{
+	m_umapState.clear();
+
+	m_vecStates.resize(setState.size());
+	m_umapState.reserve(setState.size());
+	for (auto iter = setState.begin(); iter != setState.end(); iter++)
+		m_umapState.emplace(*iter, std::distance(setState.begin(), iter));
+
+	return S_OK;
+}
+// ... 코드 중략
+
+HRESULT CMonsterActionState::LoadStates(wstring stateTag, _uint iLevelIndex)
+{
+	std::filesystem::path path = L"../../Resources/Data/MonsterState";
+	path /= stateTag;
+	path.replace_extension(".json");
+
+	m_tDesc = LoadStateFile(path, iLevelIndex);
+
+	if (FAILED(Bind_State(m_tDesc.setStates)))
+		return E_FAIL;
+
+	for (auto& stateDesc : m_tDesc.vecMonsterStateDesc)
+	{
+		_uint stateIdx = (*m_umapState.find(stateDesc.strName)).second;
+
+		// StateDesc만 작성후 넘기기 추후에 외부에서 Desc Get해와서 AddState
+		if (stateDesc.bIsCustom == true)
+			continue;
+
+		if (FAILED(Add_State(stateIdx, CState_Monster::Create(this, stateIdx, &stateDesc))))
+			return E_FAIL;
+	}
+
+	return S_OK;
+}
+```
+
+</Editor>
+
+몬스터마다 다른 것은 JSON 파일 이름(`wstrMonsterStateTag`)뿐이고, 상태 컴포넌트와 상태 클래스는 모든 몬스터가 같습니다. 인덱스는 상태 이름 집합(`std::set`)의 정렬 순서로 매기므로, 파일 안에서 상태 순서가 바뀌어도 이름과 인덱스의 대응은 그대로입니다. 데이터만으로 표현하기 어려운 상태는 `bIsCustom`으로 표시해 건너뛰고, 전용 클래스가 `Get_StateDesc`로 같은 정의를 받아 직접 등록합니다.
+
+</Tab>
+<Tab>
+
+조건 함수들이 묻는 판단 재료를 계산하는 곳입니다. 대상까지의 방향·거리(`RUNTIME_DESC`)와 피격·그로기 같은 보조 상태 비트(`SUB_STATE`)를 들고 있고, 상태는 이를 직접 계산하지 않고 `IsTargetLeft90()`·`IsHitLight()`·`Set_Groggy` 같은 함수로 묻거나 요청합니다.
+
+#### A. 판단 재료
+
+<Editor file="MonsterControlContext.h" fn="CMonsterControlContext">
+
+```cpp
+typedef struct tagSubState
+{
+	enum Enum
+	{
+		NONE,
+		FALL = 1 << 0,
+		DOWN = 1 << 1,
+		AIRBORNE = 1 << 2,
+		FLY = 1 << 3,
+		HIT = 1 << 4,
+		DIE_PROCESS = 1 << 5,
+		DIE_POSE = 1 << 6,
+		GROGGY_REQ = 1 << 7,
+		GROGGY_ACTIVE = 1 << 8,
+		ATTACK_LANDED = 1 << 9,
+		END
+	};
+}SUB_STATE;
+// ... 코드 중략
+
+void Set_HitDesc(HIT_DESC hitDesc)
+{
+	m_tHitDesc = hitDesc;
+	Engine_Utils::Add_Flag(m_iSubState, SUB_STATE::HIT);
+}
+```
+
+</Editor>
+
+<Editor file="MonsterControlContext.cpp" fn="IsTargetLeft90(), IsHitLight()">
+
+```cpp
+_bool CMonsterControlContext::IsTargetLeft90() const
+{
+	if (m_tRuntimeDesc.bTargetValid == false)
+		return false;
+
+	// 내 오른쪽 벡터와 타겟 방향의 내적 -> 음수면 왼쪽
+	_float fDotRight = m_tRuntimeDesc.vOwnerRight.Dot(m_tRuntimeDesc.vToTargetDir);
+
+	// 앞쪽이 아니고(정면 아님), 왼쪽에 있고, 완전 뒤는 아님
+	// fDotForward:		0.0 ~ 0.7 = 측면
+	// fDotRight:		< 0 = 왼쪽
+	return (m_tRuntimeDesc.fDotForward < 0.7f)
+		&& (m_tRuntimeDesc.fDotForward > -0.3f)
+		&& (fDotRight < -0.3f);
+}
+// ... 코드 중략
+
+_bool CMonsterControlContext::IsHitLight()
+{
+	_bool result;
+	if ((result = IsHit()) == false)
+		return result;
+
+	if (result = (m_tHitDesc.attackDesc.pAttackPreset->tCombat.eHitType == DTO::EHitType::Light))
+		m_iSubState &= ~SUB_STATE::HIT;
+
+	return result;
+}
+```
+
+</Editor>
+
+피격 정보는 판정 시스템이 결과를 넘길 때 `Set_HitDesc`로 저장되고, 조건은 공격 프리셋의 피격 종류(약·강·띄우기·넘어뜨리기)를 보고 어떤 반응 상태로 갈지 고릅니다. 공격 수치뿐 아니라 맞는 쪽의 반응까지 데이터(프리셋)에서 정해지는 셈입니다. 방향 조건은 정면 내적과 오른쪽 내적 두 값으로 좌우 90°·뒤쪽 180°를 나누므로, "뒤에서 맞으면 돌아서며 반격" 같은 전이도 JSON에 적을 수 있습니다.
+
+#### B. 그로기 요청과 소비
+
+<Editor file="MonsterControlContext.cpp" fn="Set_Groggy(...), Consume_GroggyRequest()">
+
+```cpp
+_bool CMonsterControlContext::Set_Groggy(EGroggyState eState, _bool bRequest, _float fGroggyDuration)
+{
+	const _bool bAleradyRequested = Engine_Utils::Has_Flag(m_iSubState, SUB_STATE::GROGGY_REQ);
+	const _bool bActive = Engine_Utils::Has_Flag(m_iSubState, SUB_STATE::GROGGY_ACTIVE);
+
+	// 그로기 요청이라면
+	if (bRequest == true)
+	{
+		// 이미 활성화 된상태 요청은 받지 않음
+		if (bAleradyRequested || bActive)
+			return false;
+
+		Engine_Utils::Add_Flag(m_iSubState, SUB_STATE::GROGGY_REQ);
+
+		m_eCurrentGroggyState = eState;
+		m_tGroggyCounter.Start(fGroggyDuration);
+	}
+	// 아니라면
+	else
+	{
+		// 요청 취소
+		if (bAleradyRequested == false)
+			return false;
+
+		Engine_Utils::RemoveHard_Flag(m_iSubState, SUB_STATE::GROGGY_REQ);
+	}
+
+	// 요청 성공
+	return true;
+}
+// ... 코드 중략
+
+void CMonsterControlContext::Consume_GroggyRequest()
+{
+	// 요청이 없었다면
+	if (Engine_Utils::Has_Flag(m_iSubState, SUB_STATE::GROGGY_REQ) == false)
+		return;
+
+	Engine_Utils::RemoveHard_Flag(m_iSubState, SUB_STATE::GROGGY_REQ);
+	Engine_Utils::Add_Flag(m_iSubState, SUB_STATE::GROGGY_ACTIVE);
+}
+```
+
+</Editor>
+
+<Editor file="Boss_Xibi.cpp" fn="On_Hit(...)">
+
+```cpp
+EGroggyState eGroggy{ EGroggyState::None };
+if (Engine_Utils::Has_Flag(hitDesc.iDamageFlag, ENUM_TO_UINT(EPlayerAttackFlag::GUN)))
+	eGroggy = Get_Component<CStatCom_Boss>()->Sub_Groggy(0.125f);
+else if (Engine_Utils::Has_Flag(hitDesc.iDamageFlag, ENUM_TO_UINT(EPlayerAttackFlag::DUAL)))
+	eGroggy = Get_Component<CStatCom_Boss>()->Sub_Groggy(0.5f);
+else
+	eGroggy = Get_Component<CStatCom_Boss>()->Sub_Groggy(1.f);
+
+// 그로기 세팅하고 !!리턴!!
+if (eGroggy != EGroggyState::None)
+{
+	if (_bool bRequstedSucess = pControlContext->Set_Groggy(eGroggy))
+		m_pGameInstance->Broadcast<BOSS_GROGGY>();
+
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={820} src="/img/reviews/duet/07-boss-ai/groggy.png" caption="피격 → 그로기 요청 → JSON 전이로 그로기 상태 진입 → 요청 소비 → 시간 종료" />
+
+그로기는 요청과 활성을 나눴습니다(<FigRef n={4} />). 보스 본체는 공격 종류별로 그로기 수치를 깎다가 기준에 닿으면 요청 플래그만 세웁니다. 그 요청을 보고 그로기 상태로 넘어갈지는 JSON 전이가 `condition_normal_groggy_requested` 조건으로 정하고, 그로기 상태에 붙인 기능 `feat_consume_groggy`가 요청을 활성으로 바꿉니다. 공격 동작 도중에는 전이를 막아 두면 동작이 끝난 뒤에 그로기로 들어가므로, 끼어드는 시점까지 데이터에서 조절할 수 있습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**일부 조건이 검사하면서 상태를 바꿉니다.** `IsHitLight` 같은 피격 조건은 참이면 피격 플래그를 지우고, `IsAttackLanded`도 확인과 동시에 플래그를 지웁니다. 조건은 "묻기만 하는" 함수여야 하는데 소비까지 하므로, 같은 프레임에 두 전이가 같은 조건을 쓰면 먼저 검사한 쪽만 참을 받습니다. 결국 JSON의 전이 순서가 결과를 바꾸게 되어, 데이터만 보고는 동작을 예측하기 어렵습니다. 소비는 상태 시작 기능으로 옮기고 조건은 읽기만 하도록 했어야 합니다.
+
+남은 개선점입니다.
+
+- 잘못된 이름이 있는 JSON은 상태 생성에서 걸러지지만, 어느 상태의 어떤 이름인지는 남지 않습니다. 로드할 때 문제 위치를 출력하거나 툴에서 미리 검사하는 단계가 필요합니다.
+- 가중치 합을 정수로 잘라(`rand() % total`) 소수 가중치가 적힌 비율대로 뽑히지 않습니다. 실수 분포를 쓰는 편이 맞습니다.
+- 상태마다 이름→인덱스 표를 복사해 들고 있습니다. 상태 컴포넌트의 표를 참조로 공유하면 복사를 줄일 수 있습니다.

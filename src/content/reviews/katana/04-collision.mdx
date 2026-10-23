@@ -1,0 +1,321 @@
+---
+project: katana
+order: 4
+title: 충돌 시스템
+topic: 충돌·판정
+chips: [Bitmask, unordered_map, Enter/Stay/Exit]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+충돌체끼리 겹치는지 판정하고, 이전 프레임 결과와 비교해 처음 닿음(Enter)·계속 닿음(Stay)·떨어짐(Exit)을 구분해 알려 줍니다. 검사할 타입 쌍만 골라 두어 비용을 줄였습니다.
+
+매니저는 닿았는지만 판정하고 반응은 각 오브젝트가 오버라이드로 구현합니다. 등록하지 않은 타입 쌍은 아예 순회하지 않습니다.
+
+## 2. 문제
+
+> 충돌 처리에는 "처음 닿음 / 계속 닿아 있음 / 떨어짐"의 구분이 필요하고, 그러려면 충돌 쌍마다 이전 프레임의 충돌 여부를 기억해야 합니다. 모든 오브젝트를 서로 검사하면 비용도 커서, **검사할 타입 쌍만 골라 검사하는 방법**이 필요했습니다.
+
+## 3. 구조 요약
+
+판정과 반응을 나눴습니다. 매니저는 "닿았는지"만 판정하고, 충돌체는 그 이벤트를 소유 오브젝트의 가상 함수로 넘기기만 합니다. 실제 반응은 각 오브젝트가 오버라이드로 구현합니다.
+
+<Fig n={1} white max={520} src="/img/reviews/katana/04-collision/class.png" caption="충돌 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CCollisionManager` | 검사할 타입 쌍 관리, 쌍별 이전 상태 기록, Enter·Stay·Exit 발생 |
+| `Collider_ID` | 두 충돌체 ID를 64비트 키 하나로 묶음 |
+| `CColliderComponent` | 충돌 영역(오프셋·크기), 고유 ID, 이벤트를 소유자에게 전달 |
+| `CObject` 파생 | 충돌 반응을 가상 함수로 구현 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '검사 · 판별', '쌍 키', '충돌체']}>
+<Tab>
+
+씬은 검사할 타입 쌍만 등록하고, 오브젝트는 반응만 오버라이드합니다.
+
+#### A. 검사 그룹 등록
+
+<Editor file="CGameScene.cpp" fn="Initialize()">
+
+```cpp
+// Collision
+{
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::BULLET);
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::POMP);
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::GRUNT);
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::GANGSTER);
+
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::POMP);
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::POMP);
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::GRUNT);
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::GRUNT);
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::GANGSTER);
+	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::GANGSTER);
+}
+```
+
+</Editor>
+
+검사할 타입 쌍은 씬마다 등록합니다. 총알은 몬스터와, 몬스터는 지형(선·사각형)과 검사합니다.
+
+#### B. 반응 구현
+
+<Editor file="CBullet.cpp" fn="OnCollisionEnter(...)">
+
+```cpp
+void CBullet::OnCollisionEnter(CColliderComponent *_pOther)
+{
+	CObject* pOtherObejct = _pOther->GetOwner();
+
+	if (pOtherObejct->IsDead())
+		return;
+
+	ObjectType BulletOwnerType = GetOwnerType();
+	ObjectType OtherType = pOtherObejct->GetType();		
+
+	if (OtherType == ObjectType::PLAYER)
+	{
+		if (static_cast<CPlayer *>(pOtherObejct)->IsRolling())
+			return;
+	}
+
+	if (OtherType == BulletOwnerType)
+		return;
+
+	if (OtherType >= ObjectType::DYNAMIC_END)
+		return;
+// ... 코드 중략
+}
+```
+
+</Editor>
+
+총알은 닿는 순간(`Enter`)에만 반응하고, 상대 타입과 발사한 쪽을 보고 걸러 냅니다. 판정이 어떻게 이뤄지는지는 몰라도 되고, 반응만 구현하면 됩니다.
+
+</Tab>
+<Tab>
+
+어떤 타입끼리 검사할지를 타입마다 `uint16_t` 비트(`m_CheckBit`)로 정해 두고, 쌍마다 이전 프레임 충돌 여부를 `m_CollideInfo`에 기억해 이벤트를 만듭니다. `Update()`는 비트가 켜진 쌍만 `UpdateGroup`으로 넘기고, `UpdateGroup`이 두 그룹의 활성 오브젝트를 짝지어 AABB 검사와 이벤트 판별을 합니다.
+
+#### A. 검사 그룹
+
+<Editor file="CCollisionManager.cpp" fn="CheckGroup(...), Update()">
+
+```cpp
+void CCollisionManager::CheckGroup(ObjectType _eLeft, ObjectType _eRight)
+{
+	uint16_t iRow = (uint16_t)_eLeft;
+	uint16_t iCol = (uint16_t)_eRight;
+
+	if(iCol < iRow)
+	{
+		iRow = (uint16_t)_eRight;
+		iCol = (uint16_t)_eLeft;
+	}
+
+	if (m_CheckBit[iRow] & (1 << iCol))
+	{
+		m_CheckBit[iRow] &= ~(1 << iCol);
+	}
+	else
+	{
+		m_CheckBit[iRow] |= (1 << iCol);
+	}
+}
+// ... 코드 중략
+
+void CCollisionManager::Update()
+{
+	for(int iRow = 0; iRow < g_All_ObjectTypeCount; ++iRow)
+	{
+		for (int iCol = iRow; iCol < g_All_ObjectTypeCount; ++iCol)
+		{
+			if (m_CheckBit[iRow] & (1 << iCol))
+			{
+				UpdateGroup((ObjectType)iRow, (ObjectType)iCol);
+			}
+		}
+	}
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={520} src="/img/reviews/katana/04-collision/bit.png" caption="타입 쌍 등록과 검사" />
+
+타입 번호가 작은 쪽을 행으로 정렬해, (A, B)와 (B, A)가 같은 비트를 가리키게 했습니다. `Update`는 대각선 위쪽만 돌면서 비트가 켜진 쌍만 검사하므로, 등록하지 않은 타입 쌍은 순회조차 하지 않습니다(<FigRef n={2} />).
+
+#### B. Enter·Stay·Exit 판별
+
+<Editor file="CCollisionManager.cpp" fn="UpdateGroup(...)">
+
+```cpp
+CColliderComponent *LeftColComp = static_cast<CColliderComponent *>(leftcomp);
+CColliderComponent *RightColComp = static_cast<CColliderComponent *>(rightcomp);
+
+Collider_ID ID;
+ID.Left_ID = LeftColComp->GetUniqueID();
+ID.Right_ID = RightColComp->GetUniqueID();
+
+itr = m_CollideInfo.find(ID.ID);
+if (itr == m_CollideInfo.end())
+{
+	m_CollideInfo.insert(unordered_map<unsigned long long, bool>::value_type(ID.ID, false));
+	itr = m_CollideInfo.find(ID.ID);
+}
+
+bool bCollided = itr->second;
+if (IsCollision(LeftColComp, RightColComp))
+{
+	if (bCollided) // 이전에도 충돌 현재도 충돌
+	{
+		LeftColComp->OnCollision(RightColComp);
+		RightColComp->OnCollision(LeftColComp);
+	}
+	else // 이전에는 충돌안했었음
+	{
+		LeftColComp->OnCollisionEnter(RightColComp);
+		RightColComp->OnCollisionEnter(LeftColComp);
+		itr->second = true;
+	}
+}
+else
+{
+	if (bCollided)
+	{
+		LeftColComp->OnCollisionExit(RightColComp);
+		RightColComp->OnCollisionExit(LeftColComp);
+		itr->second = false;
+	}
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={420} src="/img/reviews/katana/04-collision/key.png" caption="두 충돌체 ID로 만든 64비트 키" />
+
+<Fig n={4} white max={560} src="/img/reviews/katana/04-collision/ese.png" caption="이번 프레임과 이전 프레임 충돌 여부로 판별" />
+
+두 충돌체의 고유 ID를 나란히 붙인 쌍 키로 이전 상태를 찾고(<FigRef n={3} />), 이번 프레임 충돌 여부와 조합해 Enter·Stay·Exit를 고릅니다(<FigRef n={4} />). 이벤트는 양쪽 충돌체에 서로를 인자로 넘겨 호출합니다.
+
+</Tab>
+<Tab>
+
+두 충돌체 ID `Left_ID`·`Right_ID`(32비트 두 개)를 같은 메모리에서 64비트 정수 `ID` 하나로 읽는 공용체입니다.
+
+#### A. 64비트 쌍 키
+
+<Editor file="CCollisionManager.h" fn="Collider_ID">
+
+```cpp
+union Collider_ID
+{
+	struct
+	{
+		unsigned int Left_ID;
+		unsigned int Right_ID;
+	};
+	// ... 코드 중략
+	unsigned long long ID;
+};
+```
+
+</Editor>
+
+<Editor file="CCollisionManager.h" fn="CCollisionManager">
+
+```cpp
+uint16_t m_CheckBit[g_All_ObjectTypeCount];
+unordered_map<unsigned long long, bool> m_CollideInfo;
+```
+
+</Editor>
+
+쌍 키가 정수이므로, 정렬이 필요한 `map`보다 해싱하는 `unordered_map`이 빠르다고 판단했습니다. 상태를 쌍 단위로 들고 있어 이전 충돌 여부는 조회 한 번으로 찾습니다.
+
+</Tab>
+<Tab>
+
+충돌 영역(`m_OffsetPos`·`m_Size`)과 고유 ID `m_iUniqueID`를 갖고, 판정 결과를 소유 오브젝트의 같은 이름 가상 함수로 전달하는 컴포넌트입니다. 최종 위치 `m_FinalPos`는 `Late_Update`에서 소유자 위치에 오프셋을 더해 갱신합니다.
+
+#### A. 고유 ID와 위치
+
+<Editor file="CColliderComponent.cpp" fn="CColliderComponent(...), Late_Update()">
+
+```cpp
+unsigned int CColliderComponent::_iNextID = 0;
+
+CColliderComponent::CColliderComponent(CObject *_pOwner)
+	: CComponent(_pOwner), m_iUniqueID(_iNextID++), m_iCollide(0)
+{
+	::ZeroMemory(&m_OffsetPos, sizeof(Vector2));
+	::ZeroMemory(&m_FinalPos, sizeof(Vector2));
+}
+// ... 코드 중략
+
+void CColliderComponent::Late_Update()
+{
+	assert(m_iCollide >= 0);
+	m_FinalPos = GetOwner()->GetPos() + m_OffsetPos;
+}
+```
+
+</Editor>
+
+충돌체는 포인터가 아니라 고유 ID로 식별합니다. 생성자에서 정적 카운터로 ID를 부여해 겹치지 않고, 두 ID만 있으면 쌍 키를 만들 수 있습니다.
+
+#### B. 이벤트 전달
+
+<Editor file="CColliderComponent.cpp" fn="OnCollision(...), OnCollisionEnter(...), OnCollisionExit(...)">
+
+```cpp
+void CColliderComponent::OnCollision(CColliderComponent *_pOther)
+{
+	GetOwner()->OnCollision(_pOther);
+}
+
+void CColliderComponent::OnCollisionEnter(CColliderComponent *_pOther)
+{
+	++m_iCollide;
+	GetOwner()->OnCollisionEnter(_pOther);
+}
+
+void CColliderComponent::OnCollisionExit(CColliderComponent *_pOther)
+{
+	--m_iCollide;
+	GetOwner()->OnCollisionExit(_pOther);
+}
+```
+
+</Editor>
+
+충돌체는 받은 이벤트를 소유 오브젝트로 넘기기만 합니다. 충돌 뒤에 무엇을 할지는 오브젝트가 가상 함수를 오버라이드해 정합니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**한 번이라도 검사한 쌍은 모두 충돌 기록 맵에 남았습니다.** 한 번도 충돌하지 않은 쌍도 처음 검사할 때 `false`로 맵에 들어가서, 맵 크기가 검사한 쌍의 수만큼 커집니다. 충돌이 실제로 일어난 쌍만 기록했다면 메모리와 조회 비용을 함께 줄일 수 있었습니다.
+
+남은 개선점입니다.
+
+- 등록된 타입 쌍 안에서는 공간 분할 없이 활성 오브젝트를 모두 짝지어 AABB를 검사합니다.
+- `CheckGroup`은 비트를 토글하므로 같은 쌍을 두 번 등록하면 오히려 꺼집니다. 켜기와 끄기를 나눈 함수가 더 안전합니다.

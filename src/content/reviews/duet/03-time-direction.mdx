@@ -1,0 +1,226 @@
+---
+project: duet
+order: 3
+title: 시간 연출 (히트스톱 · 슬로모션)
+topic: 시간 제어
+chips: [Hit Stop, Time Scale]
+lineage:
+  label: 카타나 제로 모작 — 시간 제어
+  href: /reviews/katana/05-time-control/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+히트스톱은 공격이 맞는 순간 게임 시간을 아주 짧게 멈춰 타격감을 주는 연출이고, 슬로모션은 일정 시간 동안 시간 배율을 낮추는 연출입니다. 둘 다 프레임 시간에 배율을 곱해 만들기 때문에, 연출이 언제 끝나는지는 배율이 적용되지 않은 실제 시간으로 재야 합니다.
+
+연출은 "몇 초 동안"이라는 요청으로 받아 우선순위로 합치므로, 연출을 거는 코드는 배율 계산을 신경 쓰지 않습니다. 오브젝트 역시 받은 시간만 쓰면 되어 히트스톱·슬로모션의 존재를 몰라도 됩니다.
+
+## 2. 문제
+
+> 카타나 제로 모작의 슬로모션은 전역 배율 하나를 바꾸는 방식이었고, 게이지나 제한 시간처럼 실제 시간으로 흘러야 하는 값은 저마다 따로 처리했습니다. 최종 프로젝트에서는 타격감을 위해 명중 순간 화면을 잠깐 멈추는 히트스톱과 연출용 슬로모션·정지를 함께 씁니다. 두 연출이 겹치면 어느 쪽이 이기는지, 연출이 끝나는 시점을 무엇으로 재는지, UI처럼 멈추면 안 되는 대상을 어떻게 구분할지를 한곳에서 정해야 했습니다.
+
+## 3. 구조 요약
+
+시간 배율 매니저가 프레임 시작에 실제 시간을 받아 배율 적용 시간을 계산하고, 엔진은 두 시간을 함께 아래로 넘깁니다. 연출을 거는 쪽은 "몇 초 동안 멈춤/느리게"만 요청하고, 배율이 겹칠 때의 처리는 매니저가 맡습니다.
+
+<Fig n={1} white max={540} src="/img/reviews/duet/03-time-direction/class.png" caption="시간 연출 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CTimeScale_Manager` | 히트스톱·슬로모션 요청 보관, 우선순위로 최종 배율 계산 |
+| `THitStop` / `TSlowMo` | 연출 하나의 남은 시간(실제 시간 기준)과 배율 |
+| `CGameInstance::Update_Engine` | 프레임마다 실제 시간·배율 적용 시간을 계산해 각 시스템에 전달 |
+| `CObject_Manager` / `CLayer` | 레이어의 시간 도메인에 맞는 시간을 골라 업데이트 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['배율 결정', '시간 도메인']}>
+<Tab>
+
+시간 배율을 결정하는 매니저입니다. 연출은 시간을 정해 거는 요청(`Request_HitStop`, `Request_SloMo`)과, 끌 때까지 유지하는 켜기·끄기(`Active_TimeStop`, `Active_SloMo`) 두 가지로 받습니다. 매 프레임 `Begin_Frame`이 기본 배율(`m_fGlobalScale`, 0~4배)과 함께 우선순위를 따져 최종 배율을 정합니다.
+
+#### A. 연출 요청
+
+<Editor file="TimeScale_Manager.h" fn="THitStop, TSlowMo">
+
+```cpp
+#define MAX_TIMESCALE 4.f
+
+struct THitStop
+{
+	TIME_LINE time;
+	_bool Is_Active() const { return time.Is_Active(); }
+};
+
+struct TSlowMo
+{
+	TIME_LINE time;
+	_float fScale{ 1.f };
+	_bool Is_Active() const { return time.Is_Active(); }
+};
+```
+
+</Editor>
+
+<Editor file="TimeScale_Manager.cpp" fn="Request_HitStop(...), Request_SloMo(...), Active_TimeStop()">
+
+```cpp
+void CTimeScale_Manager::Request_HitStop(_float fUnscaledDurationTime)
+{
+	if (fUnscaledDurationTime > m_tHitstop.time.Get_Remain())
+		m_tHitstop.time.Start(fUnscaledDurationTime);
+}
+
+void CTimeScale_Manager::Request_SloMo(_float fScale, _float fUnscaledDurationTime)
+{
+	m_tSloMo.fScale = fScale;
+	m_tSloMo.time.Start(fUnscaledDurationTime);
+}
+
+
+void CTimeScale_Manager::Active_TimeStop()
+{
+	if (m_tHitstop.Is_Active() == true)
+		return;
+
+	m_tHitstop.time.Start(FLT_MAX);
+}
+```
+
+</Editor>
+
+히트스톱은 여러 대상이 동시에 맞으면 짧은 간격으로 여러 번 요청될 수 있습니다. 새 요청이 남은 시간보다 길 때만 다시 시작하므로, 짧은 요청이 이미 걸린 긴 히트스톱을 줄이지 않고 요청이 몰려도 시간이 쌓이지 않습니다. 끌 때까지 유지하는 정지는 같은 타이머를 무한 시간으로 시작해 재사용합니다.
+
+#### B. 실제 시간 타이머와 우선순위
+
+<Editor file="TimeScale_Manager.cpp" fn="Begin_Frame(...)">
+
+```cpp
+_float CTimeScale_Manager::Begin_Frame(_float fUnscaledDeltaTime)
+{
+	m_fUnscaledDeltaTime = fUnscaledDeltaTime;
+
+	if (m_tHitstop.Is_Active() == true)
+		m_tHitstop.time.Tick(fUnscaledDeltaTime);
+	if (m_tSloMo.Is_Active() == true)
+		m_tSloMo.time.Tick(fUnscaledDeltaTime);
+
+	// HitStop > SloMo > Global
+	if (m_tHitstop.Is_Active() == true)
+		m_fAppliedScale = 0.0f;
+	else if (m_tSloMo.Is_Active() == true)
+		m_fAppliedScale = std::clamp(m_tSloMo.fScale, 0.f, 1.f) * m_fGlobalScale;
+	else
+		m_fAppliedScale = m_fGlobalScale;
+
+	m_fScaledDeltaTime = m_fUnscaledDeltaTime * m_fAppliedScale;
+	return m_fScaledDeltaTime;
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={620} src="/img/reviews/duet/03-time-direction/timer.png" caption="연출 타이머는 배율 적용 전 시간으로 흐름" />
+
+연출의 남은 시간은 배율이 적용되기 전 시간으로 줄여 나갑니다(<FigRef n={2} />). 배율이 적용된 시간으로 재면 배율 0인 히트스톱은 영원히 끝나지 않고, 슬로모션도 설정한 시간보다 길게 늘어집니다.
+
+<Fig n={3} white max={560} src="/img/reviews/duet/03-time-direction/priority.png" caption="히트스톱 > 슬로모션 > 전역 배율 순으로 최종 배율 결정" />
+
+타이머를 줄인 다음에는 히트스톱 > 슬로모션 > 전역 배율 순으로, 활성화된 연출 가운데 하나만 골라 이번 프레임의 배율로 씁니다(<FigRef n={3} />).
+
+</Tab>
+<Tab>
+
+계산된 두 시간이 엔진과 오브젝트에 전달되는 경로입니다. `Update_Engine`이 실제 시간과 배율 적용 시간을 함께 내려보내면 `CObject_Manager::Update`가 레이어 도메인에 맞는 쪽을 고릅니다. UI처럼 연출 중에도 움직여야 하는 레이어는 `Set_Layer_UnscaledDomain`으로 실제 시간 도메인에 둡니다.
+
+#### A. 두 시간의 전달
+
+<Editor file="GameInstance.cpp" fn="Update_Engine(...)">
+
+```cpp
+void CGameInstance::Update_Engine(_float fTimeDelta)
+{
+	_float fUnscaledTimeDelta = fTimeDelta;
+	_float fScaledTimeDelta = m_pTimeScale_Manager->Begin_Frame(fUnscaledTimeDelta);
+
+	m_pSound_Manager->Update(fTimeDelta);
+	m_pInput_Manager->Update();
+	m_pLevel_Manager->Update(fUnscaledTimeDelta);
+	m_pObject_Manager->Update_Priority(fUnscaledTimeDelta, fScaledTimeDelta);
+	m_pObject_Manager->Update(fUnscaledTimeDelta, fScaledTimeDelta);
+	m_pObject_Manager->Update_Late(fUnscaledTimeDelta, fScaledTimeDelta);
+
+	// 피직스 시뮬레이트
+	if (fScaledTimeDelta > g_XMEpsilon.f[0])
+		m_pPhysics_Module->StepPhysics(fScaledTimeDelta);
+	// ... 코드 중략
+	// 메인카메라 업데이트#ifdef _DEBUG
+	m_pCamera_Manager->Update_AccTime_ForShader(fScaledTimeDelta);
+	m_pCamera_Manager->Update_ViewMatrix();
+	// ... 코드 중략
+	// 업데이트 후 마지막
+	m_pObject_Manager->Ready_Before_Render(fUnscaledTimeDelta, fScaledTimeDelta);
+}
+```
+
+</Editor>
+
+<Editor file="Object_Manager.cpp" fn="Update(...), Set_UnscaledDomain(...)">
+
+```cpp
+void CObject_Manager::Update(const _float fUnscaledTimeDelta, const _float fScaledTimeDelta)
+{
+	for (auto& Element : m_pLayers)
+	{
+		for (auto& [tag, Layer] : Element)
+		{
+			_bool bScaled = Layer->Is_ScaledDomain();
+			Layer->Update(bScaled == true ? fScaledTimeDelta : fUnscaledTimeDelta);
+		}
+	}
+}
+// ... 코드 중략
+
+HRESULT CObject_Manager::Set_UnscaledDomain(_uint iLevelIndex, const wstring& wstrLayerTag)
+{
+	CLayer* pFindLayer = Find_Layer(iLevelIndex, wstrLayerTag);
+	if (pFindLayer == nullptr)
+		return E_FAIL;
+
+	pFindLayer->Set_UnscaledDomain();
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={820} src="/img/reviews/duet/03-time-direction/domain.png" caption="레이어마다 배율 적용 시간 / 실제 시간 중 하나를 받음" />
+
+오브젝트 업데이트는 두 시간을 모두 받은 뒤, 레이어의 시간 도메인에 따라 하나만 골라 내려보냅니다(<FigRef n={4} />). 오브젝트 코드는 받은 시간만 쓰면 되므로 히트스톱·슬로모션을 몰라도 됩니다. 물리 시뮬레이션은 배율 적용 시간이 0에 가까우면 아예 건너뛰어, 히트스톱 동안에는 물리도 함께 멈춥니다. 셰이더용 누적 시간도 배율 적용 시간으로 쌓기 때문에 이펙트 애니메이션이 같이 느려집니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**연출마다 칸이 하나뿐이라 요청끼리 덮어씁니다.** 슬로모션은 새 요청이 오면 배율과 시간을 그대로 덮어써서, 짧은 요청 하나가 진행 중인 긴 슬로모션을 바꿔 버립니다. 끌 때까지 유지하는 정지도 히트스톱과 같은 타이머를 쓰기 때문에, 정지를 끄는 순간 걸려 있던 히트스톱까지 함께 사라집니다. 요청마다 핸들을 돌려주고, 목록에서 우선순위가 가장 높은 것을 고르는 구조였어야 합니다.
+
+남은 개선점입니다.
+
+- 시간 도메인이 레이어 단위의 "배율 적용/실제 시간" 둘뿐이라, 적만 느려지는 식의 대상별 배율을 줄 수 없습니다. 주석에 적어 둔 "레이어별 배율" 계획까지는 가지 못했습니다.
+- 물리를 배율 적용 시간으로 진행해 슬로모션 중에는 스텝 크기가 프레임마다 달라집니다. 주석대로 고정 틱으로 돌리고 입력·외력에만 배율을 적용하는 편이 안정적입니다.
+- 배율이 즉시 바뀌어 슬로모션의 시작과 끝이 끊겨 보일 수 있으므로, 짧게 보간하면 자연스러워집니다.

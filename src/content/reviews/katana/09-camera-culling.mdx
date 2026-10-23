@@ -1,0 +1,291 @@
+---
+project: katana
+order: 9
+title: 카메라 컬링
+topic: 컬링·공간 분할
+chips: [Culling, AABB]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+컬링은 화면에 보이지 않는 대상을 그리기 전에 걸러 내는 기법입니다. 2D에서는 카메라가 보는 사각형과 오브젝트의 사각형(AABB)이 겹치는지 비교하는 것이 가장 단순한 방법이고, 대상이 많아지면 공간 분할 구조로 비교 횟수 자체를 줄입니다.
+
+화면 밖 오브젝트의 렌더 호출을 건너뛰면서, 모든 오브젝트를 그리던 초기에 떨어지던 프레임 문제를 줄였습니다.
+
+## 2. 문제
+
+> 맵은 화면보다 훨씬 크고, 그 위에 지형·몬스터·이펙트가 넓게 깔려 있습니다. GDI는 CPU로 그리기 때문에 그리기 호출 하나하나가 비싼데, 처음에는 화면 밖의 오브젝트까지 모두 그려 실제로 프레임이 떨어졌습니다. 카메라는 플레이어를 따라가되, 맵 가장자리에서는 맵 밖이 보이지 않도록 멈춰야 했습니다.
+
+## 3. 구조 요약
+
+카메라 매니저는 화면 오프셋 하나만 관리하고, 모든 오브젝트는 이 오프셋으로 화면 좌표를 구합니다. 오브젝트 매니저와 풀은 그리기 직전에 카메라에게 화면 안인지 묻고, 밖이면 렌더 호출을 건너뜁니다.
+
+<Fig n={1} white max={480} src="/img/reviews/katana/09-camera-culling/class.png" caption="카메라 컬링 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CCameraManager` | 따라갈 대상, 화면 오프셋 계산과 맵 경계 고정, 화면 안 판정 |
+| `CObjectManager` | 레이어 순서대로 그리면서 화면 밖 오브젝트 건너뛰기 |
+| `CObjectPool<T>` | 활성 구간의 풀 오브젝트에 같은 판정 적용 |
+| `CScene` | 매 프레임 오브젝트 갱신 뒤 카메라 갱신 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '카메라', '렌더 루프']}>
+<Tab>
+
+씬은 카메라에 맵 크기와 따라갈 대상만 넘기고, 배경도 같은 오프셋으로 그립니다.
+
+#### A. 카메라 설정과 갱신 시점
+
+<Editor file="CGameScene.cpp" fn="Initialize()">
+
+```cpp
+// MapData
+{
+	FileMgr->Load_LineData(SceneType::GAME_STAGE_1);
+	FileMgr->Load_RectData(SceneType::GAME_STAGE_1);
+	SetBackgroundBmp(RscMgr->GetBitmapImage(L"Stage_1_Map"));
+	SetSkyLineBmp(RscMgr->GetBitmapImage(L"Stage_1_SkyLine"));
+	CmrMgr->SetMapSize(GetBackgroundBmp()->GetSize());
+}
+
+// Player
+{
+	if (!ObjMgr->Get_Instance()->GetPlayer())
+	{
+		ObjMgr->CreateObject<CPlayer>([](CObject *_p) {
+			_p->SetPos({ 128.f, 660.f });
+			CCameraManager::Get_Instance()->SetTarget(_p);
+			});
+	}
+}
+```
+
+</Editor>
+
+<Editor file="CScene.cpp" fn="Update(...)">
+
+```cpp
+void CScene::Update(const float _fDeltaTime)
+{
+	if (!m_bStart)
+		return;
+
+	CObjectManager::Get_Instance()->Update(_fDeltaTime);
+	// ... 코드 중략
+	UIUpdate(_fDeltaTime);
+	CCameraManager::Get_Instance()->Update(_fDeltaTime);
+```
+
+</Editor>
+
+씬이 시작될 때 맵 크기와 따라갈 대상을 넘기고, 매 프레임 오브젝트 갱신이 끝난 뒤에 카메라를 갱신합니다. 오프셋은 이번 프레임에 움직인 플레이어 위치를 기준으로 정해집니다.
+
+#### B. 배경과 시차 효과
+
+<Editor file="CGameScene.cpp" fn="Render(...)">
+
+```cpp
+if (m_pSkyLineBmp)
+{
+	::BitBlt(
+		hDC,
+		(int)-CCameraManager::Get_Instance()->GetDiff().x * 0.1,
+		(int)-CCameraManager::Get_Instance()->GetDiff().y - 75.f,
+		(int)m_pSkyLineBmp->GetSize().x,
+		(int)m_pSkyLineBmp->GetSize().y,
+		m_pSkyLineBmp->Get_DC(),
+		0, 0,
+		SRCCOPY);
+}
+
+::TransparentBlt(
+	hDC,
+	(int)-CCameraManager::Get_Instance()->GetDiff().x,
+	(int)-CCameraManager::Get_Instance()->GetDiff().y,
+	(int)m_pBackgroundBmp->GetSize().x,
+	(int)m_pBackgroundBmp->GetSize().y,
+	m_pBackgroundBmp->Get_DC(),
+	0, 0,
+	(int)m_pBackgroundBmp->GetSize().x,
+	(int)m_pBackgroundBmp->GetSize().y,
+	RGB(0, 0, 0));
+```
+
+</Editor>
+
+배경도 같은 오프셋으로 그립니다. 하늘 배경만 오프셋의 10%만큼 움직여 멀리 있는 것처럼 보이게 했습니다.
+
+</Tab>
+<Tab>
+
+화면 왼쪽 위의 월드 좌표인 오프셋 `m_Diff` 하나로 월드 좌표와 화면 좌표를 오가고, `IsInCamera`로 화면 안에 있는지 판정합니다. 오프셋은 `CalDiff()`가 따라갈 대상 `m_pTarget`을 기준으로 계산하고, 맵 크기 `m_CurMapSize` 안으로 제한합니다.
+
+#### A. 오프셋과 맵 경계 고정
+
+<Editor file="CCameraManager.cpp" fn="Update(...), CalDiff()">
+
+```cpp
+void CCameraManager::Update(const float _fDeltaTime)
+{
+	if (m_pTarget)
+	{
+		m_LookAt = m_pTarget->GetPos();
+	}
+
+	// 화면 중앙좌표와 카메라 LooAt좌표간의 차이값 계산
+	CalDiff();
+}
+// ... 코드 중략
+
+void CCameraManager::CalDiff()
+{	
+	m_Diff = { m_LookAt - Constants::Resolution_Half };
+	m_PrevLookAt = m_LookAt;
+	if (m_Diff.x < 0)
+		m_Diff.x = 0.f;
+	else if (m_Diff.x > m_CurMapSize.x - Constants::Resolution.x)
+		m_Diff.x = m_CurMapSize.x - Constants::Resolution.x;
+
+	if (m_Diff.y < 0)
+		m_Diff.y = 0.f;
+	else if (m_Diff.y > m_CurMapSize.y - Constants::Resolution.y)
+		m_Diff.y = m_CurMapSize.y - Constants::Resolution.y;
+// ... 코드 중략
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={440} src="/img/reviews/katana/09-camera-culling/diff.png" caption="바라보는 점과 화면 오프셋, 맵 경계 고정" />
+
+바라보는 점이 화면 가운데에 오도록, 그 위치에서 화면 절반을 뺀 값을 오프셋으로 씁니다. 오프셋이 0보다 작거나 맵 크기에서 화면 크기를 뺀 값보다 크면 그 값에 고정하므로, 맵 가장자리에서는 카메라가 멈추고 플레이어만 움직입니다(<FigRef n={2} />).
+
+#### B. 화면 안 판정
+
+<Editor file="CCameraManager.cpp" fn="IsInCamera(...)">
+
+```cpp
+bool CCameraManager::IsInCamera(const Vector2 &Pos, const Vector2 &Size)
+{
+	Vector2 RenderPos = Pos - m_Diff;
+	float fDistance = 100.f;
+
+	return !(RenderPos.x + Size.x * 0.5f + fDistance < 0 || RenderPos.x - Size.x * 0.5f - fDistance > Constants::Resolution.x
+		|| RenderPos.y + Size.y * 0.5f + fDistance < 0 || RenderPos.y - Size.y * 0.5f - fDistance > Constants::Resolution.y);
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={480} src="/img/reviews/katana/09-camera-culling/test.png" caption="화면 사각형과 오브젝트 AABB 비교" />
+
+오브젝트 위치를 화면 좌표로 바꾼 뒤, AABB가 화면 사각형 밖에 완전히 있는지 네 방향으로 확인합니다(<FigRef n={3} />). 여유를 100px 두어, 가장자리에서 오브젝트가 갑자기 나타나거나 잘려 보이지 않게 했습니다.
+
+</Tab>
+<Tab>
+
+`Render`는 정적 오브젝트(`m_StaticObjects`), 레이어별 이펙트(`m_pEffect`), 타입별 풀을 배경 쪽부터 앞쪽 순서로 그리면서, 오브젝트마다 그리기 직전에 화면 판정을 합니다.
+
+#### A. 레이어별 렌더와 판정
+
+<Editor file="CObjectManager.cpp" fn="Render(...)">
+
+```cpp
+void CObjectManager::Render(HDC hDC)
+{
+	for (int i = 0; i < g_Static_ObjectTypeCount; ++i)
+	{
+		for (auto &element : m_StaticObjects[i])
+		{
+			if (element)
+			{
+				if (CCameraManager::Get_Instance()->IsInCamera(element->GetPos(), element->GetSize()))
+				{
+					element->Render(hDC);
+				}
+			}
+		}
+	}
+
+	for (auto &element : m_pEffect[(uint8_t)EffectLayer::ONBACKGROUND])
+	{
+		if (CCameraManager::Get_Instance()->IsInCamera(element->GetPos(), element->GetSize()))
+			element->Render(hDC);
+	}
+	// ... 코드 중략
+	m_PompPool.Render(hDC);
+	m_GangsterPool.Render(hDC);
+	m_GruntPool.Render(hDC);
+	// ... 코드 중략
+	for (auto &element : m_pEffect[(uint8_t)EffectLayer::PLAYER])
+	{
+		if (CCameraManager::Get_Instance()->IsInCamera(element->GetPos(), element->GetSize()))
+			element->Render(hDC);
+	}
+
+	m_BulletPool.Render(hDC);
+
+	for (auto &element : m_pEffect[(uint8_t)EffectLayer::AFTERPLAYER])
+	{
+		if (CCameraManager::Get_Instance()->IsInCamera(element->GetPos(), element->GetSize()))
+			element->Render(hDC);
+	}
+// ... 코드 중략
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={560} src="/img/reviews/katana/09-camera-culling/loop.png" caption="레이어별 렌더 순서와 판정 위치" />
+
+정적 오브젝트, 배경 쪽 이펙트, 몬스터, 플레이어, 앞쪽 이펙트 순으로 그리며, 어느 레이어든 그리기 직전에 같은 판정을 먼저 거칩니다(<FigRef n={4} />). 오브젝트는 자기가 화면 안인지 신경 쓰지 않고, 그리는 쪽이 한곳에서 걸러 냅니다.
+
+#### B. 풀 오브젝트
+
+<Editor file="CObjectPool.h" fn="Render(...)">
+
+```cpp
+template<IsObject T>
+inline void CObjectPool<T>::Render(HDC hDC)
+{
+	for (int i = 0; i <= m_iActiveTopIndex; ++i)
+	{
+		if (CCameraManager::Get_Instance()->IsInCamera(m_Objects[i]->GetPos(), m_Objects[i]->GetSize()))
+		{
+			m_Objects[i]->Render(hDC);
+		}
+	}
+}
+```
+
+</Editor>
+
+풀은 활성 구간(`0 ~ m_iActiveTopIndex`)만 돌면서 같은 판정을 거칩니다. 회수된 오브젝트는 애초에 순회하지 않고, 활성 오브젝트도 화면 밖이면 그리지 않습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**컬링 비용이 오브젝트 수만큼 그대로 늘어납니다.** 매 프레임 모든 오브젝트를 하나씩 검사하므로, 판정 자체는 가벼워도 맵이 커질수록 화면 밖 오브젝트를 걸러 내는 데만 드는 시간이 늘어납니다. 공간을 격자나 트리로 나눠, 화면과 겹치는 칸의 오브젝트만 꺼내 검사했어야 했습니다.
+
+남은 개선점입니다.
+
+- 가장 큰 그림인 배경은 맵 전체 크기로 `TransparentBlt`를 호출합니다. 오프셋 위치에서 화면 크기만큼만 잘라 그려야 합니다.
+- 레이어마다 같은 판정 코드가 반복되므로, 레이어 배열을 순서대로 도는 루프 하나로 묶을 수 있습니다.

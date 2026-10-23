@@ -1,0 +1,416 @@
+---
+project: katana
+order: 6
+title: 스프라이트시트 생성
+topic: 툴·데이터
+chips: [std::filesystem, std::regex, GDI+, Sprite Sheet]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+스프라이트시트는 여러 프레임 이미지를 한 장에 모아 두고, 그릴 때 잘라 올 영역만 바꿔 프레임을 넘기는 방식입니다. 이미지를 바꾸지 않고 위치 계산만으로 애니메이션을 재생할 수 있고, 반전·회전처럼 비싼 가공도 미리 끝내 둘 수 있습니다.
+
+반전·회전을 미리 그려 둔 시트 덕분에, 실행 중에는 이미지를 돌리지 않고 잘라 올 위치만 계산해 그립니다.
+
+## 2. 문제
+
+> 원작 리소스는 애니메이션마다 폴더 하나에 프레임 PNG가 번호별로 나뉘어 있습니다. 이 PNG를 매 프레임 GDI+로 그리면 느리고, 베기 이펙트처럼 방향에 따라 돌려 그려야 하는 이미지는 실시간 회전 비용까지 더해집니다. 게다가 폴더의 파일을 이름 순서로 읽으면 `0, 1, 10, 11, 2, …` 순서가 되어, 프레임이 10장을 넘는 애니메이션은 순서가 뒤섞였습니다.
+
+## 3. 구조 요약
+
+파일 매니저는 정렬된 프레임 목록까지만 만들고, 시트 합성과 보관은 리소스 매니저가 키 단위로 맡습니다. 애니메이터는 시트 종류와 상관없이 프레임 번호·방향·각도로 잘라 올 위치만 계산합니다.
+
+<Fig n={1} white max={520} src="/img/reviews/katana/06-sprite-sheet/class.png" caption="스프라이트시트 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `CFileManager` | 폴더의 파일 수집, 파일명 분해, 번호 정렬, PNG 로드 |
+| `CResourceManager` | 시트 합성(일반·회전·색 변환), 키로 보관 |
+| `CAnimationBitmap` | 시트 이미지와 프레임 정보(크기·개수·재생 시간·각도 단계) |
+| `CAnimatorComponent` | 현재 프레임 진행, 시트에서 잘라 올 위치 계산 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '파일 정렬', '시트 합성', '각도 → 행', '시트 재생']}>
+<Tab>
+
+리소스는 게임이 시작될 때 한 번 등록하고, 오브젝트는 키로 재생만 요청합니다.
+
+#### A. 등록
+
+<Editor file="CResourceManager.cpp" fn="Initialize()">
+
+```cpp
+AddRotatedAnimation(L"..\\Resource\\Effect\\spr_jumpcloud", L"Jump_Effect", false, false, 90.f);
+// ... 코드 중략
+
+AddRotatedAnimation(L"..\\Resource\\Effect\\spr_slash", L"Player_Slash_Effect", false, false, 15.f, DEFAULT_ANIM_DURATION * 0.4f);
+// ... 코드 중략
+
+AddAnimation(L"..\\Resource\\Player\\Zero\\spr_idle", L"Player_Idle", true, true);
+AddAnimation(L"..\\Resource\\Player\\Zero\\spr_Run", L"Player_Run", true, true, DEFAULT_ANIM_DURATION * 0.7f);
+AddAnimation(L"..\\Resource\\Player\\Zero\\spr_attack", L"Player_Attack", true, true, DEFAULT_ANIM_DURATION * 0.3f);
+```
+
+</Editor>
+
+폴더 경로와 키만 넘기면 등록이 끝납니다. 플레이어처럼 좌우가 필요한 애니메이션은 반전 행을, 베기 이펙트는 15도 단위 회전 시트를 만듭니다.
+
+#### B. 회전 이펙트 재생
+
+<Editor file="CEffect.cpp" fn="PlayRotaionAnim(...)">
+
+```cpp
+float fAngleRad = atan2f(GetDir().y, GetDir().x);
+
+float fDegree = fAngleRad * 180.f / Constants::fPi;
+
+CAnimatorComponent *AnimComp = static_cast<CAnimatorComponent *>(GetComponent<CAnimatorComponent>());
+AnimComp->SetRotationAngle(fDegree);
+// ... 코드 중략
+
+AnimComp->PlayAnimation(key_in, _bLoop, true);
+```
+
+</Editor>
+
+<Editor file="CKatanaComponent.cpp" fn="PlayerAttack()">
+
+```cpp
+Vector2 RealMousePos = CCameraManager::Get_Instance()->GetRealPos(MOUSE_POS);
+Vector2 OwnerPos = GetOwner()->GetPos();
+Vector2 WeaponDir = RealMousePos - OwnerPos;
+WeaponDir.Normalize();
+SetDir(WeaponDir);
+// ... 코드 중략
+
+CObjectManager::Get_Instance()->CreateObject<CEffect>(
+	[this](CEffect *pEffect)
+	{
+		pEffect->Set(GetDir(), GetOwner()->GetPos(), GetOwner()->GetSize());
+pEffect->SetFollow(GetOwner());
+pEffect->PlayRotaionAnim(L"Player_Slash_Effect", false);
+pEffect->SetEffectLayer(EffectLayer::AFTERPLAYER);
+	});
+```
+
+</Editor>
+
+마우스 방향으로 정한 베기 방향을 각도로 바꿔 넘기면, 애니메이터가 그 각도에 맞는 행을 골라 그립니다. 어느 방향으로 베어도 실행 중에 이미지를 돌리지 않습니다.
+
+</Tab>
+<Tab>
+
+`SetAnimDataFromFolder`는 애니메이션 폴더를 받아, 번호 순으로 정렬한 프레임 비트맵 목록을 돌려줍니다. 파일명은 `AnimPathParts`에 태그·이름·번호로 나눠 담고, `PathSorter`가 번호를 정수로 바꿔 비교합니다.
+
+#### A. 수집과 파일명 분해
+
+<Editor file="CFileManager.cpp" fn="SetAnimDataFromFolder(...)">
+
+```cpp
+// 해당 파일 기준 폴더에 접근하기 위한 iterator
+std::filesystem::directory_iterator dir_Begin{ relPath_in };
+std::filesystem::directory_iterator dir_End{};
+
+// vector reserve용 폴더 내 파일카운팅
+size_t FileCount = std::count_if(dir_Begin, dir_End,
+    [](const std::filesystem::directory_entry &entry)->bool
+    { return entry.is_regular_file(); });
+
+// itr 다시 지정
+dir_Begin = std::filesystem::directory_iterator{ relPath_in };
+vector<AnimPathParts> Paths(FileCount);
+// ... 코드 중략
+
+std::wregex rule1{ L"^([[:alpha:]]+)_(.+)_([[:digit:]]+)$" };
+// ... 코드 중략
+
+for_each(Paths.begin(), Paths.end(), [&wstr_End, &rule1](AnimPathParts &element_in)->void {
+    std::wstring tmp{ element_in.wPath.stem() };
+
+// ()를 캡쳐단위로보고, 해당 캡쳐단위 만큼 wsmatch 배열에 저장
+if (std::wsmatch match; std::regex_match(tmp, match, rule1))
+{
+    // 0부터가 아닌 1부터 index 시작, 0은 문자열 전체
+    element_in.wTag = match[1];
+    element_in.wIndex = match[3];
+// ... 코드 중략
+}
+    });
+```
+
+</Editor>
+
+<Fig n={2} white max={480} src="/img/reviews/katana/06-sprite-sheet/sort.png" caption="파일명 분해와 번호 정렬" />
+
+`std::filesystem`으로 폴더의 파일을 모으고, 정규표현식으로 파일명을 `태그_이름_번호` 세 부분으로 나눕니다. 예를 들어 `spr_grunt_idle_0`은 `spr` / `grunt_idle` / `0`이 됩니다(<FigRef n={2} />).
+
+#### B. 번호 정렬
+
+<Editor file="CFileManager.cpp" fn="PathSorter, SetAnimDataFromFolder(...)">
+
+```cpp
+    typedef struct tagPathSorter
+    {
+        bool operator ()(AnimPathParts &data1, AnimPathParts &data2)
+        {
+            return std::stoi(data1.wIndex) < std::stoi(data2.wIndex);
+        }
+    }PathSorter;
+    // ... 코드 중략
+    // 문자열 정렬 오류는 10개이상일때만 일어나니 이때 체크!
+    if (Paths.size() > 10)
+        std::sort(Paths.begin(), Paths.end(), PathSorter());
+
+    // Gdiplus를 통해 PNG Bitmap 임시 로드
+    vector<Bitmap *> tmpBitmaps;
+    for (const auto &framePath : Paths)
+    {
+#undef new
+        Bitmap *bmp = new Gdiplus::Bitmap(framePath.wPath.c_str());
+#define new DBG_NEW
+        if (bmp->GetLastStatus() != Gdiplus::Ok)
+            throw std::runtime_error("Failed to load File!");
+
+        tmpBitmaps.push_back(bmp);
+    }
+```
+
+</Editor>
+
+문자열로 비교하면 `10`이 `2`보다 앞에 오기 때문에, 번호를 정수로 바꿔 비교합니다. 정렬한 순서대로 PNG를 읽어 돌려주므로, 시트를 만드는 쪽은 순서를 신경 쓰지 않아도 됩니다.
+
+</Tab>
+<Tab>
+
+프레임 목록으로 시트를 합성하고 `m_Animations`에 키로 보관해, 여러 오브젝트가 같은 시트를 함께 씁니다. 시트는 가로 한 줄(`Make_SpriteSheet`), 각도별 회전(`Make_RotatedSprtieSheet`), 보스 연출용 색 변환(`Make_CustomColorSpriteSheet`) 등으로 나뉩니다.
+
+#### A. 가로 시트와 반전 행
+
+<Editor file="CResourceManager.cpp" fn="AddAnimation(...)">
+
+```cpp
+void CResourceManager::AddAnimation(const path &relPath_in, const wstring &key_in, bool bReverse, bool _bAlpha, float fElapseTime, float _fStretch_X, float _fStretch_Y)
+{
+    vector<Bitmap*> bitmaps = CFileManager::Get_Instance()->SetAnimDataFromFolder(relPath_in, key_in, bReverse);
+
+    CAnimationBitmap* pNewAnimation = Make_SpriteSheet(bitmaps, key_in, bReverse, _fStretch_X, _fStretch_Y, _bAlpha, fElapseTime);
+
+    if (!pNewAnimation)
+        return;
+
+    m_Animations.insert(unordered_map<wstring, CAnimationBitmap *>::value_type(key_in, pNewAnimation));
+}
+```
+
+</Editor>
+
+<Editor file="CResourceManager.cpp" fn="Make_SpriteSheet(...)">
+
+```cpp
+const int sheetWidth = iFrameWidth * iFrameCount;
+// reverse면 밑에 한줄 추가
+const int sheetHeight = (_bReverse ? 2 : 1) * iFrameHeight;
+// ... 코드 중략
+// 읽어들인 file count만큼 그리기 옆으로 쫘악 그리기
+for (int i = 0; i < iFrameCount; ++i)
+{
+    int destX = i * iFrameWidth;
+    graphics.DrawImage(_Bitmaps[i], destX, 0, iFrameWidth, iFrameHeight);
+    // ... 코드 중략
+    if (_bReverse)
+    {
+        Gdiplus::RectF destRect(
+            static_cast<Gdiplus::REAL>(destX + iFrameWidth),   // destX 보정 (좌우 반전용)
+            static_cast<Gdiplus::REAL>(iFrameHeight),          // destY
+            static_cast<Gdiplus::REAL>(-iFrameWidth),          // destWidth → flip
+            static_cast<Gdiplus::REAL>(iFrameHeight));           // destHeight
+
+
+        graphics.DrawImage(
+            _Bitmaps[i],
+            destRect,
+            0.0f, 0.0f,                           // srcX, srcY
+            (Gdiplus::REAL)_Bitmaps[i]->GetWidth(),        // srcWidth
+            (Gdiplus::REAL)_Bitmaps[i]->GetHeight(),       // srcHeight
+            Gdiplus::UnitPixel,
+            nullptr);                             // ImageAttributes (없어도 됨)
+    // ... 코드 중략
+    }
+}
+
+// GDI+ Bitmap에서 HBITMAP 변환
+HBITMAP hSpriteSheet;
+sheet.GetHBITMAP(RGB(255, 255, 255), &hSpriteSheet);
+pNewAnim->Load_Bmp(hSpriteSheet);
+```
+
+</Editor>
+
+<Fig n={3} white max={460} src="/img/reviews/katana/06-sprite-sheet/sheet.png" caption="가로 시트와 좌우 반전 행" />
+
+프레임을 가로로 이어 붙여 한 장의 시트를 만들고, GDI에서 바로 쓸 수 있게 `HBITMAP`으로 바꿔 둡니다. 원작 리소스에는 한쪽 방향 이미지만 있어서, 좌우 반전이 필요한 애니메이션은 폭을 음수로 그려 뒤집은 프레임을 아래 행에 추가합니다(<FigRef n={3} />).
+
+#### B. 회전 시트
+
+<Editor file="CResourceManager.cpp" fn="Make_RotatedSprtieSheet(...)">
+
+```cpp
+// 회전시 이미지 잘려나가는거 방지를 위함
+int iDiag = sqrt(iFrameWidth * iFrameWidth + iFrameHeight * iFrameHeight);
+int iPaddedSize = static_cast<int>(ceil(iDiag)) + 1;
+// ... 코드 중략
+
+const int iRowCount = (int)(360.f / _fAngleStep);
+
+const int sheetWidth = iPaddedSize * iFrameCount;
+// 24방향
+const int sheetHeight = iPaddedSize * iRowCount;
+// ... 코드 중략
+
+for (int iRow = 0; iRow < iRowCount; ++iRow)
+{
+    // 15도씩 24개
+    float destAngle = (float)(iRow * _fAngleStep);
+
+    for (int i = 0; i < iFrameCount; ++i)
+    {
+        int destX = i * iPaddedSize;
+        int destY = iRow * iPaddedSize;
+        // 회전용 임시
+        Bitmap RotatedBmp{ iPaddedSize, iPaddedSize, PixelFormat32bppPARGB };
+        Gdiplus::Graphics g(&RotatedBmp);
+        g.Clear(Gdiplus::Color::Transparent);
+
+        g.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+        g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+
+        // 회전 중심
+        g.TranslateTransform(iPaddedSize * 0.5f, iPaddedSize * 0.5f);
+        g.RotateTransform(destAngle);
+        // 원본 이미지 중심
+        g.TranslateTransform(-iFrameWidth * 0.5f, -iFrameHeight * 0.5f);
+
+        // bitmap 회전시키고 그리기 (회전이 적용된 상태에서 그림)
+        g.DrawImage(_Bitmaps[i], 0, 0, iFrameWidth, iFrameHeight);
+
+        // 시트에 그리기
+        sheetG.DrawImage(&RotatedBmp, destX, destY);
+    // ... 코드 중략
+    }
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={620} src="/img/reviews/katana/06-sprite-sheet/rotate.png" caption="대각선 여백과 각도별 행" />
+
+이미지를 돌리면 원래 크기를 벗어나므로, 한 칸의 크기를 프레임의 대각선 길이로 잡아 잘리지 않게 했습니다. 각도 단계(예: 15도)마다 한 행씩 미리 돌려 그려 두고, 실행 중에는 회전 계산 없이 각도로 행만 고릅니다(<FigRef n={4} />).
+
+</Tab>
+<Tab>
+
+시트 이미지와, 잘라 올 때 필요한 정보(한 칸의 크기, 프레임 수와 재생 시간, 반전 행 여부 `m_bReverse`, 회전 시트의 각도 단계 `m_fAngleStep`)를 함께 담습니다. 시트 종류가 달라도 같은 클래스여서, 재생하는 쪽은 종류를 구분하지 않습니다.
+
+#### A. 각도 → 행
+
+<Editor file="CAnimationBitmap.h" fn="GetRowFromAngle(...)">
+
+```cpp
+int GetRowFromAngle(float _fAngle) const
+{
+	while (_fAngle < 0.f) _fAngle += 360.f;
+	while (_fAngle >= 360.f) _fAngle -= 360.f;
+
+	return (int)(_fAngle / m_fAngleStep) % m_iAngleCount;
+}
+```
+
+</Editor>
+
+음수나 360도를 넘는 각도도 0도 이상 360도 미만으로 맞춘 뒤, 각도 단계로 나눠 행을 정합니다. 각도를 행으로 바꾸는 규칙(행 = 각도 ÷ 단계)이 시트를 만들 때의 규칙과 같은 클래스 안에 있습니다.
+
+</Tab>
+<Tab>
+
+`PlayAnimation`은 키에 맞는 시트를 찾아 참조만 해 두고(`m_pCurAnimation`), 애니메이터는 시간에 따라 프레임을 넘기며 시트에서 잘라 올 위치를 계산해 그립니다. 열은 프레임 번호로 고르고, 행은 `NormalRender`에서는 바라보는 방향으로, `RotateRender`에서는 회전 각도로 고릅니다.
+
+#### A. 열과 행으로 잘라 그리기
+
+<Editor file="CAnimatorComponent.cpp" fn="NormalRender(...)">
+
+```cpp
+const size_t iFrameIndex = m_PlayState.iCurFrame;
+
+// frameIndex를 와 Frame의 width를 곱하면 고우고우
+int srcX = iFrameIndex * iFrameWidth;
+int srcY = 0;
+if (m_pCurAnimation->IsReverse())
+{
+	float Dir_X = GetOwner()->GetDir().x;
+	if (IsReversal())
+		Dir_X *= -1.f;
+	// 플레이어가 오른쪽 방향이면 첫번째줄 스프라이트시트
+	srcY = (Dir_X > 0.f ? 0 : iFrameHeight);
+}
+	// ... 코드 중략
+	GdiTransparentBlt(hDC,
+		LeftTopRenderPos.x,
+		LeftTopRenderPos.y,
+		iFrameWidth, iFrameHeight,
+		hAnimMemDC,
+		srcX, srcY,
+		iFrameWidth, iFrameHeight, // 복사할 비트맵 가로 세로 사이즈
+		RGB(0, 0, 0));	// 제거할 픽셀 색상 값
+```
+
+</Editor>
+
+프레임 번호로 열을, 오브젝트가 바라보는 방향으로 행을 고릅니다. 프레임이 바뀌어도 그리는 이미지는 그대로이고, 잘라 오는 위치만 달라집니다.
+
+#### B. 회전 시트 재생
+
+<Editor file="CAnimatorComponent.cpp" fn="RotateRender(...)">
+
+```cpp
+// 현재 프레임 인덱스
+const size_t iFrameIndex = m_PlayState.iCurFrame;
+
+// 애니메이션 시트 내부의 Row 계산
+int iRow = m_pCurAnimation->GetRowFromAngle(m_fRotationAngle);
+
+// 시트 위치 계산
+int srcX = static_cast<int>(iFrameIndex * iFrameWidth);
+int srcY = iRow * iFrameHeight;
+```
+
+</Editor>
+
+회전 시트도 방식은 같습니다. 행을 방향 대신 회전 각도로 고를 뿐, 그리는 코드는 일반 시트와 다르지 않습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**시트 생성 함수 다섯 개가 거의 같은 코드를 나눠 갖고 있었습니다.** 크기 계산, 프레임 정보 설정, 반전 행 그리기, `HBITMAP` 변환이 함수마다 들어 있어서 한 곳을 고치면 나머지도 모두 찾아 고쳐야 했습니다. 공통 단계를 함수로 빼고, 시트마다 프레임을 그리는 방식만 다르게 했어야 했습니다.
+
+남은 개선점입니다.
+
+- 실행할 때마다 시트를 다시 합성하므로 리소스가 늘수록 로딩이 길어집니다. 한 번 만든 시트는 파일로 저장해 읽는 편이 낫습니다.
+- 정렬은 10장을 넘을 때만 하지만, 폴더를 읽는 순서는 표준이 보장하지 않으므로 항상 정렬하는 편이 안전합니다.
+- 반복 재생 여부가 공유 시트(`CAnimationBitmap`)에 들어 있어, 오브젝트마다 다른 재생 상태는 애니메이터의 `PlayState`로 옮겨야 합니다.

@@ -1,0 +1,384 @@
+---
+project: naruto
+order: 5
+title: 공격 정보 전달 · 피격 반응
+topic: 충돌·판정
+chips: [Hit Window, Bitmask]
+lineage:
+  label: 카타나 제로 모작 — 충돌 시스템
+  href: /reviews/katana/04-collision/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+액션 게임의 타격 처리에는 충돌 감지와 별개로 "이 겹침이 공격인가, 이미 맞았는가, 맞으면 어떻게 반응하는가"를 정하는 규칙이 필요합니다. 공격 정보를 가해자가 들고 있다가 피해자에게 넘기면, 피해자는 자기 상태에 맞게 반응을 고를 수 있습니다.
+
+공격 정보를 구조체 하나로 묶고 판정과 반응을 가해자와 피해자로 나눠, 공격 상태는 구간마다 정보만 채우면 됩니다. 한 동작 안의 여러 타격도 구간 번호만 바꾸면 같은 적을 다시 때릴 수 있습니다.
+
+## 2. 문제
+
+> 카타나 제로 모작의 충돌 시스템은 겹침을 알려 주는 데서 끝났고, 공격인지 아닌지는 각 오브젝트의 충돌 함수가 알아서 판단했습니다. 3D 액션에서는 공격 하나에 담기는 정보가 훨씬 많습니다. 콤보 한 동작 안에서 손·무기 같은 다른 부위로 여러 번 때리고, 타격마다 피격 반응(정면·밀려남·감전 등)과 대미지가 다릅니다. 게다가 공격 충돌체는 여러 프레임 동안 적과 겹쳐 있으므로, 한 번의 타격이 같은 적을 여러 번 때리지 않게 막아야 했습니다.
+
+## 3. 구조 요약
+
+공격 정보를 구조체 하나로 묶어 상태 → 부위 → 피해자 순으로 넘깁니다. 언제 어느 부위로 때릴지는 공격 상태가, 맞았는지는 가해자가, 어떻게 반응할지는 피해자가 정합니다.
+
+<Fig n={1} white max={520} src="/img/reviews/naruto/05-hit-reaction/class.png" caption="공격·피격 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 | 책임 |
+| --- | --- |
+| `ATTACK_DESC` | 공격 종류(피격 반응), 대미지, 넉백 세기, 카메라 연출 여부 |
+| `CComboState` | 애니메이션 구간마다 공격 정보와 부위를 정해 충돌체 켜고 끄기 |
+| `CPartObject` | 공격 구간 동안 공격 정보 보관, 이번 구간에 때린 대상 기록 |
+| `CMainPlayer` 등 가해자 | 충돌 시 레이어·구간·중복 검사 후 피해자에게 피격 요청 |
+| `CPlayer::On_Hit` 등 피해자 | 피격 가능 여부 판단, 대미지 적용, 피격 상태 전환 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '공격 정보 · 부위', '공격 구간', '가해자 판정', '피해자 반응']}>
+<Tab>
+
+공격 상태는 애니메이션 구간마다 공격 정보를 채워 넘기기만 합니다. 충돌체 관리와 중복 방지는 기반 클래스와 부위가 맡습니다.
+
+#### A. 한 동작 안의 여러 타격
+
+<Editor file="State_WPCombo_Left_Fourth.cpp" fn="CState_WPCombo_Left_Fourth::Update(...)">
+
+```cpp
+void CState_WPCombo_Left_Fourth::Update(const _float fTimeDelta)
+{
+    Super::Update(fTimeDelta);    
+
+    _int iNewWindow = -1;
+    _int iNewPart = -1;
+    ATTACK_DESC desc = {};
+
+    if (Can_Dash(EDashFlag::FIRST) && Is_AnimTrackPositionAt(0.1f))
+        StartForce_ForAnimation(EDashFlag::FIRST, EDir::FRONT, 10.f, 5.f);
+
+    if (Is_AnimTrackPositionBetween(0.1f, 0.13f))
+    {
+        iNewWindow = 0;
+        iNewPart = ENUM_TO_UINT(CPlayer::Part::WEAPON);
+        desc.fForceAbs = 2.f;
+        desc.fDragK = 1.f;
+        desc.iAttackType = ENUM_TO_UINT(EHitType::RIGHT);
+        desc.iDamage = 1;
+
+        if (m_bFirst == false)
+        {
+            CGameInstance::GetInstance()->Play_RandOneShot(L"SwordAttack", 0.2f, 3);
+            CGameInstance::GetInstance()->Play_RandOneShot(L"Player_Hit", 0.3f, 6);
+            m_bFirst = true;
+        }
+    }
+    else if (Is_AnimTrackPositionBetween(0.32f, 0.34f))
+    {
+        iNewWindow = 1;
+        iNewPart = ENUM_TO_UINT(CPlayer::Part::WEAPON);
+        desc.fForceAbs = 2.f;
+        desc.fDragK = 1.f;
+        desc.iAttackType = ENUM_TO_UINT(EHitType::LEFT);
+        desc.iDamage = 1;
+        if (m_bSecond == false)
+        {
+            CGameInstance::GetInstance()->Play_RandOneShot(L"SwordAttack", 0.2f, 3);
+            m_bSecond = true;
+        }
+    }
+    // ... 코드 중략
+    Apply_AttackDesc(iNewWindow, iNewPart, &desc);
+    Apply_ForceMove(fTimeDelta);
+}
+```
+
+</Editor>
+
+검 콤보 4타는 한 동작 안에서 세 번 벱니다. 애니메이션 진행도 구간마다 다른 구간 번호와 공격 종류를 넣고, 마지막에 `Apply_AttackDesc`를 한 번 부릅니다. 구간 번호가 0 → 1 → 2로 바뀔 때마다 때린 대상 기록이 비워지므로 같은 적을 세 번 때릴 수 있습니다.
+
+</Tab>
+<Tab>
+
+공격 정보와 "이번 공격 구간에 이미 때린 대상"은 손·무기 같은 부위 오브젝트가 들고 있습니다. `Set_AttackCollider`가 구간을 열 때 공격 정보(`ATTACK_DESC`, 반응 종류는 `iAttackType`)를 `m_CurrentAttackDesc`에 복사하고, 맞은 대상 기록(`m_unsetHitTargets`)을 비운 뒤 충돌체를 켭니다.
+
+#### A. 공격 구간과 중복 방지
+
+<Editor file="Engine_Struct.h" fn="ATTACK_DESC">
+
+```cpp
+typedef struct tagAttackDesc
+{
+	int iAttackType = { -1 };
+	unsigned int iDamage = { 0 };
+	bool bSpecialSkill = { false };
+	bool bImpact = { false };
+	float fForceAbs = { 0.f };
+	float  fDragK = { 0.f };
+	XMFLOAT3 vColliderCenter = { 0.f, 0.f, 0.f };
+}ATTACK_DESC;
+```
+
+</Editor>
+
+<Editor file="PartObject.h" fn="CPartObject">
+
+```cpp
+_bool Is_AttackWindow() const { return m_bAttackWindow; }
+void Begin_AttackWindow(ATTACK_DESC* pDesc);
+void End_AttackWindow();
+void Clear_HitTargets() { m_unsetHitTargets.clear(); }
+_bool Is_AlreadyHitted(CGameObject* pVictim) const { return (pVictim != nullptr) && (m_unsetHitTargets.find(pVictim) != m_unsetHitTargets.end()); }
+void Regist_HitTargets(CGameObject* pVictim) { if(pVictim) m_unsetHitTargets.insert(pVictim); }
+// ... 코드 중략
+
+_bool m_bAttackWindow = { false };
+CGameObject* m_pParentObject = { nullptr };
+const _float4x4* m_pMatParent = { nullptr };
+_float4x4 m_matCombinedWorld = {};
+ATTACK_DESC m_CurrentAttackDesc = {};
+unordered_set<CGameObject*> m_unsetHitTargets;
+```
+
+</Editor>
+
+<Editor file="PartObject.cpp" fn="CPartObject::Set_AttackCollider(...), CPartObject::Begin_AttackWindow(...), CPartObject::End_AttackWindow()">
+
+```cpp
+void CPartObject::Set_AttackCollider(_bool bActive, ATTACK_DESC* pDesc)
+{
+	CCollider* pCollider = Get_Component<CCollider>();
+
+	if (bActive)
+	{
+		Begin_AttackWindow(pDesc);
+	}
+	else
+		End_AttackWindow();
+
+	pCollider->Set_Active(bActive);
+}
+// ... 코드 중략
+
+void CPartObject::Begin_AttackWindow(ATTACK_DESC* pDesc)
+{
+	::memcpy(&m_CurrentAttackDesc, pDesc, sizeof(ATTACK_DESC));
+	Clear_HitTargets();
+	m_bAttackWindow = true;
+}
+
+void CPartObject::End_AttackWindow()
+{
+	m_bAttackWindow = false;
+	Clear_AttackDesc();
+	Clear_HitTargets();
+}
+```
+
+</Editor>
+
+공격 구간이 열리면 부위가 공격 정보를 복사해 두고, 때린 대상 기록을 비운 뒤 충돌체를 켭니다. 같은 구간에서 한 번 맞은 대상은 기록에 남아 다시 맞지 않고, 다음 구간이 열리면 기록이 비워져 다시 맞을 수 있습니다. 상태가 넘기는 정보는 지역 변수이므로 포인터로 들고 있지 않고 복사해 보관합니다.
+
+</Tab>
+<Tab>
+
+공격 애니메이션 상태의 기반입니다. 매 프레임 `Apply_AttackDesc`에 "지금 몇 번째 공격 구간인가"만 넘기면, 열린 구간 번호(`m_iActiveHitWindow`)와 부위(`m_iActivePart`)를 비교해 구간이 바뀔 때만 충돌체를 바꿔 끼웁니다.
+
+#### A. 구간이 바뀔 때만 교체
+
+<Editor file="ComboState.cpp" fn="CComboState::Apply_AttackDesc(...)">
+
+```cpp
+void CComboState::Apply_AttackDesc(_int iNewWindow, _int iNewPart, ATTACK_DESC* pDesc)
+{
+	if (m_iActiveHitWindow == iNewWindow)
+		return;
+
+	if (m_iActivePart != -1 && m_iActiveHitWindow != -1)
+		Set_AttackCollider(m_iActivePart, false, nullptr);
+
+	if (iNewWindow != -1 && iNewPart != -1)
+		Set_AttackCollider(iNewPart, true, pDesc);
+
+	m_iActiveHitWindow = iNewWindow;
+	m_iActivePart = iNewPart;
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={760} src="/img/reviews/naruto/05-hit-reaction/window.png" caption="애니메이션 구간마다 공격 정보와 부위를 바꿔 끼우기" />
+
+상태는 매 프레임 구간 번호를 넘기지만, 번호가 그대로면 아무 일도 하지 않습니다. 그래서 구간이 유지되는 동안에는 때린 대상 기록이 지워지지 않고, 구간이 바뀌는 순간에만 이전 부위를 닫고 새 부위를 엽니다(<FigRef n={2} />). 구간 밖에서는 번호가 -1이 되어 열린 부위를 닫기만 합니다.
+
+</Tab>
+<Tab>
+
+가해자 쪽 판정입니다. 공격 부위의 충돌체가 무언가와 처음 겹치면 `Try_AttackHit`(스킬은 같은 흐름의 `Try_SkillHit`)이 맞을 수 있는 상대인지 거른 뒤 피해자에게 피격을 요청합니다. `bImpact`가 켜진 공격이면 카메라를 대상 고정 연출로 바꿉니다.
+
+#### A. 검사 순서
+
+<Editor file="MainPlayer.cpp" fn="CMainPlayer::OnCollision_Enter(...), CMainPlayer::Try_AttackHit(...)">
+
+```cpp
+void CMainPlayer::OnCollision_Enter(_uint iMyColliderLayer, CCollider* pOther)
+{
+    ECollideLayer eMyLayer = static_cast<ECollideLayer>(iMyColliderLayer);
+    _bool bAttackHit = Try_AttackHit(eMyLayer, pOther);
+}
+// ... 코드 중략
+
+_bool CMainPlayer::Try_AttackHit(ECollideLayer eMyLayer, CCollider* pOther)
+{
+    if (Is_PlayerAttackLayer(eMyLayer) == false)
+        return false;
+
+    if (pOther == nullptr)
+        return false;
+
+    ECollideLayer eOtherLayer = static_cast<ECollideLayer>(pOther->Get_Layer());
+    if (eOtherLayer != ECollideLayer::ENEMY_BODY)
+        return false;
+
+    CPartObject* pAttackPart = Get_PartByLayer(eMyLayer);
+    if (pAttackPart == nullptr || pAttackPart->Is_AttackWindow() == false)
+        return false;
+
+    ATTACK_DESC* pDesc = pAttackPart->Get_AttackDesc();
+
+    if (pDesc->iAttackType < 0)
+        return false;
+
+    CGameObject* pVictim = pOther->Get_Owner();
+
+    if (pAttackPart->Is_AlreadyHitted(pVictim))
+        return false;
+
+    if (pVictim->On_Hit(static_cast<_uint>(pOther->Get_Layer()), pDesc, this) == false)
+        return false;
+
+    if (pDesc->bImpact)
+    {
+        CCameraMan_Targeter* pCamera = static_cast<CCameraMan_Targeter*>(Get_CameraTargeter());
+        pCamera->Change_State(TargeterState::TARGETSYNC);
+    }
+    pAttackPart->Regist_HitTargets(pVictim);
+    return true;
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={560} src="/img/reviews/naruto/05-hit-reaction/attacker.png" caption="충돌 → 레이어·구간·중복 검사 → 피격 요청" />
+
+판정은 비용이 싼 검사부터 합니다. 내 충돌체가 공격 레이어인지, 상대가 적의 몸통인지, 공격 구간이 열려 있는지, 이번 구간에 이미 때린 대상인지를 차례로 보고, 모두 통과했을 때만 피해자에게 묻습니다(<FigRef n={3} />). 피해자가 피격을 거절하면 기록하지 않으므로, 무적 상태가 끝난 뒤 같은 구간 안에서 다시 맞을 수 있습니다.
+
+</Tab>
+<Tab>
+
+피해자 쪽 반응입니다. `On_Hit`이 현재 상태의 피격 가능 비트(`BEATTACKED`)로 맞을지 말지를, 공격 종류(`EHitType`)로 어떤 피격 상태로 갈지를 정합니다. 가해자는 결과(`true`/`false`)만 받습니다.
+
+#### A. 피격 가능 여부와 반응
+
+<Editor file="Player.cpp" fn="CPlayer::On_Hit(...)">
+
+```cpp
+_bool CPlayer::On_Hit(_uint iCollideMyLayer, ATTACK_DESC* pDesc, CGameObject* pOther)
+{
+    if (m_bDead == true || m_pStatComp->Is_HealthZero() == true)
+        return false;
+
+    CActionState* pActionState = Get_Component<CActionState>();
+    if (Has_Capability(pActionState->Get_CurrentCapabilities(), StateCapability::BEATTACKED) == false)
+        return false;
+
+    EHitType eType = static_cast<EHitType>(pDesc->iAttackType);
+
+    CStateBase::STATE_START_DESC stateStartDesc = {};
+    stateStartDesc.fForceAbs = pDesc->fForceAbs;
+    stateStartDesc.fDragK = pDesc->fDragK;
+
+    CTransform* pOtherTransform = pOther->Get_Component<CTransform>();
+    _vector vOtherLookDir = pOtherTransform->Get_Info(TRANSFORM_INFO_STATE::LOOK);
+    vOtherLookDir = ::XMVector3Normalize(vOtherLookDir);
+
+    CTransform* pTransform = Get_Component<CTransform>();
+    _float3 vScale = pTransform->Get_Scaled();
+    _vector vNewLook = vOtherLookDir * -1.f;
+    _vector vNewRight = ::XMVector3Normalize(::XMVector3Cross(::XMVectorSet(0.f, 1.f, 0.f, 0.f), vNewLook));
+    _vector vNewUp = ::XMVector3Normalize(::XMVector3Cross(vNewLook, vNewRight));
+
+    pTransform->Set_Info(TRANSFORM_INFO_STATE::RIGHT, vNewRight * vScale.x);
+    pTransform->Set_Info(TRANSFORM_INFO_STATE::UP, vNewUp * vScale.y);
+    pTransform->Set_Info(TRANSFORM_INFO_STATE::LOOK, vNewLook * vScale.z);
+
+    if (Is_WeaponActive())
+        Set_WeaponDisable();
+
+    m_pStatComp->Add_Health(-(_int)pDesc->iDamage);
+    // ... 코드 중략
+    switch (eType)
+    {
+    case Client::EHitType::BLASTED:
+        pActionState->Change_State(ENUM_TO_UINT(CPlayer::State::BEATEN_BLASTED), true, &stateStartDesc);
+        break;
+    // ... 코드 중략
+    case Client::EHitType::HITDOWNSHORT:
+        pActionState->Change_State(ENUM_TO_UINT(CPlayer::State::BEATEN_ONEHITDOWN_SHORT), true);
+        break;
+    case Client::EHitType::HITDOWNLONG:
+        pActionState->Change_State(ENUM_TO_UINT(CPlayer::State::BEATEN_ONEHITDOWN_LONG), true);
+        break;
+    case Client::EHitType::WATERPRISON:
+        pActionState->Change_State(ENUM_TO_UINT(CPlayer::State::BEATEN_WATERPRISON), true);
+        break;
+    case Client::EHitType::EARTHQUAKE:
+        pActionState->Change_State(ENUM_TO_UINT(CPlayer::State::BEATEN_EARTHQAUKE), true);
+        break;
+    case Client::EHitType::UNIVERSALPULL:
+        pActionState->Change_State(ENUM_TO_UINT(CPlayer::State::BEATEN_UNIVERSALPULLSTART), true);
+        break;
+    case Client::EHitType::ELECTRICKSHOCK:
+        pActionState->Change_State(ENUM_TO_UINT(CPlayer::State::BEATEN_ELECTRICSHOCK), true);
+        break;
+    case Client::EHitType::PAIN_SPECIALSKILL:
+        pActionState->Change_State(ENUM_TO_UINT(CPlayer::State::BEATEN_PAINSPECIALSKILL), true);
+        break;
+    default:
+        break;
+    }
+
+    return true;
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={560} src="/img/reviews/naruto/05-hit-reaction/victim.png" caption="피격 가능 여부 확인 후 공격 종류별 피격 상태로 전환" />
+
+죽었거나 체력이 없으면, 또는 지금 상태에 피격 가능 비트가 없으면 거절합니다. 맞으면 공격자의 반대 방향을 바라보게 돌리고 대미지를 적용한 뒤, 공격 종류에 맞는 피격 상태로 강제 전환합니다(<FigRef n={4} />). 어떤 공격이 어떤 반응을 일으킬지는 가해자가 정한 `iAttackType` 하나로 전달됩니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**같은 판정 코드를 가해자마다 따로 들고 있었습니다.** 플레이어, 일반 적, 수리검·화염구·상어탄 같은 스킬 오브젝트가 각자 `Try_Hit`을 갖고 "레이어 → 구간 → 중복 → 피격 요청 → 기록" 순서를 거의 그대로 반복합니다. 그래서 판정 규칙 하나를 바꾸려면 모든 가해자를 고쳐야 합니다. 판정을 한 곳(판정 시스템)으로 모으고 가해자는 충돌 사실만 넘겼다면, 규칙이 한 군데에만 남았을 것입니다.
+
+남은 개선점입니다.
+
+- 공격 수치가 상태 코드에 들어 있습니다. 데이터(프리셋)로 빼고 상태는 프리셋 번호만 갖게 하면 빌드 없이 조정할 수 있습니다.
+- `ATTACK_DESC`로 넉백 세기를 넘기지만 상태 시작 함수가 아직 읽지 않아, 피격 상태마다 고정값을 씁니다.

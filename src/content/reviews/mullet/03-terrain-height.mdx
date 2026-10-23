@@ -1,0 +1,356 @@
+---
+project: mullet
+order: 3
+title: 패널 기반 지형 높이 계산
+topic: 지형·이동
+chips: [Plane Equation, Barycentric Interpolation, Slope, Spatial Coherence]
+lineage:
+  label: 카타나 제로 모작 — 캐릭터 이동
+  href: /reviews/katana/08-movement/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+3D 지형 위에 캐릭터를 세우려면 발밑의 높이를 알아야 합니다. 높이맵 지형은 격자 칸의 삼각형을 보간해 높이를 구하고, 여러 장의 평면으로 이뤄진 지형은 각 평면의 방정식으로 구합니다. 대상 평면을 빨리 찾으려고 직전에 밟은 면부터 확인하는 공간 연속성을 흔히 이용합니다.
+
+무거운 계산을 로드 시점으로 옮기고 직전 패널 근처만 확인하게 하면서, 레이 교차 없이 바닥과 경사를 처리했고 모든 패널을 검사하던 때의 성능 문제도 없앴습니다.
+
+## 2. 문제
+
+> 스테이지 바닥은 높이맵 지형이 아니라 툴로 깐 여러 장의 바닥·경사 패널입니다. 캐릭터가 그 위에 서고 경사를 오르내려야 했습니다. 레이와 메시의 교차를 직접 구현해 매 프레임 검사하기에는 비용이 크다고 판단했습니다. 처음에는 모든 패널을 검사했는데, 패널 수가 늘자 실제로 성능 문제가 생겼습니다.
+
+## 3. 구조 요약
+
+무거운 계산은 로드 시점으로 옮겼습니다. 패널은 움직이지 않으므로 범위·평면·역행렬을 한 번만 구해 Z 순으로 정렬해 두고, 매 프레임에는 캐릭터마다 직전 패널 근처만 확인해 높이를 구합니다.
+
+<Fig n={1} white max={560} src="/img/reviews/mullet/03-terrain-height/class.png" caption="지형 높이 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 / 구조체 | 책임 |
+| --- | --- |
+| `CGameDataManager` | 스테이지 로드 때 패널 정보(`PANELENTRY`)를 미리 계산하고 Z 기준 정렬 |
+| `PANELENTRY` | 패널 하나의 XZ 범위, 월드 평면, 월드·역행렬. 로드 후 읽기 전용 |
+| `CGrounding` | 캐릭터별 현재 패널 번호를 기억하고, 그 근처에서 패널을 찾아 높이 반환 |
+| `CCharacter` | 받은 높이로 착지·점프 처리 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '패널 미리 계산', '높이 계산']}>
+<Tab>
+
+스테이지가 패널 목록을 한 번 등록해 두면, 캐릭터는 매 프레임 자기 위치로 높이만 묻습니다.
+
+#### A. 패널 목록 등록
+
+<Editor file="CDev.cpp" fn="CDev::Ready_Scene()">
+
+```cpp
+// GameDataManager에 바닥을 z기준 정렬
+CGameDataManager::GetInstance()->Bind_FloorList(CObjectManager::GetInstance()->Get_ObjectList(SCENE_DEV, L"Floor_Layer"));
+```
+
+</Editor>
+
+스테이지는 바닥 레이어를 만든 직후 패널 목록을 넘깁니다. 그 뒤로 캐릭터들은 정렬된 목록을 읽기만 합니다.
+
+#### B. 캐릭터 착지
+
+<Editor file="CCharacter.cpp" fn="CCharacter::Set_OnTerrain(...)">
+
+```cpp
+// TODO - 여러개의 terrain 해결
+// 추후에 여러개의 GridPanel이 들어왔을 때 연산량이 많아지는 문제가 발생한다.
+// 이를 방지하기 위해 MapLayer를 파싱할때 z값을 기준으로 Goal을 만들고, z정렬을 실시하여 저장한다.
+// z값에 기반하여 순차적으로 데이터를 불러와 인스턴싱을 하고, 순회를 할 때 선형적인 타임어택 게임에 아이디어를 가져온다.
+// 지나온 terrain은 다시는 밟을 일이 없으니 currentindex를 가지고 다음 terrain을 밟을 시 currentindex를 갱신시켜 연산량을 줄여나간다.
+// 이렇게 하면 땅을 밟고 있는 상황에선 항상 하나의 Terrain만 검사하게 될것이다.
+void CCharacter::Set_OnTerrain(const _float &fTimeDelta)
+{
+	_vec3 vPos = m_pTransformCom->Get_Info(INFO_POS);
+
+	_float fHeight;
+	if (m_pGroundingCom->GetHeight(CGameDataManager::GetInstance()->Get_SortedFloorEntries(), vPos.x, vPos.z, &fHeight))
+	{
+		if (m_bJumping)
+		{
+			vPos.y = vPos.y + m_fVelocity * fTimeDelta;
+
+			if (vPos.y - m_pTransformCom->Get_Scale().y * 0.5f <= fHeight)
+			{
+				m_bJumping = false;
+				vPos.y = fHeight + m_pTransformCom->Get_Scale().y * 0.5f;
+			}
+		}
+		else
+		{
+			vPos.y = fHeight + m_pTransformCom->Get_Scale().y * 0.5f;
+			_float f = m_pTransformCom->Get_Scale().y;
+		}
+	}
+	else
+		vPos.y = vPos.y + m_fVelocity * fTimeDelta;
+	// ... 코드 중략
+	m_pTransformCom->Set_Info(INFO_POS, { vPos.x , vPos.y , vPos.z });
+}
+```
+
+</Editor>
+
+처음 설계할 때 남긴 메모 그대로, 지나온 패널은 다시 밟을 일이 적다는 선형 진행 게임의 특성을 이용했습니다. 캐릭터는 높이를 받으면 점프 중일 때만 착지 여부를 따지고, 높이를 받지 못하면 공중에 있다고 보고 떨어집니다.
+
+</Tab>
+<Tab>
+
+스테이지가 시작될 때 `Bind_FloorList`가 바닥·경사 패널을 한 번 훑어 범위·평면·역행렬을 미리 계산하고, `Sort_List_ByZValue`로 시작 Z(같으면 시작 X) 기준으로 정렬합니다. 결과인 `m_vecSortedFloorEntries`는 모든 캐릭터가 함께 씁니다.
+
+#### A. 로드 때 미리 계산
+
+<Editor file="CVIBuffer_GridPanelBase.h" fn="PANELENTRY">
+
+```cpp
+typedef struct tagPanelEntry
+{
+	WallType eType;
+	_float fMin_X;
+	_float fMax_X;
+	_float fMin_Z;
+	_float fMax_Z;
+	_float fY;
+	_float fInverseItv;
+	// ... 코드 중략
+	CVIBuffer_GridPanelBase *pBuffer;
+	_matrix matWorldInv;
+	_matrix matWorld;
+	D3DXPLANE planeWorld;
+} PANELENTRY;
+```
+
+</Editor>
+
+<Editor file="CGameDataManager.cpp" fn="CGameDataManager::Bind_FloorList(...)">
+
+```cpp
+HRESULT CGameDataManager::Bind_FloorList(list<Engine::CGameObject *> *_pFloorlist)
+{
+	// ... 코드 중략
+	for (list<Engine::CGameObject *>::iterator itr = _pFloorlist->begin();
+		itr != _pFloorlist->end();
+		++itr)
+	{
+		// ... 코드 중략
+		PANELENTRY tEntry;
+		tEntry.eType = pFloor->GetType();
+		tEntry.fY = pTransform->Get_Info(INFO_POS).y;
+		tEntry.fMin_X = pTransform->Get_Info(INFO_POS).x;
+		tEntry.fMin_Z = pTransform->Get_Info(INFO_POS).z;
+		tEntry.fMax_X = pTransform->Get_Info(INFO_POS).x + ((pBuffer->GetData()->dwCountX - 1) * pBuffer->GetData()->dwInterval);
+		tEntry.fMax_Z = pTransform->Get_Info(INFO_POS).z + ((pBuffer->GetData()->dwCountZ - 1) * pBuffer->GetData()->dwInterval);
+		// ... 코드 중략
+		tEntry.fInverseItv = 1.f / pBuffer->GetData()->dwInterval;
+		tEntry.pBuffer = pBuffer;
+		tEntry.matWorld = *pTransform->Get_World();
+
+		_float fLenghtX = (pBuffer->GetData()->dwCountX - 1) * pBuffer->GetData()->dwInterval;
+		_float fLenghtZ = (pBuffer->GetData()->dwCountZ - 1) * pBuffer->GetData()->dwInterval;
+
+		auto Wof = [&](float lx, float lz)->_vec3 {
+			_vec3 l{ lx, 0.f, lz }, w;
+			D3DXVec3TransformCoord(&w, &l, &tEntry.matWorld);
+			return w;
+			};
+		_vec3 w00 = Wof(0.f, 0.f);
+		_vec3 w10 = Wof(fLenghtX, 0.f);
+		_vec3 w01 = Wof(0.f, fLenghtZ);
+
+		// 평면 저장(패널은 한 평면이라 가정)
+		D3DXPlaneFromPoints(&tEntry.planeWorld, &w00, &w10, &w01);
+
+		::D3DXMatrixInverse(&tEntry.matWorldInv, nullptr, pTransform->Get_World());
+
+		m_vecSortedFloorEntries.push_back(tEntry);
+	}
+
+	Sort_List_ByZValue(m_vecSortedFloorEntries);
+
+	return S_OK;
+}
+```
+
+</Editor>
+
+패널의 세 모서리를 월드로 옮겨 평면 방정식을 만들고, 월드 역행렬도 함께 구해 둡니다. 패널은 움직이지 않으니 이 값들은 로드 때 한 번만 계산하면 충분합니다.
+
+#### B. Z 기준 정렬
+
+<Editor file="CGameDataManager.cpp" fn="CGameDataManager::Sort_List_ByZValue(...)">
+
+```cpp
+void CGameDataManager::Sort_List_ByZValue(vector<PANELENTRY> &_veclist)
+{
+	if (_veclist.size() <= 1)
+		return;
+
+	std::sort(_veclist.begin(), _veclist.end(),
+		[](const PANELENTRY &a, const PANELENTRY &b)->bool
+		{
+			if (a.fMin_Z != b.fMin_Z)
+				return a.fMin_Z < b.fMin_Z;
+
+			// Z값이 동일할 경우를 대비
+			return a.fMin_X < b.fMin_X;
+		});
+}
+```
+
+</Editor>
+
+레벨을 Z 방향으로 길게 이어지도록 설계했기 때문에, Z로 정렬한 목록에서 번호가 이웃한 패널은 실제로도 이웃해 있습니다. 이 정렬 덕분에 캐릭터는 현재 패널의 앞뒤만 보면 됩니다(<FigRef n={2} />).
+
+</Tab>
+<Tab>
+
+캐릭터마다 하나씩 붙는 컴포넌트입니다. 공유 패널 목록은 읽기만 하고, 직전에 밟은 패널 번호 `m_iCurrentIndex`만 기억합니다. `GetHeight`가 그 근처에서 패널을 찾고(바닥은 `IsInside`, 경사는 `IsInside_Slope`), 경사 높이는 `Y_OnPanelPlane`과 `Compute_Height`로 구합니다.
+
+#### A. 현재 패널부터 탐색
+
+<Editor file="CGrounding.cpp" fn="CGrounding::GetHeight(...)">
+
+```cpp
+auto lambda_Inside =
+[&](int _i)->bool
+{
+	return (*pPanelEntries)[_i].eType == WallType::FLOOR
+		? IsInside((*pPanelEntries)[_i], fX, fZ)
+		: IsInside_Slope((*pPanelEntries)[_i], fX, fZ);
+};
+// ... 코드 중략
+
+for (int i = 0; i < 3; ++i)
+{
+	if (lambda_Inside(m_iCurrentIndex))
+		return lambda_GetHeight(m_iCurrentIndex);
+
+	if (m_iCurrentIndex + i < (*pPanelEntries).size() && lambda_Inside(m_iCurrentIndex + i))
+		return lambda_GetHeight(m_iCurrentIndex + i);
+
+	if (((m_iCurrentIndex - i) >= 0) && lambda_Inside(m_iCurrentIndex - i))
+		return lambda_GetHeight(m_iCurrentIndex - i);
+}
+
+return false;
+```
+
+</Editor>
+
+<Fig n={2} white max={620} src="/img/reviews/mullet/03-terrain-height/search.png" caption="Z 정렬 목록에서 현재 패널부터 탐색" />
+
+직전에 밟은 패널부터 확인하고, 없으면 앞뒤 1칸, 2칸 순으로 넓혀 갑니다(<FigRef n={2} />). 캐릭터가 서 있는 동안에는 대부분 직전 패널 하나만 확인하고 끝납니다. 경계를 넘을 때만 앞뒤 패널을 보고, 찾은 패널 번호로 `m_iCurrentIndex`를 갱신합니다. 모든 패널을 검사하던 때의 성능 문제는 이 탐색으로 사라졌습니다.
+
+#### B. 바닥과 경사의 높이
+
+<Editor file="CGrounding.cpp" fn="CGrounding::GetHeight(...), CGrounding::Y_OnPanelPlane(...)">
+
+```cpp
+	auto lambda_GetHeight = [&](int _i)->bool
+	{
+		if ((*pPanelEntries)[_i].eType == WallType::FLOOR)
+		{
+			*fOutY = (*pPanelEntries)[_i].fY;
+			m_iCurrentIndex = _i;
+			return true;
+		}
+		else
+		{
+			_float fY = Y_OnPanelPlane((*pPanelEntries)[_i], fX, fZ);
+			_vec3 src{ fX, fY, fZ };
+			::D3DXVec3TransformCoord(&src, &src, &(*pPanelEntries)[_i].matWorldInv);
+			src.y = Compute_Height((*pPanelEntries)[_i], src.x, src.z);
+			::D3DXVec3TransformCoord(&src, &src, &(*pPanelEntries)[_i].matWorld);
+			*fOutY = src.y;
+			m_iCurrentIndex = _i;
+			return true;
+		}
+	};
+// ... 코드 중략
+
+_float CGrounding::Y_OnPanelPlane(const PANELENTRY &tPanelEntry, _float fX, _float fZ)
+{
+	const D3DXPLANE &pl = tPanelEntry.planeWorld;
+	return (-pl.a * fX - pl.c * fZ - pl.d) / pl.b;
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={640} src="/img/reviews/mullet/03-terrain-height/slope.png" caption="월드 → 패널 로컬 → 월드 변환" />
+
+바닥 패널은 높이가 일정하므로 저장해 둔 y를 그대로 씁니다. 경사는 평면 방정식으로 (x, z)에 해당하는 평면 위 점을 구하고, 역행렬로 패널 로컬 좌표에 옮겨 범위를 검사하고 높이를 계산한 뒤 다시 월드로 돌립니다(<FigRef n={3} />).
+
+#### C. 삼각형 보간
+
+<Editor file="CGrounding.cpp" fn="CGrounding::Compute_Height(...)">
+
+```cpp
+int indexX = (int)floorf(fX * tPanelEntry.fInverseItv);
+int indexZ = (int)floorf(fZ * tPanelEntry.fInverseItv);
+
+// 배열 접근 오버런 방지
+indexX = (std::max)(0, (std::min)(indexX, (int)dwCntX - 2));
+indexZ = (std::max)(0, (std::min)(indexZ, (int)dwCntZ - 2));
+
+_ulong	dwIndex = indexZ * dwCntX + indexX;
+// ... 코드 중략
+
+const _vec3 &vLeftBottom = pTerrainVtxPos[dwIndex];
+const _vec3 &vRightBottom = pTerrainVtxPos[dwIndex + 1];
+const _vec3 &vLeftTop = pTerrainVtxPos[dwIndex + dwCntX];
+const _vec3 &vRightTop = pTerrainVtxPos[dwIndex + dwCntX + 1];
+
+
+const _float fWidth = (fX - vLeftBottom.x) * tPanelEntry.fInverseItv;
+const _float fHeight = (fZ - vLeftBottom.z) * tPanelEntry.fInverseItv;
+
+if (fWidth + fHeight <= 1.f) {
+	// 왼쪽 아래 삼각형
+	return vLeftBottom.y + (vRightBottom.y - vLeftBottom.y) * fWidth + (vLeftTop.y - vLeftBottom.y) * fHeight;
+}
+else {
+	// 오른쪽 위 삼각형
+	const _float fWidth2 = 1.f - fWidth;
+	const _float fHeight2 = 1.f - fHeight;
+	return vRightTop.y + (vRightBottom.y - vRightTop.y) * fHeight2 + (vLeftTop.y - vRightTop.y) * fWidth2;
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={760} src="/img/reviews/mullet/03-terrain-height/triangle.png" caption="격자 한 칸을 두 삼각형으로 나눠 보간" />
+
+로컬 좌표가 속한 격자 칸을 찾고, 칸 안의 위치로 두 삼각형 중 어느 쪽인지 고른 다음 세 꼭짓점의 높이로 보간합니다(<FigRef n={4} />). 칸 번호는 범위 밖으로 나가지 않게 잘라 배열 접근이 넘치지 않도록 했습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**패널 탐색이 "정렬 순서상 이웃 = 공간상 이웃"이라는 가정 위에 서 있습니다.** 레벨이 Z 방향으로 길지 않거나, 캐릭터가 정렬 번호로 3칸 이상 떨어진 패널로 한 번에 이동하면 현재 패널을 놓칩니다. 계산을 가볍게 만든 대가로 맵 모양에 대한 가정이 생긴 셈입니다.
+
+남은 개선점입니다.
+
+- 같은 XZ 위치에 높이가 다른 패널이 겹치면(다리 아래 통로, 2층 구조) Z 정렬 순서만으로는 어느 패널인지 가릴 수 없습니다.
+- 바닥 판정은 시작 위치에 (격자 수 − 1) × 간격을 더한 XZ 범위라 회전된 바닥 패널을 다루지 못합니다. 경사처럼 역행렬로 로컬 좌표에서 검사하면 같은 코드로 처리할 수 있습니다.
+- `Bind_FloorList`와 `Bind_SideWallList`가 패널 정보 계산 코드를 반복합니다. 패널 하나를 `PANELENTRY`로 만드는 함수로 묶어야 합니다.
+- `PANELENTRY`의 `fHalfX` / `fHalfZ` / `fLocalCenter`는 계산만 하고 쓰지 않습니다.

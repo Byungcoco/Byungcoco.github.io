@@ -1,0 +1,539 @@
+---
+project: naruto
+order: 6
+title: 캐릭터 커스텀
+topic: 콘텐츠
+chips: [Modular Character, Skinning, Event Bus, std::array, Prototype Pattern]
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+캐릭터 커스텀은 하나의 뼈대(스켈레톤)에 머리·얼굴·옷 같은 파츠 메시를 바꿔 끼워 외형을 조합하는 기능입니다. 파츠가 모두 같은 뼈대 기준으로 스키닝되어 있으면, 어떤 조합이든 뼈대에 재생한 애니메이션 하나로 함께 움직입니다.
+
+뼈대와 애니메이션은 마스터 하나로 두고 파츠는 메시만 바꾸게 해, 어떤 조합이든 같은 애니메이션으로 움직이고 레벨 사이에는 태그만 넘깁니다. 같은 조립 경로로 적의 외형도 추가 리소스 없이 만들었습니다.
+
+## 2. 문제
+
+> 게임을 시작하기 전에 플레이어가 머리·얼굴·상의·하의(또는 한 벌 옷)를 골라 캐릭터를 꾸미는 화면이 필요했습니다. 파츠는 각각 따로 만든 모델이지만, 조합한 캐릭터는 하나의 몸처럼 같은 애니메이션으로 움직여야 합니다. 파츠마다 뼈대와 애니메이션을 따로 가지면 같은 동작을 파츠 수만큼 계산해야 하고, 파츠끼리 동작이 어긋날 수도 있습니다. 또 커스텀 화면에서 고른 결과는 다음 레벨에서 만들어지는 플레이어에게 전달되어야 하는데, 커스텀 화면의 미리보기 오브젝트는 레벨이 바뀌면 사라지므로 무엇을 넘길지 정해야 했습니다.
+
+## 3. 구조 요약
+
+고르는 일과 만드는 일을 나눴습니다. 커스텀 화면은 미리보기 오브젝트의 파츠만 바꿔 보여 주고, 확정하면 "무엇을 골랐는가"(프로토타입 태그)만 남깁니다. 게임 레벨의 모델은 그 태그를 받아 마스터 뼈대 위에 파츠 메시를 조립해 만듭니다.
+
+<Fig n={1} white max={520} src="/img/reviews/naruto/06-character-custom/class.png" caption="캐릭터 커스텀 관련 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 / 구조체 | 책임 |
+| --- | --- |
+| `CCustomSystem` | 파츠 후보 목록 보관, 선택 상태 기록, 교체 이벤트 발행, 확정 시 태그 저장 |
+| `CCustomObject` | 커스텀 화면의 미리보기. 파츠별 오브젝트의 모델을 교체하고 마스터 뼈대로 렌더 |
+| `MODELPARTS_PROTOTYPETAGS` | 부위별로 고른 파츠의 프로토타입 태그. 레벨 사이에 넘기는 유일한 데이터 |
+| `CModel::Combine_Model` | 태그를 받아 마스터 뼈대·애니메이션 위에 파츠 메시와 머티리얼을 합친 모델 생성 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '파츠 선택', '미리보기', '모델 조립']}>
+<Tab>
+
+커스텀 화면의 버튼과, 조립된 모델을 쓰는 쪽입니다. 같은 조립 경로로 적 캐릭터의 외형도 만듭니다.
+
+#### A. 커스텀 화면 버튼
+
+<Editor file="UI_FrameCustomMainUI.cpp" fn="CUI_FrameCustomMainUI 버튼 이벤트 바인딩">
+
+```cpp
+    CUI_Button* pButton = static_cast<CUI_Button*>(spanButtonList[j]);
+    const _uint iButtonDivisionIndex = pButton->Get_DivisionIndex();
+    pButton->Bind_Event(
+        [pOwner = m_pOwnerSystem, part = ModelPart, index = iButtonDivisionIndex]()->void
+        {
+            pOwner->Change_Part(part, index);
+        });
+// ... 코드 중략
+
+CUI_Button* pButton = static_cast<CUI_Button*>(m_vecElements[ACCEPT_BUTTON]);
+pButton->Bind_Event(
+    [pOwner = m_pOwnerSystem, pDevice = m_pDevice, pDeviceContext = m_pDeviceContext]()->void
+    {
+        pOwner->Accept();
+        CGameInstance::GetInstance()->Request_ChangeLevel(ENUM_TO_UINT(LEVELID::LOADING), CLevel_Loading::Create(pDevice, pDeviceContext, LEVELID::GAMESTAGE));
+        CGameInstance::GetInstance()->Play_OneShot(L"Button_OK", 0.25f);
+    });
+```
+
+</Editor>
+
+파츠 버튼은 부위와 번호만 람다에 담아 `Change_Part`를 부르고, 완료 버튼은 `Accept` 후 로딩 레벨로 넘어갑니다.
+
+#### B. 플레이어·적 모델 조립
+
+<Editor file="Loader.cpp" fn="CLoader::Loading_For_Gamestage()">
+
+```cpp
+//For. Prototype_Component_Model_CustomPlayer
+{
+	CModel::MODEL_ORIGIN_DESC desc = {};
+	desc.eType = EModelType::ANIM;
+	desc.pMatPreTransform = &matPreTransformScaling;
+	desc.pPrototypeTags = &m_pGameInstance->Get_ModelPartsData();
+	m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Model_CustomPlayer", CModel::Create(m_pDevice, m_pDeviceContext, &desc));
+}
+//For. Prototype_Component_Model_Enemy1
+{
+	MODELPARTS_PROTOTYPETAGS modelDesc = {}; 
+	modelDesc.wstrFace = L"Prototype_Component_Model_CustomFace_Mask2";
+	modelDesc.wstrHead = L"Prototype_Component_Model_CustomHead_Cap";
+	modelDesc.wstrOneset = L"Prototype_Component_Model_CustomOneset_Beach2";
+
+	CModel::tagModelOriginDesc desc = {};
+	desc.eType = EModelType::ANIM;
+	desc.pMatPreTransform = &matPreTransformScaling;
+	desc.pPrototypeTags = &modelDesc;
+	m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Model_Enemy1", CModel::Create(m_pDevice, m_pDeviceContext, &desc));
+}
+```
+
+</Editor>
+
+플레이어 모델은 게임 레벨을 로딩할 때 저장된 태그로 조립합니다. 적 캐릭터는 태그를 코드에서 직접 정해 같은 함수로 만들었으므로, 파츠 모델만으로 여러 외형의 적을 추가 리소스 없이 만들 수 있었습니다.
+
+</Tab>
+<Tab>
+
+커스텀 화면의 선택을 관리합니다. 부위별 후보 모델과 태그(`m_Parts`, `m_PartTags`)를 같은 순서로 보관해 버튼 번호 하나로 둘 다 찾습니다. `Change_Part`가 고른 번호(`m_iSelectedIndex`)와 한 벌 옷 여부(`m_bSelectedOneset`)를 기록하고, `Accept()`가 그 번호를 태그로 바꿔 저장합니다.
+
+#### A. 후보 파츠 준비
+
+<Editor file="CustomSystem.h" fn="CCustomSystem">
+
+```cpp
+_bool m_bSelectedOneset = { false };
+class CUI_FrameCustomMainUI* m_pMainFrame = { nullptr };
+EModelParts m_eSelectedPart = { EModelParts::END };
+_uint m_iSelectedIndex[ENUM_TO_UINT(EModelParts::END)]{ 0 };
+CGameInstance* m_pGameInstance = { nullptr };
+class CCustomObject* m_pTarget = { nullptr };
+ID3D11Device* m_pDevice = { nullptr };
+ID3D11DeviceContext* m_pDeviceContext = { nullptr };
+std::array<vector<CModel*>, ENUM_TO_SZET(EModelParts::END)> m_Parts;
+std::array<vector<wstring>, ENUM_TO_SZET(EModelParts::END)> m_PartTags;
+DelegateHandle m_ChangePartHandle;
+```
+
+</Editor>
+
+<Editor file="CustomSystem.cpp" fn="CCustomSystem::Add_Part(...), CCustomSystem::Ready_Uppper()">
+
+```cpp
+HRESULT CCustomSystem::Add_Part(EModelParts ePart, const wstring& wstrPrototypeTag, CModel **ppResult)
+{
+    CModel* pReturn = { nullptr };
+    {
+        if (!(pReturn = dynamic_cast<CModel*>(m_pGameInstance->Clone_Prototype(EPrototypeType::COMPONENT, 0, wstrPrototypeTag, nullptr))))
+            return E_FAIL;
+        m_Parts[ENUM_TO_UINT(ePart)].push_back(pReturn);
+        m_PartTags[ENUM_TO_UINT(ePart)].push_back(wstrPrototypeTag);
+    }
+    if(ppResult)
+        *ppResult = pReturn;
+    return S_OK;
+}
+// ... 코드 중략
+
+HRESULT CCustomSystem::Ready_Uppper()
+{
+    CModel* pInitPart = { nullptr };
+    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_SandVest", &pInitPart)))
+        return E_FAIL; 
+
+    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_TShirt")))
+        return E_FAIL;
+
+    if (FAILED(Add_Part(EModelParts::UPPER, L"Prototype_Component_Model_CustomUpper_Anbu")))
+        return E_FAIL;
+
+    m_pTarget->Change_Model(EModelParts::UPPER, pInitPart);
+    return S_OK;
+}
+```
+
+</Editor>
+
+후보 파츠는 화면에 들어올 때 프로토타입을 한 번씩 복제해 목록에 넣고, 태그도 같은 순서로 따로 저장합니다. 모델은 미리보기에 바로 끼워 넣는 데, 태그는 확정할 때 다음 레벨로 넘기는 데 씁니다. 부위마다 첫 번째 후보를 기본값으로 미리보기에 입혀 둡니다.
+
+#### B. 선택과 교체 이벤트
+
+<Editor file="Client_EventDefine.h" fn="ChangePart">
+
+```cpp
+struct ChangePart { using Signature = void(unsigned int, unsigned int); };
+```
+
+</Editor>
+
+<Editor file="CustomSystem.cpp" fn="CCustomSystem::Set_Event(), CCustomSystem::Change_Part(...), CCustomSystem::On_ChangePart(...)">
+
+```cpp
+void CCustomSystem::Set_Event()
+{
+    m_ChangePartHandle = m_pGameInstance->Subscribe<ChangePart>(this, &CCustomSystem::On_ChangePart);
+}
+
+void CCustomSystem::Change_Part(EModelParts ePart, _uint iIndex)
+{
+    if (ePart >= EModelParts::END || iIndex >= m_Parts[ENUM_TO_UINT(ePart)].size())
+    {
+        MSG_BOX("CCustomSystem::Change_Part, parameter was overvalue");
+        return;
+    }
+
+    if (ePart == EModelParts::ONESET)
+        m_bSelectedOneset = true;
+    else if (ePart == EModelParts::UPPER || ePart == EModelParts::LOWER)
+        m_bSelectedOneset = false;
+
+    m_iSelectedIndex[ENUM_TO_UINT(ePart)] = iIndex;
+    m_pGameInstance->Broadcast<ChangePart>(ENUM_TO_UINT(ePart), iIndex);
+}
+// ... 코드 중략
+
+void CCustomSystem::On_ChangePart(_uint iModeType, _uint iIndex)
+{
+    m_pTarget->Change_Model(static_cast<EModelParts>(iModeType), m_Parts[iModeType][iIndex]);
+}
+```
+
+</Editor>
+
+버튼은 `Change_Part`만 부르고, 실제 교체는 `ChangePart` 이벤트를 받은 쪽이 합니다. 선택을 기록하는 일과 모델을 바꾸는 일이 이벤트 버스로 나뉘어 있어서, 버튼 코드는 미리보기 오브젝트를 몰라도 됩니다. 한 벌 옷을 고르면 상의·하의 선택이 무효가 되고, 상의나 하의를 고르면 반대로 한 벌 옷이 무효가 됩니다.
+
+#### C. 확정 — 태그만 넘기기
+
+<Editor file="Engine_Struct.h" fn="MODELPARTS_PROTOTYPETAGS">
+
+```cpp
+typedef struct tagModelPartsPrototypeTags
+{
+	wstring wstrHead = { L"" };
+	wstring wstrFace = { L"" };
+	wstring wstrOneset = { L"" };
+	wstring wstrUpper = { L"" };
+	wstring wstrLower = { L"" };
+}MODELPARTS_PROTOTYPETAGS;
+```
+
+</Editor>
+
+<Editor file="CustomSystem.cpp" fn="CCustomSystem::Accept()">
+
+```cpp
+void CCustomSystem::Accept()
+{
+    MODELPARTS_PROTOTYPETAGS tData = {};
+
+    tData.wstrHead = m_PartTags[ENUM_TO_UINT(EModelParts::HEAD)][m_iSelectedIndex[ENUM_TO_UINT(EModelParts::HEAD)]];
+    tData.wstrFace = m_PartTags[ENUM_TO_UINT(EModelParts::FACE)][m_iSelectedIndex[ENUM_TO_UINT(EModelParts::FACE)]];
+    if (m_bSelectedOneset)
+    {
+        tData.wstrOneset = m_PartTags[ENUM_TO_UINT(EModelParts::ONESET)][m_iSelectedIndex[ENUM_TO_UINT(EModelParts::ONESET)]];
+    }
+    else
+    {
+        tData.wstrUpper = m_PartTags[ENUM_TO_UINT(EModelParts::UPPER)][m_iSelectedIndex[ENUM_TO_UINT(EModelParts::UPPER)]];
+        tData.wstrLower = m_PartTags[ENUM_TO_UINT(EModelParts::LOWER)][m_iSelectedIndex[ENUM_TO_UINT(EModelParts::LOWER)]];
+    }
+
+    m_pGameInstance->Set_ModelPartsData(tData);
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={760} src="/img/reviews/naruto/06-character-custom/flow.png" caption="버튼 선택 → 이벤트로 미리보기 교체 → 확정 시 태그만 저장 → 다음 레벨에서 조립" />
+
+확정하면 모델 객체가 아니라 태그 문자열만 저장합니다(<FigRef n={2} />). 미리보기 오브젝트와 후보 모델은 커스텀 레벨과 함께 해제되지만, 태그는 게임 데이터 매니저에 남아 다음 레벨에서 같은 파츠를 다시 만들 수 있습니다. 한 벌 옷을 골랐으면 상의·하의 칸을 비워 두고, 조립하는 쪽은 한 벌 옷 칸이 비었는지를 보고 어느 쪽을 쓸지 정합니다.
+
+</Tab>
+<Tab>
+
+커스텀 화면에 서 있는 미리보기 캐릭터입니다. 마스터 모델로 애니메이션을 돌리고, `Change_Model`로 부위별 파츠 오브젝트의 모델만 바꿔 끼웁니다. `Render()`에서는 본 행렬을 한 번 넘긴 뒤 선택된 파츠만 그립니다.
+
+#### A. 미리보기 교체와 렌더
+
+<Editor file="CustomObject.cpp" fn="CCustomObject::Change_Model(...)">
+
+```cpp
+void CCustomObject::Change_Model(EModelParts ePart, CModel* pModel)
+{
+    switch (ePart)
+    {
+    case Client::EModelParts::UPPER:
+        m_vecPartObjects[UPPER]->Change_Component(pModel);
+        m_eState = state::NOT_ONESET;
+        break;
+    case Client::EModelParts::LOWER:
+        m_vecPartObjects[LOWER]->Change_Component(pModel);
+        m_eState = state::NOT_ONESET;
+        break;
+    case Client::EModelParts::ONESET:
+        m_vecPartObjects[ONESET]->Change_Component(pModel);
+        m_eState = state::CHOOSE_ONESET;
+        break;
+    case Client::EModelParts::FACE:
+        m_vecPartObjects[FACE]->Change_Component(pModel);
+        break;
+    case Client::EModelParts::HEAD:
+        m_vecPartObjects[HEAD]->Change_Component(pModel);
+        break;
+    default:
+        MSG_BOX("CCustomObject::Change_Model, invalid ModelParts type");
+        break;
+    }
+
+    Safe_AddRef(pModel);
+}
+```
+
+</Editor>
+
+<Editor file="CustomObject.cpp" fn="CCustomObject::Render()">
+
+```cpp
+HRESULT CCustomObject::Render()
+{
+    if (FAILED(Super::Render()))
+        return E_FAIL;
+
+    CShader* pShader = Get_Component<CShader>();
+    CModel* pModel = Get_Component<CModel>();
+
+    pModel->Bind_Bones(pShader, 0, 2);
+    Get_Component<CTransform>()->Bind_ShaderResource(pShader);
+    if (FAILED(m_vecPartObjects[HEAD]->Render()))
+        return E_FAIL;
+    if (FAILED(m_vecPartObjects[FACE]->Render()))
+        return E_FAIL;
+    switch (m_eState)
+    {
+    case Client::CCustomObject::CHOOSE_ONESET:
+    {
+        if (FAILED(m_vecPartObjects[ONESET]->Render()))
+            return E_FAIL;
+    } break;
+    case Client::CCustomObject::NOT_ONESET:
+    {
+        if (FAILED(m_vecPartObjects[UPPER]->Render()))
+            return E_FAIL;
+        if (FAILED(m_vecPartObjects[LOWER]->Render()))
+            return E_FAIL;
+    } break;
+    }
+
+    return S_OK;
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={560} src="/img/reviews/naruto/06-character-custom/skeleton.png" caption="마스터 모델의 뼈대·애니메이션 하나에 파츠 메시만 얹는 구조" />
+
+미리보기는 부위마다 파츠 오브젝트를 하나씩 두고, 교체할 때는 그 오브젝트의 모델 컴포넌트만 갈아 끼웁니다. 그릴 때는 마스터 모델이 계산한 본 행렬을 셰이더에 한 번만 넘기고, 각 파츠는 메시만 그립니다. 파츠의 셰이더 컴포넌트가 같은 이펙트를 공유하므로, 한 번 넘긴 본 행렬을 모든 파츠가 함께 씁니다(<FigRef n={3} />). 한 벌 옷 상태면 상의·하의 대신 한 벌 옷만 그립니다.
+
+</Tab>
+<Tab>
+
+게임 레벨에서 저장된 태그로 캐릭터 모델 하나를 조립합니다. 모델 생성 정보에 태그가 들어 있으면 파일을 읽지 않고 마스터 뼈대·애니메이션을 복제한 뒤, 부위별 `Add_Parts`로 메시와 머티리얼을 이어 붙입니다. 그릴 때는 `Bind_Masterbones`로 본 행렬을 한 번에 넘깁니다.
+
+#### A. 마스터 뼈대 위에 조립
+
+<Editor file="Model.cpp" fn="CModel::Initialize(...)">
+
+```cpp
+if (!pDesc->pPrototypeTags)
+{
+// ... 코드 중략
+
+else
+{
+	if (FAILED(Combine_Model(pDesc->pPrototypeTags)))
+		return E_FAIL;
+}
+```
+
+</Editor>
+
+<Editor file="Model.cpp" fn="CModel::Combine_Model(...)">
+
+```cpp
+HRESULT CModel::Combine_Model(const MODELPARTS_PROTOTYPETAGS* pPrototypeTags)
+{
+	m_vecMeshes.reserve(50);
+	m_vecMaterials.reserve(50);
+
+	// Master
+	{
+		CModel* pMaster = { nullptr };
+		if (!(pMaster = Get_Clone(L"Prototype_Component_Model_Master")))
+			return E_FAIL;
+		m_vecBones.resize(pMaster->m_vecBones.size());
+		for (size_t i = 0; i < pMaster->m_vecBones.size(); ++i)
+		{
+			m_vecBones[i] = pMaster->m_vecBones[i]->Clone();
+		}
+		m_vecAnimations.resize(pMaster->m_vecAnimations.size());
+		for (size_t i = 0; i < pMaster->m_vecAnimations.size(); ++i)
+		{
+			m_vecAnimations[i] = pMaster->m_vecAnimations[i]->Clone();
+		}
+
+		m_pMasterMesh = static_cast<CMesh*>(pMaster->m_vecMeshes[0]->Clone(nullptr));
+		if (!m_pMasterMesh)
+			return E_FAIL;
+		Safe_Release(pMaster);
+	}
+
+
+	// Head
+	{
+		if (FAILED(Add_Parts(pPrototypeTags->wstrHead)))
+			return E_FAIL;
+	}
+
+	// Face
+	{
+		if (FAILED(Add_Parts(pPrototypeTags->wstrFace)))
+			return E_FAIL;
+	}
+
+	// Body
+	if (pPrototypeTags->wstrOneset.empty())
+	{
+		if (FAILED(Add_Parts(pPrototypeTags->wstrUpper)))
+			return E_FAIL;
+		if (FAILED(Add_Parts(pPrototypeTags->wstrLower)))
+			return E_FAIL;
+	}
+	else
+	{
+		if (FAILED(Add_Parts(pPrototypeTags->wstrOneset)))
+			return E_FAIL;
+	}
+
+	return S_OK;
+}
+```
+
+</Editor>
+
+조립은 마스터 모델에서 시작합니다. 뼈대와 애니메이션은 마스터 것을 복제하고, 마스터 메시도 하나 복제해 둡니다. 파츠에서는 메시만 가져오므로 어떤 조합이든 같은 뼈대와 같은 애니메이션 목록을 갖습니다. 상태 머신이 애니메이션 이름으로 재생을 요청해도 파츠 조합과 상관없이 같은 결과가 나옵니다.
+
+#### B. 머티리얼 번호 보정
+
+<Editor file="Model.cpp" fn="CModel::Add_Parts(...)">
+
+```cpp
+HRESULT CModel::Add_Parts(const wstring& wstrPrototypeTag)
+{
+	CModel* pPart = { nullptr };
+	size_t iMaterialIndexDistance = { m_vecMaterials.size() };
+	if (!(pPart = Get_Clone(wstrPrototypeTag)))
+		return E_FAIL;
+
+	for (size_t i = 0; i < pPart->m_vecMeshes.size(); ++i)
+	{
+		CMesh* pClone = static_cast<CMesh*>(pPart->m_vecMeshes[i]->Clone(nullptr));
+		pClone->Set_MaterialIndex(pClone->Get_MaterialIndex() + static_cast<_uint>(iMaterialIndexDistance));
+		m_vecMeshes.push_back(pClone);
+	}
+
+	for (size_t i = 0; i < pPart->m_vecMaterials.size(); ++i)
+	{
+		m_vecMaterials.push_back(m_pGameInstance->Get_Resource<CMaterial>(pPart->m_vecMaterials[i]->Get_Name()));
+	}
+
+	Safe_Release(pPart);
+	return S_OK;
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={560} src="/img/reviews/naruto/06-character-custom/material.png" caption="파츠 메시를 이어 붙일 때 머티리얼 번호를 앞 파츠 개수만큼 밀어 줌" />
+
+파츠 모델마다 머티리얼 번호가 0부터 시작하므로, 그대로 이어 붙이면 얼굴 메시가 머리 파츠의 머티리얼을 가리키게 됩니다. 그래서 메시를 붙이기 전에 지금까지 쌓인 머티리얼 개수를 기억해 두고, 그만큼 번호를 밀어 줍니다(<FigRef n={4} />). 머티리얼 자체는 복사하지 않고, 이미 로드된 머티리얼을 이름으로 리소스 캐시에서 찾아 공유합니다.
+
+#### C. 본 행렬 한 번 바인딩
+
+<Editor file="Mesh.cpp" fn="CMesh::Bind_Bones(...)">
+
+```cpp
+HRESULT CMesh::Bind_Bones(CShader* pShader, const vector<CBone*>& vecBones, _uint iIndexDistance)
+{
+	for (size_t i = 0; i < m_vecAffectBoneIndices.size(); ++i)
+	{
+		::XMStoreFloat4x4(&m_boneMatrices.transforms[i + iIndexDistance],
+			::XMLoadFloat4x4(&m_vecOffsetMatrices[i]) *
+			vecBones[m_vecAffectBoneIndices[i]]->Get_CombinedTransformMatrix());
+	}
+	return pShader->Bind_BoneData(m_boneMatrices);
+}
+```
+
+</Editor>
+
+<Editor file="Body.cpp" fn="CBody::Render()">
+
+```cpp
+pShader->Bind_TransformData(m_matCombinedWorld);
+
+if (m_bCustomed)
+{
+	pModel->Bind_Masterbones(pShader, 2);
+	for (_uint i = 0; i < iMeshCount; ++i)
+	{
+		pModel->Bind_Material(pShader, i);
+		pShader->Apply();
+		pModel->Render(i);
+	}
+}
+else
+{
+	for (_uint i = 0; i < iMeshCount; ++i)
+	{
+		pModel->Bind_Material(pShader, i);
+		pModel->Bind_Bones(pShader, i);
+		pShader->Apply();
+		pModel->Render(i);
+	}
+}
+```
+
+</Editor>
+
+일반 모델은 메시마다 자기가 쓰는 본으로 행렬을 다시 채우지만, 조립된 모델은 마스터 메시 기준으로 한 번만 채우고 모든 파츠 메시를 그립니다. 그러려면 파츠 메시의 정점이 가리키는 본 번호가 마스터 메시와 같은 순서여야 하므로, 파츠 모델은 모두 같은 뼈대 기준으로 만들어 둡니다. 그 대가로 파츠가 늘어나도 본 행렬 계산은 한 번이면 됩니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**파츠 목록이 코드 여러 곳에 흩어져 있었습니다.** 후보 파츠의 태그는 `Ready_Uppper` 같은 부위별 함수에, 버튼에 보이는 이름은 UI 코드에, 프로토타입 등록은 로더에 각각 적혀 있습니다. 파츠 하나를 추가하려면 세 곳을 함께 고쳐야 하고, 시스템과 UI의 순서가 어긋나면 버튼 이름과 실제 모델이 달라집니다. 부위·태그·표시 이름을 데이터 파일 하나에 두고 세 곳이 그 목록을 읽는 구조였어야 합니다.
+
+남은 개선점입니다.
+
+- 미리보기는 파츠 오브젝트를 따로 그리고 게임은 `Combine_Model`로 합치므로 조립 코드가 둘입니다. 미리보기도 교체할 때마다 `Combine_Model`로 다시 조립하는 편이 일관됩니다.
+- 한 벌 옷 여부를 시스템(`m_bSelectedOneset`)과 미리보기(`m_eState`)가 따로 기록합니다. 이벤트에 선택 결과를 담아 한쪽만 기준으로 삼는 편이 안전합니다.
+- 파츠 메시가 마스터와 같은 본 순서라는 전제를 확인하지 않습니다. 조립할 때 본 이름 목록을 비교하면 잘못 만든 파츠를 로딩 시점에 잡을 수 있습니다.
