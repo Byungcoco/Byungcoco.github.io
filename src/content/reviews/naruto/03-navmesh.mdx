@@ -97,7 +97,6 @@ void CMainPlayer::Update_Late(const _float fTimeDelta)
         Movement_Ground(fTimeDelta);
 }
 // ... 코드 중략
-
 void CMainPlayer::Movement_Wall(const _float fTimeDelta)
 {
     // ... 코드 중략
@@ -121,6 +120,8 @@ void CMainPlayer::Movement_Wall(const _float fTimeDelta)
         _vector vNewPosition = pNavigation->Project_OnNavigation(vPrevPosition);
         pTransform->Set_Info(TRANSFORM_INFO_STATE::POS, vNewPosition);
     }
+// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -286,71 +287,75 @@ _bool CPolygonNavigationCellMaker::Point_InTriangleXZ(const _float3& vPoint, con
 <Editor file="PolygonNavigationCellMaker.cpp" fn="CPolygonNavigationCellMaker::Build_CellsFromPolygon(outer, holes, bridges)">
 
 ```cpp
-vector<vector<_float3>> vecHolesVertices;
-vecHolesVertices.resize(iHoleCount);
-for (size_t i = 0; i < iHoleCount; ++i)
+void CPolygonNavigationCellMaker::Build_CellsFromPolygon(CPolygon* pOuterPolygon, vector<CPolygon*> &vecHolePolygons,vector<HoleBridges> &vecBridges)
 {
-	const vector<CVertexObject*>& vecHolePolyPoints = vecHolePolygons[i]->Get_Vertices();
-	const size_t iHolePointsCount = vecHolePolyPoints.size();
-	vecHolesVertices[i].reserve(iHolePointsCount);
-	for (size_t j = 0; j < iHolePointsCount; ++j)
+	// ... 코드 중략
+	vector<vector<_float3>> vecHolesVertices;
+	vecHolesVertices.resize(iHoleCount);
+	for (size_t i = 0; i < iHoleCount; ++i)
 	{
-		CVertexObject* const pHoleVertex = vecHolePolyPoints[j];
-		if (!pHoleVertex)
-			continue;
-
-		_float3 vPos = {};
-		::XMStoreFloat3(&vPos, pHoleVertex->Get_Component<CTransform>()->Get_Info(TRANSFORM_INFO_STATE::POS));
-		vecHolesVertices[i].push_back(vPos);
-	}
-
-	_float fHoleArea = Compute_SignedAreaXZ(vecHolesVertices[i]);
-	_bool bHoleIsCW = fHoleArea < 0.f;
-	// Outer와 반대로
-	if (bOuterIsCW == bHoleIsCW)
-	{
-		std::reverse(vecHolesVertices[i].begin(), vecHolesVertices[i].end());
-		for (auto& bridge : vecBridges)
+		const vector<CVertexObject*>& vecHolePolyPoints = vecHolePolygons[i]->Get_Vertices();
+		const size_t iHolePointsCount = vecHolePolyPoints.size();
+		vecHolesVertices[i].reserve(iHolePointsCount);
+		for (size_t j = 0; j < iHolePointsCount; ++j)
 		{
-			if (bridge.iHolePolyIndex == i)
+			CVertexObject* const pHoleVertex = vecHolePolyPoints[j];
+			if (!pHoleVertex)
+				continue;
+
+			_float3 vPos = {};
+			::XMStoreFloat3(&vPos, pHoleVertex->Get_Component<CTransform>()->Get_Info(TRANSFORM_INFO_STATE::POS));
+			vecHolesVertices[i].push_back(vPos);
+		}
+
+		_float fHoleArea = Compute_SignedAreaXZ(vecHolesVertices[i]);
+		_bool bHoleIsCW = fHoleArea < 0.f;
+		// Outer와 반대로
+		if (bOuterIsCW == bHoleIsCW)
+		{
+			std::reverse(vecHolesVertices[i].begin(), vecHolesVertices[i].end());
+			for (auto& bridge : vecBridges)
 			{
-				bridge.iHoleVertexIndex =
-					((iHolePointsCount - 1) - bridge.iHoleVertexIndex);
+				if (bridge.iHolePolyIndex == i)
+				{
+					bridge.iHoleVertexIndex =
+						((iHolePointsCount - 1) - bridge.iHoleVertexIndex);
+				}
 			}
 		}
 	}
-}
-// ... 코드 중략
 
-std::sort(vecBridges.begin(), vecBridges.end(),
-	[](const HoleBridges& a, const HoleBridges& b)->bool
-	{
-		return a.iOuterVertexIndex < b.iOuterVertexIndex;
-	});
-
-_uint iBridgeStep = { 0 };
-for (size_t iOuter = 0; iOuter < iOuterPointsCount; ++iOuter)
-{
-	vecFinalVertices.push_back(vecOuterVertices[iOuter]);
-
-	if (iBridgeStep < vecBridges.size() && iOuter == vecBridges[iBridgeStep].iOuterVertexIndex)
-	{
-		const HoleBridges& bridge = vecBridges[iBridgeStep];
-		const vector<_float3>& vecHoleVrts = vecHolesVertices[bridge.iHolePolyIndex];
-		const size_t iHoleVerticesCount = vecHoleVrts.size();
-		const size_t iHoleStart = bridge.iHoleVertexIndex;
-
-		for (size_t iHole = 0; iHole < iHoleVerticesCount; ++iHole)
+	std::sort(vecBridges.begin(), vecBridges.end(),
+		[](const HoleBridges& a, const HoleBridges& b)->bool
 		{
-			// Vertex를 Hole과 연결된곳을 Start로 순회
-			size_t iIndex = (iHoleStart + iHole) % iHoleVerticesCount;
-			vecFinalVertices.push_back(vecHoleVrts[iIndex]);
-		}
+			return a.iOuterVertexIndex < b.iOuterVertexIndex;
+		});
 
-		vecFinalVertices.push_back(vecHolesVertices[bridge.iHolePolyIndex][iHoleStart]);
+	_uint iBridgeStep = { 0 };
+	for (size_t iOuter = 0; iOuter < iOuterPointsCount; ++iOuter)
+	{
 		vecFinalVertices.push_back(vecOuterVertices[iOuter]);
-		++iBridgeStep;
+
+		if (iBridgeStep < vecBridges.size() && iOuter == vecBridges[iBridgeStep].iOuterVertexIndex)
+		{
+			const HoleBridges& bridge = vecBridges[iBridgeStep];
+			const vector<_float3>& vecHoleVrts = vecHolesVertices[bridge.iHolePolyIndex];
+			const size_t iHoleVerticesCount = vecHoleVrts.size();
+			const size_t iHoleStart = bridge.iHoleVertexIndex;
+
+			for (size_t iHole = 0; iHole < iHoleVerticesCount; ++iHole)
+			{
+				// Vertex를 Hole과 연결된곳을 Start로 순회
+				size_t iIndex = (iHoleStart + iHole) % iHoleVerticesCount;
+				vecFinalVertices.push_back(vecHoleVrts[iIndex]);
+			}
+
+			vecFinalVertices.push_back(vecHolesVertices[bridge.iHolePolyIndex][iHoleStart]);
+			vecFinalVertices.push_back(vecOuterVertices[iOuter]);
+			++iBridgeStep;
+		}
 	}
+	// ... 코드 중략
 }
 ```
 

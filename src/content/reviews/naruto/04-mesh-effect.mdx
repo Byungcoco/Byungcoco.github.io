@@ -277,6 +277,9 @@ void CShader::Bind_SkillEffectData(const SHADER_SKILLEFFECT_DESC& desc)
 {
 	m_pSkillEffect_CBuffer->Copy_Data(desc);
 }
+// ... 코드 중략
+void CShader::Create_ConstantBuffer()
+{
 	// ... 코드 중략
 	// SkillEffect
 	{
@@ -286,6 +289,8 @@ void CShader::Bind_SkillEffectData(const SHADER_SKILLEFFECT_DESC& desc)
 			m_pSkillEffectBuffer->SetConstantBuffer(m_pSkillEffect_CBuffer->Get_Buffer());
 		}
 	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -531,14 +536,21 @@ if (pLevelEffect->Is_FileDirty())
 <Editor file="Loader.cpp" fn="CLoader 이펙트 데이터 로드">
 
 ```cpp
-// SkillEffectRawData
+HRESULT CLoader::Loading_For_Logo()
 {
-	if (FAILED(m_pGameInstance->Add_MeshEffectPresets(L"../../Resources/Data/EffectData/EffectMeshPreset.json")))
-		return E_FAIL;
-	if (FAILED(m_pGameInstance->Add_MeshEffectPreviews(L"../../Resources/Data/EffectData/Sharkbomb.json")))
-		return E_FAIL;
-	if (FAILED(m_pGameInstance->Add_MeshEffectPreviews(L"../../Resources/Data/EffectData/Fireball.json")))
-		return E_FAIL;
+	// ... 코드 중략
+	// SkillEffectRawData
+	{
+		if (FAILED(m_pGameInstance->Add_MeshEffectPresets(L"../../Resources/Data/EffectData/EffectMeshPreset.json")))
+			return E_FAIL;
+		if (FAILED(m_pGameInstance->Add_MeshEffectPreviews(L"../../Resources/Data/EffectData/Sharkbomb.json")))
+			return E_FAIL;
+		if (FAILED(m_pGameInstance->Add_MeshEffectPreviews(L"../../Resources/Data/EffectData/Fireball.json")))
+			return E_FAIL;
+		// ... 코드 중략
+	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>

@@ -145,21 +145,29 @@ void CBoss::UpdateState(const float _fDeltaTime)
 <Editor file="CBoss.cpp" fn="CBoss::Update_GameObject(...), CBoss::LateUpdate_GameObject(...)">
 
 ```cpp
-m_fHoverTime += fTimeDelta;
-for (_float &fCooldown : m_fCooldown)
+_int CBoss::Update_GameObject(const _float &fTimeDelta)
 {
-	fCooldown = (std::max)(0.f, fCooldown - fTimeDelta);
+	// ... 코드 중략
+	m_fHoverTime += fTimeDelta;
+	for (_float &fCooldown : m_fCooldown)
+	{
+		fCooldown = (std::max)(0.f, fCooldown - fTimeDelta);
+	}
+
+	UpdateState(fTimeDelta);
+	// ... 코드 중략
+	if(m_eCurrentState != State::DEATH)
+		UpdateSpeed(fTimeDelta);
+	// ... 코드 중략
 }
 
-UpdateState(fTimeDelta);
-// ... 코드 중략
-
-if(m_eCurrentState != State::DEATH)
-	UpdateSpeed(fTimeDelta);
-// ... 코드 중략
-
-if (Get_Helath() <= 0)
-	ChangeState(State::DEATH);
+void CBoss::LateUpdate_GameObject(const _float &fTimeDelta)
+{
+	// ... 코드 중략
+	if (Get_Helath() <= 0)
+		ChangeState(State::DEATH);
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -188,6 +196,8 @@ void CBoss::Update_Idle(_float fDeltaTime)
 
 		ChangeState(State::MOVE);
 	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -245,39 +255,42 @@ _float fBul_Cooldown = 1.3f;
 <Editor file="CBoss.cpp" fn="CBoss::Update_Dash(...)">
 
 ```cpp
-m_fStateDuration += fDeltaTime;
-if (m_iPhase == 0)
+void CBoss::Update_Dash(_float fDeltaTime)
 {
-	m_fTargetVel_X = 0.f;
-	m_fTargetVel_Z = 0.f;
-
-	if (m_fStateDuration >= m_tRigidbodyConfig.fDash_WindUp)
+	m_fStateDuration += fDeltaTime;
+	if (m_iPhase == 0)
 	{
-		m_iPhase = 1;
-		m_fStateDuration = 0.f;
-		// TODO - DASH effect
+		m_fTargetVel_X = 0.f;
+		m_fTargetVel_Z = 0.f;
+
+		if (m_fStateDuration >= m_tRigidbodyConfig.fDash_WindUp)
+		{
+			m_iPhase = 1;
+			m_fStateDuration = 0.f;
+		}
 	}
-}
-else if (m_iPhase == 1)
-{
-	m_fTargetVel_X = m_vDashDir.x * m_tRigidbodyConfig.fDash_Speed;
+	else if (m_iPhase == 1)
+	{
+		m_fTargetVel_X = m_vDashDir.x * m_tRigidbodyConfig.fDash_Speed;
+		// ... 코드 중략
+		if (m_fStateDuration >= m_tRigidbodyConfig.fDash_Duration)
+		{
+			m_iPhase = 2;
+			m_fStateDuration = 0.f;
+		}
+	}
+	else
+	{
+		m_fTargetVel_X = 0.f;
+		m_fTargetVel_Z = 0.f;
+
+		if (m_fStateDuration >= m_tRigidbodyConfig.fDash_Recover)
+		{
+			Set_Cooldown(0, m_tRigidbodyConfig.fDash_Cooldown);
+			ChangeState(State::IDLE);
+		}
+	}
 	// ... 코드 중략
-	if (m_fStateDuration >= m_tRigidbodyConfig.fDash_Duration)
-	{
-		m_iPhase = 2;
-		m_fStateDuration = 0.f;
-	}
-}
-else
-{
-	m_fTargetVel_X = 0.f;
-	m_fTargetVel_Z = 0.f;
-
-	if (m_fStateDuration >= m_tRigidbodyConfig.fDash_Recover)
-	{
-		Set_Cooldown(0, m_tRigidbodyConfig.fDash_Cooldown);
-		ChangeState(State::IDLE);
-	}
 }
 ```
 
@@ -329,52 +342,60 @@ else if (m_iPhase == 1)
 <Editor file="CBoss.cpp" fn="CBoss::Update_Missile(...)">
 
 ```cpp
-case 1: // Fire volley (한 볼리 안에서 N발, 간격 fMis_Interval)
-	if (m_iShots < m_tRigidbodyConfig.iMis_PerVolley &&
-		m_fStateDuration >= m_tRigidbodyConfig.fMis_Interval)
+void CBoss::Update_Missile(_float fDeltaTime)
+{
+	// ... 코드 중략
+	switch (m_iPhase)
 	{
-		m_fStateDuration = 0.f;
-
-		// 한 발 발사
-		Spawn_Missile();
-		++m_iShots;
-	}
-
-	// 볼리 완료 → 다음 단계로
-	if (m_iShots >= m_tRigidbodyConfig.iMis_PerVolley)
-	{
-		m_iPhase = 2;
-		m_fStateDuration = 0.f;
-	}
-	break;
-
-case 2: // Volley gap (다음 볼리까지 휴지)
-	if (m_fStateDuration >= m_tRigidbodyConfig.fMis_VolleyGap)
-	{
-		m_fStateDuration = 0.f;
-		++m_iVolley;
-
-		if (m_iVolley < m_tRigidbodyConfig.iMis_Volley)
+	// ... 코드 중략
+	case 1: // Fire volley (한 볼리 안에서 N발, 간격 fMis_Interval)
+		if (m_iShots < m_tRigidbodyConfig.iMis_PerVolley &&
+			m_fStateDuration >= m_tRigidbodyConfig.fMis_Interval)
 		{
-			// 다음 볼리 시작
-			m_iPhase = 1;
-			m_iShots = 0;
-		}
-		else
-		{
-			// 모든 볼리 끝 → 리커버
-			m_iPhase = 3;
-		}
-	}
-	break;
+			m_fStateDuration = 0.f;
 
-case 3: // Recover
-	if (m_fStateDuration >= m_tRigidbodyConfig.fMis_Recover)
-	{
-		Set_Cooldown(1, m_tRigidbodyConfig.fMis_Cooldown);
-		ChangeState(State::IDLE);
+			// 한 발 발사
+			Spawn_Missile();
+			++m_iShots;
+		}
+
+		// 볼리 완료 → 다음 단계로
+		if (m_iShots >= m_tRigidbodyConfig.iMis_PerVolley)
+		{
+			m_iPhase = 2;
+			m_fStateDuration = 0.f;
+		}
+		break;
+
+	case 2: // Volley gap (다음 볼리까지 휴지)
+		if (m_fStateDuration >= m_tRigidbodyConfig.fMis_VolleyGap)
+		{
+			m_fStateDuration = 0.f;
+			++m_iVolley;
+
+			if (m_iVolley < m_tRigidbodyConfig.iMis_Volley)
+			{
+				// 다음 볼리 시작
+				m_iPhase = 1;
+				m_iShots = 0;
+			}
+			else
+			{
+				// 모든 볼리 끝 → 리커버
+				m_iPhase = 3;
+			}
+		}
+		break;
+
+	case 3: // Recover
+		if (m_fStateDuration >= m_tRigidbodyConfig.fMis_Recover)
+		{
+			Set_Cooldown(1, m_tRigidbodyConfig.fMis_Cooldown);
+			ChangeState(State::IDLE);
+		}
+		break;
 	}
-	break;
+}
 ```
 
 </Editor>

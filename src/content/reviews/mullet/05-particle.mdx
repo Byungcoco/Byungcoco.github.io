@@ -59,29 +59,33 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CMonster.cpp" fn="CMonster::Spawn_Explosion_Effect(...)">
 
 ```cpp
-tInfo.eType = WorldEffectType::BLOOD_EXPLOSION;
-tInfo.fSize = 10.f;
-CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_WORLD, &tInfo,
-    [vPos, vLook](CGameObject *pGo)->void
-    {
-        pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.f, 0.f });
-    });
+void CMonster::Spawn_Explosion_Effect(const _vec3& vPos)
+{
+    // ... 코드 중략
+    tInfo.eType = WorldEffectType::BLOOD_EXPLOSION;
+    tInfo.fSize = 10.f;
+    CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_WORLD, &tInfo,
+        [vPos, vLook](CGameObject *pGo)->void
+        {
+            pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.f, 0.f });
+        });
 
-EffectOptions Option = Get_Preset_BulletSpark();
-CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_PIXEL, &Option,
-    [vPos](CGameObject *pGo)->void
-    {
-        pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.1f, 0.f });
-    });
+    EffectOptions Option = Get_Preset_BulletSpark();
+    CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_PIXEL, &Option,
+        [vPos](CGameObject *pGo)->void
+        {
+            pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.1f, 0.f });
+        });
 
-SpriteParticleOptions Option2;
-Option2.tEffectOption = Get_Preset_Blood();
-Option2.eType = SpriteParticleType::DRONEBODY;
-CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_PIXEL_SPRITE, &Option2,
-    [vPos](CGameObject *pGo)->void
-    {
-        pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.25f, 0.f });
-    });
+    SpriteParticleOptions Option2;
+    Option2.tEffectOption = Get_Preset_Blood();
+    Option2.eType = SpriteParticleType::DRONEBODY;
+    CObjectPoolManager::GetInstance()->Spawn(PoolType::EFFECT_PIXEL_SPRITE, &Option2,
+        [vPos](CGameObject *pGo)->void
+        {
+            pGo->GetTransform()->Set_Info(INFO::INFO_POS, vPos + _vec3{ 0.f, 0.25f, 0.f });
+        });
+}
 ```
 
 </Editor>
@@ -319,6 +323,21 @@ if (tElement.fDurationTime >= tElement.fLifeTime)
 <Editor file="CEffect_Pixel.cpp" fn="CEffect_Pixel::Ready_VB(), CEffect_Pixel::Render_GameObject()">
 
 ```cpp
+void CEffect_Pixel::Render_GameObject()
+{
+    // ... 코드 중략
+    m_pGraphicDev->SetStreamSource(0, m_pVB, 0, sizeof(VTXPIXELCOLOR));
+    m_pGraphicDev->SetFVF(FVF_PIXEL_COLOR);
+    m_pGraphicDev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    Effect_SetRenderState();
+
+    // 포인트 스프라이트 모드
+    m_pGraphicDev->SetRenderState(D3DRS_POINTSPRITEENABLE, TRUE);
+    // ... 코드 중략
+    m_pGraphicDev->DrawPrimitive(D3DPT_POINTLIST, 0, m_iAliveCount);
+    // ... 코드 중략
+}
+// ... 코드 중략
 HRESULT CEffect_Pixel::Ready_VB()
 {
 	if (!m_pVB || m_iAliveCount <= 0)
@@ -343,16 +362,6 @@ HRESULT CEffect_Pixel::Ready_VB()
 	m_pVB->Unlock();
     return S_OK;
 }
-    // ... 코드 중략
-    m_pGraphicDev->SetStreamSource(0, m_pVB, 0, sizeof(VTXPIXELCOLOR));
-    m_pGraphicDev->SetFVF(FVF_PIXEL_COLOR);
-    m_pGraphicDev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    Effect_SetRenderState();
-
-    // 포인트 스프라이트 모드
-    m_pGraphicDev->SetRenderState(D3DRS_POINTSPRITEENABLE, TRUE);
-    // ... 코드 중략
-    m_pGraphicDev->DrawPrimitive(D3DPT_POINTLIST, 0, m_iAliveCount);
 ```
 
 </Editor>
@@ -369,30 +378,38 @@ HRESULT CEffect_Pixel::Ready_VB()
 <Editor file="CEffect_Pixel_Sprite.cpp" fn="CEffect_Pixel_Sprite::Ready_VB()">
 
 ```cpp
-    _float fHalf = tElement.fSize * 0.5f;
-    _float fCos = cosf(tElement.fAngle);
-    _float fSin = sinf(tElement.fAngle);
+HRESULT CEffect_Pixel_Sprite::Ready_VB()
+{
+    // ... 코드 중략
+    for (ParticleInfo &tElement : m_vecParticles)
+    {
+        // ... 코드 중략
+        _float fHalf = tElement.fSize * 0.5f;
+        _float fCos = cosf(tElement.fAngle);
+        _float fSin = sinf(tElement.fAngle);
 
-    _vec3 vLocalOffset_0{ -fHalf, fHalf, 0.f };
-    _vec3 vLocalOffset_1{ fHalf, fHalf, 0.f };
-    _vec3 vLocalOffset_2{ fHalf, -fHalf, 0.f };
-    _vec3 vLocalOffset_3{ -fHalf, -fHalf, 0.f };
+        _vec3 vLocalOffset_0{ -fHalf, fHalf, 0.f };
+        _vec3 vLocalOffset_1{ fHalf, fHalf, 0.f };
+        _vec3 vLocalOffset_2{ fHalf, -fHalf, 0.f };
+        _vec3 vLocalOffset_3{ -fHalf, -fHalf, 0.f };
 
-    auto GetRotate = [&](const _vec3 &v)->_vec3
-    { return _vec3(v.x * fCos - v.y * fSin, v.x * fSin + v.y * fCos, 0.f); };
+        auto GetRotate = [&](const _vec3 &v)->_vec3
+        { return _vec3(v.x * fCos - v.y * fSin, v.x * fSin + v.y * fCos, 0.f); };
 
-    vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_0);
-    vtx[iIndex].vTexUV = { 0.f, 0.f };
-    ++iIndex;
-    vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_1);
-    vtx[iIndex].vTexUV = { 1.f, 0.f };
-    ++iIndex;
-    vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_2);
-    vtx[iIndex].vTexUV = { 1.f, 1.f };
-    ++iIndex;
-    vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_3);
-    vtx[iIndex].vTexUV = { 0.f, 1.f };
-    ++iIndex;
+        vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_0);
+        vtx[iIndex].vTexUV = { 0.f, 0.f };
+        ++iIndex;
+        vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_1);
+        vtx[iIndex].vTexUV = { 1.f, 0.f };
+        ++iIndex;
+        vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_2);
+        vtx[iIndex].vTexUV = { 1.f, 1.f };
+        ++iIndex;
+        vtx[iIndex].vPosition = tElement.vPosition + GetRotate(vLocalOffset_3);
+        vtx[iIndex].vTexUV = { 0.f, 1.f };
+        ++iIndex;
+    }
+	// ... 코드 중략
 }
 ```
 
@@ -450,14 +467,17 @@ void CEffect_World::LateUpdate_GameObject(const _float &fTimeDelta)
 <Editor file="CBoss.cpp" fn="CBoss::Update_Dash(...), CBoss::Record_AfterImage(), CBoss::Update_AfterImage(...)">
 
 ```cpp
+void CBoss::Update_Dash(_float fDeltaTime)
+{
+	// ... 코드 중략
 	m_fDurationRecordTime += fDeltaTime;
 	if (m_fDurationRecordTime >= m_fRecordTime)
 	{
 		Record_AfterImage();
 		m_fDurationRecordTime -= m_fRecordTime;
 	}
+}
 // ... 코드 중략
-
 void CBoss::Record_AfterImage()
 {
 	AfterImage tData;
@@ -500,26 +520,33 @@ void CBoss::Update_AfterImage(const _float fDeltaTime)
 <Editor file="CBoss.cpp" fn="CBoss::Render_AfterImage()">
 
 ```cpp
-m_pGraphicDev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-m_pGraphicDev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-m_pGraphicDev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
-
-// Texture * TFACTOR
-m_pGraphicDev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2);
-m_pGraphicDev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_TFACTOR);
-
-m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
-
-for (const AfterImage &element : m_dequeAfterImage)
+void CBoss::Render_AfterImage()
 {
-	_float fTime = std::clamp(element.fLife / m_fLifeLimit, 0.f, 1.f);
+	// ... 코드 중략
+	m_pGraphicDev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+	m_pGraphicDev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+	m_pGraphicDev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
 
-	D3DXCOLOR color = Lerp_Color(m_AfterIamge_StartColor, m_AfterIamge_EndColor, fTime);
+	// Texture * TFACTOR
+	m_pGraphicDev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2);
+	m_pGraphicDev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_TFACTOR);
 
-	DWORD dwTF = D3DCOLOR_COLORVALUE(color.r, color.g, color.b, color.a);
-	m_pGraphicDev->SetRenderState(D3DRS_TEXTUREFACTOR, dwTF);
+	m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+	m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+	m_pGraphicDev->SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
+
+	for (const AfterImage &element : m_dequeAfterImage)
+	{
+		_float fTime = std::clamp(element.fLife / m_fLifeLimit, 0.f, 1.f);
+
+		D3DXCOLOR color = Lerp_Color(m_AfterIamge_StartColor, m_AfterIamge_EndColor, fTime);
+
+		DWORD dwTF = D3DCOLOR_COLORVALUE(color.r, color.g, color.b, color.a);
+		m_pGraphicDev->SetRenderState(D3DRS_TEXTUREFACTOR, dwTF);
+		// ... 코드 중략
+	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>

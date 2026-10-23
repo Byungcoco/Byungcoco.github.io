@@ -90,6 +90,8 @@ void CScene::Update(const float _fDeltaTime)
 	// ... 코드 중략
 	UIUpdate(_fDeltaTime);
 	CCameraManager::Get_Instance()->Update(_fDeltaTime);
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -101,30 +103,34 @@ void CScene::Update(const float _fDeltaTime)
 <Editor file="CGameScene.cpp" fn="Render(...)">
 
 ```cpp
-if (m_pSkyLineBmp)
+void CGameScene::Render(HDC hDC)
 {
-	::BitBlt(
-		hDC,
-		(int)-CCameraManager::Get_Instance()->GetDiff().x * 0.1,
-		(int)-CCameraManager::Get_Instance()->GetDiff().y - 75.f,
-		(int)m_pSkyLineBmp->GetSize().x,
-		(int)m_pSkyLineBmp->GetSize().y,
-		m_pSkyLineBmp->Get_DC(),
-		0, 0,
-		SRCCOPY);
-}
+	if (m_pSkyLineBmp)
+	{
+		::BitBlt(
+			hDC,
+			(int)-CCameraManager::Get_Instance()->GetDiff().x * 0.1,
+			(int)-CCameraManager::Get_Instance()->GetDiff().y - 75.f,
+			(int)m_pSkyLineBmp->GetSize().x,
+			(int)m_pSkyLineBmp->GetSize().y,
+			m_pSkyLineBmp->Get_DC(),
+			0, 0,
+			SRCCOPY);
+	}
 
-::TransparentBlt(
-	hDC,
-	(int)-CCameraManager::Get_Instance()->GetDiff().x,
-	(int)-CCameraManager::Get_Instance()->GetDiff().y,
-	(int)m_pBackgroundBmp->GetSize().x,
-	(int)m_pBackgroundBmp->GetSize().y,
-	m_pBackgroundBmp->Get_DC(),
-	0, 0,
-	(int)m_pBackgroundBmp->GetSize().x,
-	(int)m_pBackgroundBmp->GetSize().y,
-	RGB(0, 0, 0));
+	::TransparentBlt(
+		hDC,
+		(int)-CCameraManager::Get_Instance()->GetDiff().x,
+		(int)-CCameraManager::Get_Instance()->GetDiff().y,
+		(int)m_pBackgroundBmp->GetSize().x,
+		(int)m_pBackgroundBmp->GetSize().y,
+		m_pBackgroundBmp->Get_DC(),
+		0, 0,
+		(int)m_pBackgroundBmp->GetSize().x,
+		(int)m_pBackgroundBmp->GetSize().y,
+		RGB(0, 0, 0));
+	// ... 코드 중략
+}
 ```
 
 </Editor>

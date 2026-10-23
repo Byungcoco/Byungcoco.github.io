@@ -56,14 +56,18 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CPlayerState_Fall.cpp" fn="Update(...)">
 
 ```cpp
-if (m_pPlayer->IsGround())
+void CPlayerState_Fall::Update(const float _fDeltaTime)
 {
-	m_pPlayer->ChangeState(PLAYERSTATE::RUNTOIDLE);
-// ... 코드 중략
-
-else
-{
-	m_pPlayer->Gravity(_fDeltaTime);
+	// ... 코드 중략
+	if (m_pPlayer->IsGround())
+	{
+		m_pPlayer->ChangeState(PLAYERSTATE::RUNTOIDLE);
+		// ... 코드 중략
+	}
+	else
+	{
+		m_pPlayer->Gravity(_fDeltaTime);
+	}
 }
 ```
 
@@ -172,33 +176,38 @@ if (itr != m_CollidedObjects.end())
 <Editor file="CSlopeLine.cpp" fn="OnCollision(...)">
 
 ```cpp
-CurDot = { ObjPos.x + ObjSize.x * 0.25f, ObjPos.y + (ObjSize.y * 0.5f)};
-
-fMinX = min(x1, x2);
-fMinY = max(y1, y2);
-fMaxX = max(x1, x2);
-fMaxY = min(y1, y2);
-
-if (CurDot.x < fMinX || CurDot.x > fMaxX)
-	return;
-
-fSlope = (fMaxY - fMinY) / (fMaxX - fMinX);
-fValueY = fMinY + fSlope * (CurDot.x - fMinX);
-
-float fDist = CurDot.y - fValueY;
-
-if (fDist >= 0.f)
+void CSlopeLine::OnCollision(CColliderComponent *_pOtherComp)
 {
-	if (!pObj->IsLine())
-	{
-		pObj->AddGrounded(1);
-		pObj->SetOnLine(true);
-		pObj->SetVel_X(DEFAULT_OBJECT_SPPED*0.8f);
-		if (eType == ObjectType::GANGSTER || eType == ObjectType::GRUNT || eType == ObjectType::POMP)
-			static_cast<CMonster *>(pObj)->AddCollidedGround(this, CollisionAxis::HORZ);
-	}
+	// ... 코드 중략
+	CurDot = { ObjPos.x + ObjSize.x * 0.25f, ObjPos.y + (ObjSize.y * 0.5f)};
 
-	pObj->AddPos_Y(-fDist);
+	fMinX = min(x1, x2);
+	fMinY = max(y1, y2);
+	fMaxX = max(x1, x2);
+	fMaxY = min(y1, y2);
+
+	if (CurDot.x < fMinX || CurDot.x > fMaxX)
+		return;
+
+	fSlope = (fMaxY - fMinY) / (fMaxX - fMinX);
+	fValueY = fMinY + fSlope * (CurDot.x - fMinX);
+
+	float fDist = CurDot.y - fValueY;
+
+	if (fDist >= 0.f)
+	{
+		if (!pObj->IsLine())
+		{
+			pObj->AddGrounded(1);
+			pObj->SetOnLine(true);
+			pObj->SetVel_X(DEFAULT_OBJECT_SPPED*0.8f);
+			if (eType == ObjectType::GANGSTER || eType == ObjectType::GRUNT || eType == ObjectType::POMP)
+				static_cast<CMonster *>(pObj)->AddCollidedGround(this, CollisionAxis::HORZ);
+		}
+
+		pObj->AddPos_Y(-fDist);
+	}
+	// ... 코드 중략
 }
 ```
 
@@ -213,19 +222,24 @@ if (fDist >= 0.f)
 <Editor file="CSlopeLine.cpp" fn="OnCollision(...)">
 
 ```cpp
-else if(pObj->IsLine())
+void CSlopeLine::OnCollision(CColliderComponent *_pOtherComp)
 {
-	if (-fDist > 1.f || pObj->GetVel().y < -100.f)
+	// ... 코드 중략
+	else if(pObj->IsLine())
 	{
-		pObj->AddGrounded(-1);
-		pObj->SetOnLine(false);
-		if (eType == ObjectType::GANGSTER || eType == ObjectType::GRUNT || eType == ObjectType::POMP)
-			static_cast<CMonster *>(pObj)->RemoveCollidedGround(this);
+		if (-fDist > 1.f || pObj->GetVel().y < -100.f)
+		{
+			pObj->AddGrounded(-1);
+			pObj->SetOnLine(false);
+			if (eType == ObjectType::GANGSTER || eType == ObjectType::GRUNT || eType == ObjectType::POMP)
+				static_cast<CMonster *>(pObj)->RemoveCollidedGround(this);
+		}
+		else
+		{
+			pObj->AddPos_Y(-fDist);
+		}
 	}
-	else
-	{
-		pObj->AddPos_Y(-fDist);
-	}
+	// ... 코드 중략
 }
 ```
 
@@ -243,31 +257,36 @@ else if(pObj->IsLine())
 <Editor file="CJumpThroughLine.cpp" fn="OnCollision(...)">
 
 ```cpp
-float fDist_Y = ObjPrevPos.y - ObjNowPos.y;
-if (fDist_Y > 0.f)
-	return;
-
-LINE lineInfo = Get_Info();
-float Line_Y = lineInfo.vFrom.y;
-if (lineInfo.vFrom.y <= ObjNowPos.y)
-	return;
-
-Vector2 ObjBottomPrev = ObjPrevPos + ObjSize * 0.5f;
-Vector2 ObjBottomNow = ObjNowPos + ObjSize * 0.5f;
-
-float fPene = ObjBottomNow.y - Line_Y;
-
-if (fPene >= 0)
+void CJumpThroughLine::OnCollision(CColliderComponent *_pOtherComp)
 {
-	pObject->AddPos_Y(-fPene);
-	if (!pObject->IsLine())
+	// ... 코드 중략
+	float fDist_Y = ObjPrevPos.y - ObjNowPos.y;
+	if (fDist_Y > 0.f)
+		return;
+
+	LINE lineInfo = Get_Info();
+	float Line_Y = lineInfo.vFrom.y;
+	if (lineInfo.vFrom.y <= ObjNowPos.y)
+		return;
+
+	Vector2 ObjBottomPrev = ObjPrevPos + ObjSize * 0.5f;
+	Vector2 ObjBottomNow = ObjNowPos + ObjSize * 0.5f;
+
+	float fPene = ObjBottomNow.y - Line_Y;
+
+	if (fPene >= 0)
 	{
-		pObject->AddGrounded(1);
-		pObject->SetOnLine(true);
-		SetThrough(true);
-		if (pObject->GetType() == ObjectType::GANGSTER || pObject->GetType() == ObjectType::GRUNT || pObject->GetType() == ObjectType::POMP)
-			static_cast<CMonster *>(pObject)->AddCollidedGround(this, CollisionAxis::HORZ);
+		pObject->AddPos_Y(-fPene);
+		if (!pObject->IsLine())
+		{
+			pObject->AddGrounded(1);
+			pObject->SetOnLine(true);
+			SetThrough(true);
+			if (pObject->GetType() == ObjectType::GANGSTER || pObject->GetType() == ObjectType::GRUNT || pObject->GetType() == ObjectType::POMP)
+				static_cast<CMonster *>(pObject)->AddCollidedGround(this, CollisionAxis::HORZ);
+		}
 	}
+	// ... 코드 중략
 }
 ```
 
@@ -294,17 +313,22 @@ if (IsLine() && !IsJumpThrough())
 <Editor file="CJumpThroughLine.cpp" fn="OnCollision(...)">
 
 ```cpp
-if (pObject->GetType() == ObjectType::PLAYER)
+void CJumpThroughLine::OnCollision(CColliderComponent *_pOtherComp)
 {
-	CPlayer* pPlayer = static_cast<CPlayer *>(pObject);
-	if (pPlayer->IsJumpThrough())
+	// ... 코드 중략
+	if (pObject->GetType() == ObjectType::PLAYER)
 	{
-		pObject->SetGrounded(0);
-		pObject->SetOnLine(false);
-		//pPlayer->SetJumpThrough(false);
-		SetThrough(false);
-		return;
+		CPlayer* pPlayer = static_cast<CPlayer *>(pObject);
+		if (pPlayer->IsJumpThrough())
+		{
+			pObject->SetGrounded(0);
+			pObject->SetOnLine(false);
+			//pPlayer->SetJumpThrough(false);
+			SetThrough(false);
+			return;
+		}
 	}
+	// ... 코드 중략
 }
 ```
 

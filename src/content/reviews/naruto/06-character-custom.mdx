@@ -52,26 +52,40 @@ import Tab from '../../../components/Tab.astro';
 
 #### A. 커스텀 화면 버튼
 
-<Editor file="UI_FrameCustomMainUI.cpp" fn="CUI_FrameCustomMainUI 버튼 이벤트 바인딩">
+<Editor file="UI_FrameCustomMainUI.cpp" fn="CUI_FrameCustomMainUI::Set_ButtonEvent_Temp()">
 
 ```cpp
-    CUI_Button* pButton = static_cast<CUI_Button*>(spanButtonList[j]);
-    const _uint iButtonDivisionIndex = pButton->Get_DivisionIndex();
-    pButton->Bind_Event(
-        [pOwner = m_pOwnerSystem, part = ModelPart, index = iButtonDivisionIndex]()->void
-        {
-            pOwner->Change_Part(part, index);
-        });
-// ... 코드 중략
-
-CUI_Button* pButton = static_cast<CUI_Button*>(m_vecElements[ACCEPT_BUTTON]);
-pButton->Bind_Event(
-    [pOwner = m_pOwnerSystem, pDevice = m_pDevice, pDeviceContext = m_pDeviceContext]()->void
+void CUI_FrameCustomMainUI::Set_ButtonEvent_Temp()
+{
+    // ... 코드 중략
+    for (size_t i = HEAD_LIST; i < m_vecButtonLists.size(); ++i)
     {
-        pOwner->Accept();
-        CGameInstance::GetInstance()->Request_ChangeLevel(ENUM_TO_UINT(LEVELID::LOADING), CLevel_Loading::Create(pDevice, pDeviceContext, LEVELID::GAMESTAGE));
-        CGameInstance::GetInstance()->Play_OneShot(L"Button_OK", 0.25f);
-    });
+        // ... 코드 중략
+        for (size_t j = 0; j < pButtonList->Get_ElementCount(); ++j)
+        {
+            CUI_Button* pButton = static_cast<CUI_Button*>(spanButtonList[j]);
+            const _uint iButtonDivisionIndex = pButton->Get_DivisionIndex();
+            pButton->Bind_Event(
+                [pOwner = m_pOwnerSystem, part = ModelPart, index = iButtonDivisionIndex]()->void
+                {
+                    pOwner->Change_Part(part, index);
+                });
+        }
+    }
+    // ... 코드 중략
+    // AcceptButton
+    {
+        CUI_Button* pButton = static_cast<CUI_Button*>(m_vecElements[ACCEPT_BUTTON]);
+        pButton->Bind_Event(
+            [pOwner = m_pOwnerSystem, pDevice = m_pDevice, pDeviceContext = m_pDeviceContext]()->void
+            {
+                pOwner->Accept();
+                CGameInstance::GetInstance()->Request_ChangeLevel(ENUM_TO_UINT(LEVELID::LOADING), CLevel_Loading::Create(pDevice, pDeviceContext, LEVELID::GAMESTAGE));
+                CGameInstance::GetInstance()->Play_OneShot(L"Button_OK", 0.25f);
+            });
+        // ... 코드 중략
+    }
+}
 ```
 
 </Editor>
@@ -359,17 +373,27 @@ HRESULT CCustomObject::Render()
 
 #### A. 마스터 뼈대 위에 조립
 
-<Editor file="Model.cpp" fn="CModel::Initialize(...)">
+<Editor file="Model.cpp" fn="CModel::Initialize_Prototype(...)">
 
 ```cpp
-if (!pDesc->pPrototypeTags)
+HRESULT CModel::Initialize_Prototype(void* pArg)
 {
-// ... 코드 중략
+	// ... 코드 중략
+	if (!pDesc->pPrototypeTags)
+	{
+		// ... 코드 중략
+	}
+	else
+	{
+		if (FAILED(Combine_Model(pDesc->pPrototypeTags)))
+			return E_FAIL;
+	}
 
-else
-{
-	if (FAILED(Combine_Model(pDesc->pPrototypeTags)))
-		return E_FAIL;
+	if (m_vecAnimations.size() > 0)
+	{
+		// ... 코드 중략
+	}
+	// ... 코드 중략
 }
 ```
 

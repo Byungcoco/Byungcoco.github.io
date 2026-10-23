@@ -84,7 +84,14 @@ HRESULT CMainPlayer::Initialize(void* pArg)
     m_pLockonComp = static_cast<CLockon*>(Get_Script_Component(L"Lockon"));
     return S_OK;
 }
+// ... 코드 중략
+{
+// ... 코드 중략
+HRESULT CMainPlayer::Ready_Ability()
+{
     // ... 코드 중략
+    }
+
     {
         CStatComponent::STATCOMP_DESC desc = {};
         desc.iHealth = 100;
@@ -93,6 +100,8 @@ HRESULT CMainPlayer::Initialize(void* pArg)
 
         m_pStatComp = static_cast<CStatComponent*>(Get_Script_Component(L"StatComponent"));
     }
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -104,6 +113,9 @@ HRESULT CMainPlayer::Initialize(void* pArg)
 <Editor file="UI_Hpbar.cpp" fn="CUI_Hpbar::Awake(...)">
 
 ```cpp
+HRESULT CUI_Hpbar::Awake(const _uint iCurrentLevelID)
+{
+    // ... 코드 중략
     CGameObject* pGo = m_pGameInstance->Get_GameObject_Back(iCurrentLevelID, m_wstrOwnerLayer);
     if (pGo == nullptr)
         return E_FAIL;
@@ -113,6 +125,8 @@ HRESULT CMainPlayer::Initialize(void* pArg)
         return E_FAIL;
 
     m_pOwnerStatComp = static_cast<CStatComponent*>(pMonoStat);
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -174,6 +188,8 @@ class ENGINE_DLL CTransform final : public CComponent
 	using Super = CComponent;
 public:
 	constexpr static EComponentType _ID = EComponentType::TRANSFORM;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -225,6 +241,8 @@ class ENGINE_DLL CControlContext abstract : public CComponent
 	using Super = CComponent;
 public:
 	constexpr static EComponentType _ID = EComponentType::CONTROLCONTEXT;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -235,6 +253,8 @@ public:
 class CPlayerControlContext final : public CControlContext
 {
 	using Super = CControlContext;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -245,10 +265,12 @@ class CPlayerControlContext final : public CControlContext
 void CMainPlayer::Update_Late(const _float fTimeDelta)
 {
     Super::Update_Late(fTimeDelta);
-    
+
     CPlayerControlContext* pControlContext = Get_Component<CPlayerControlContext>();
     if (pControlContext == nullptr)
         return;
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -404,11 +426,14 @@ void CGameObject::Free()
 <Editor file="Component.h" fn="CComponent">
 
 ```cpp
+class ENGINE_DLL CComponent abstract : public CBase
+{
+	// ... 코드 중략
 protected:
 	CComponent();
 	explicit CComponent(const CComponent& rhs);
 	virtual ~CComponent() = default;
-	
+
 	virtual HRESULT Initialize_Prototype();
 	virtual HRESULT Initialize(void* pArg) PURE;
 public:
@@ -425,6 +450,7 @@ protected:
 public:
 	virtual CComponent* Clone(void *pArg) PURE;
 	virtual void Free() override;
+};
 ```
 
 </Editor>
@@ -432,6 +458,9 @@ public:
 <Editor file="MainApplication.cpp" fn="Prototype_Component_Transform 등록">
 
 ```cpp
+HRESULT CMainApplication::Ready_Static_Prototype()
+{
+	// ... 코드 중략
 	// For. Prototype_Component_Transform
 	{
 		if (FAILED(m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC),
@@ -439,6 +468,8 @@ public:
 			CTransform::Create())))
 			return E_FAIL;
 	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -446,10 +477,15 @@ public:
 <Editor file="Loader.cpp" fn="CLoader 스크립트 컴포넌트 원본 등록">
 
 ```cpp
+HRESULT CLoader::Loading_For_Logo()
+{
+	// ... 코드 중략
 	// For. Prototype_Component_Lockon
 	m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Lockon", CLockon::Create());
 	// For. Prototype_Component_Stat
 	m_pGameInstance->Add_Prototype(ENUM_TO_UINT(LEVELID::STATIC), L"Prototype_Component_Stat", CStatComponent::Create());
+	// ... 코드 중략
+}
 ```
 
 </Editor>

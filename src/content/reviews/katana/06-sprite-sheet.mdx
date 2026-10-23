@@ -91,21 +91,23 @@ AnimComp->PlayAnimation(key_in, _bLoop, true);
 <Editor file="CKatanaComponent.cpp" fn="PlayerAttack()">
 
 ```cpp
-Vector2 RealMousePos = CCameraManager::Get_Instance()->GetRealPos(MOUSE_POS);
-Vector2 OwnerPos = GetOwner()->GetPos();
-Vector2 WeaponDir = RealMousePos - OwnerPos;
-WeaponDir.Normalize();
-SetDir(WeaponDir);
-// ... 코드 중략
-
-CObjectManager::Get_Instance()->CreateObject<CEffect>(
-	[this](CEffect *pEffect)
-	{
-		pEffect->Set(GetDir(), GetOwner()->GetPos(), GetOwner()->GetSize());
-pEffect->SetFollow(GetOwner());
-pEffect->PlayRotaionAnim(L"Player_Slash_Effect", false);
-pEffect->SetEffectLayer(EffectLayer::AFTERPLAYER);
-	});
+void CKatanaComponent::PlayerAttack()
+{
+	Vector2 RealMousePos = CCameraManager::Get_Instance()->GetRealPos(MOUSE_POS);
+	Vector2 OwnerPos = GetOwner()->GetPos();
+	Vector2 WeaponDir = RealMousePos - OwnerPos;
+	WeaponDir.Normalize();
+	SetDir(WeaponDir);
+	// ... 코드 중략
+	CObjectManager::Get_Instance()->CreateObject<CEffect>(
+		[this](CEffect *pEffect)
+		{
+			pEffect->Set(GetDir(), GetOwner()->GetPos(), GetOwner()->GetSize());
+	pEffect->SetFollow(GetOwner());
+	pEffect->PlayRotaionAnim(L"Player_Slash_Effect", false);
+	pEffect->SetEffectLayer(EffectLayer::AFTERPLAYER);
+		});
+}
 ```
 
 </Editor>
@@ -122,35 +124,49 @@ pEffect->SetEffectLayer(EffectLayer::AFTERPLAYER);
 <Editor file="CFileManager.cpp" fn="SetAnimDataFromFolder(...)">
 
 ```cpp
-// 해당 파일 기준 폴더에 접근하기 위한 iterator
-std::filesystem::directory_iterator dir_Begin{ relPath_in };
-std::filesystem::directory_iterator dir_End{};
-
-// vector reserve용 폴더 내 파일카운팅
-size_t FileCount = std::count_if(dir_Begin, dir_End,
-    [](const std::filesystem::directory_entry &entry)->bool
-    { return entry.is_regular_file(); });
-
-// itr 다시 지정
-dir_Begin = std::filesystem::directory_iterator{ relPath_in };
-vector<AnimPathParts> Paths(FileCount);
-// ... 코드 중략
-
-std::wregex rule1{ L"^([[:alpha:]]+)_(.+)_([[:digit:]]+)$" };
-// ... 코드 중략
-
-for_each(Paths.begin(), Paths.end(), [&wstr_End, &rule1](AnimPathParts &element_in)->void {
-    std::wstring tmp{ element_in.wPath.stem() };
-
-// ()를 캡쳐단위로보고, 해당 캡쳐단위 만큼 wsmatch 배열에 저장
-if (std::wsmatch match; std::regex_match(tmp, match, rule1))
+vector<Bitmap *> CFileManager::SetAnimDataFromFolder(const path &relPath_in, const wstring &key_in, bool bReverse)
 {
-    // 0부터가 아닌 1부터 index 시작, 0은 문자열 전체
-    element_in.wTag = match[1];
-    element_in.wIndex = match[3];
+    // ... 코드 중략
+    // 해당 파일 기준 폴더에 접근하기 위한 iterator
+    std::filesystem::directory_iterator dir_Begin{ relPath_in };
+    std::filesystem::directory_iterator dir_End{};
+
+    // vector reserve용 폴더 내 파일카운팅
+    size_t FileCount = std::count_if(dir_Begin, dir_End,
+        [](const std::filesystem::directory_entry &entry)->bool
+        { return entry.is_regular_file(); });
+
+    // itr 다시 지정
+    dir_Begin = std::filesystem::directory_iterator{ relPath_in };
+    vector<AnimPathParts> Paths(FileCount);
+    // ... 코드 중략
+    std::wregex rule1{ L"^([[:alpha:]]+)_(.+)_([[:digit:]]+)$" };
+    // ... 코드 중략
+    for_each(Paths.begin(), Paths.end(), [&wstr_End, &rule1](AnimPathParts &element_in)->void {
+        std::wstring tmp{ element_in.wPath.stem() };
+
+    // ()를 캡쳐단위로보고, 해당 캡쳐단위 만큼 wsmatch 배열에 저장
+    if (std::wsmatch match; std::regex_match(tmp, match, rule1))
+    {
+        // 0부터가 아닌 1부터 index 시작, 0은 문자열 전체
+        element_in.wTag = match[1];
+        element_in.wIndex = match[3];
+        // ... 코드 중략
+        if (pos > 0)
+        {
+            // ... 코드 중략
+        }
+        // ... 코드 중략
+        wstring::iterator removeEnd = std::remove_if(element_in.wPrefix.begin(), element_in.wPrefix.end(),
+            [](const wchar_t &wc)->bool
+            {
+                // ... 코드 중략
+            });
+        // ... 코드 중략
+    }
+        });
 // ... 코드 중략
 }
-    });
 ```
 
 </Editor>
@@ -164,13 +180,16 @@ if (std::wsmatch match; std::regex_match(tmp, match, rule1))
 <Editor file="CFileManager.cpp" fn="PathSorter, SetAnimDataFromFolder(...)">
 
 ```cpp
-    typedef struct tagPathSorter
+typedef struct tagPathSorter
+{
+    bool operator ()(AnimPathParts &data1, AnimPathParts &data2)
     {
-        bool operator ()(AnimPathParts &data1, AnimPathParts &data2)
-        {
-            return std::stoi(data1.wIndex) < std::stoi(data2.wIndex);
-        }
-    }PathSorter;
+        return std::stoi(data1.wIndex) < std::stoi(data2.wIndex);
+    }
+}PathSorter;
+// ... 코드 중략
+vector<Bitmap *> CFileManager::SetAnimDataFromFolder(const path &relPath_in, const wstring &key_in, bool bReverse)
+{
     // ... 코드 중략
     // 문자열 정렬 오류는 10개이상일때만 일어나니 이때 체크!
     if (Paths.size() > 10)
@@ -188,6 +207,8 @@ if (std::wsmatch match; std::regex_match(tmp, match, rule1))
 
         tmpBitmaps.push_back(bmp);
     }
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -354,28 +375,35 @@ int GetRowFromAngle(float _fAngle) const
 <Editor file="CAnimatorComponent.cpp" fn="NormalRender(...)">
 
 ```cpp
-const size_t iFrameIndex = m_PlayState.iCurFrame;
-
-// frameIndex를 와 Frame의 width를 곱하면 고우고우
-int srcX = iFrameIndex * iFrameWidth;
-int srcY = 0;
-if (m_pCurAnimation->IsReverse())
+void CAnimatorComponent::NormalRender(HDC hDC)
 {
-	float Dir_X = GetOwner()->GetDir().x;
-	if (IsReversal())
-		Dir_X *= -1.f;
-	// 플레이어가 오른쪽 방향이면 첫번째줄 스프라이트시트
-	srcY = (Dir_X > 0.f ? 0 : iFrameHeight);
-}
 	// ... 코드 중략
-	GdiTransparentBlt(hDC,
-		LeftTopRenderPos.x,
-		LeftTopRenderPos.y,
-		iFrameWidth, iFrameHeight,
-		hAnimMemDC,
-		srcX, srcY,
-		iFrameWidth, iFrameHeight, // 복사할 비트맵 가로 세로 사이즈
-		RGB(0, 0, 0));	// 제거할 픽셀 색상 값
+	const size_t iFrameIndex = m_PlayState.iCurFrame;
+
+	// frameIndex를 와 Frame의 width를 곱하면 고우고우
+	int srcX = iFrameIndex * iFrameWidth;
+	int srcY = 0;
+	if (m_pCurAnimation->IsReverse())
+	{
+		float Dir_X = GetOwner()->GetDir().x;
+		if (IsReversal())
+			Dir_X *= -1.f;
+		// 플레이어가 오른쪽 방향이면 첫번째줄 스프라이트 시트
+		srcY = (Dir_X > 0.f ? 0 : iFrameHeight);
+	}
+	// ... 코드 중략
+	if (hAnimMemDC != NULL)
+	{
+		GdiTransparentBlt(hDC,
+			LeftTopRenderPos.x,
+			LeftTopRenderPos.y,
+			iFrameWidth, iFrameHeight,
+			hAnimMemDC,
+			srcX, srcY,
+			iFrameWidth, iFrameHeight, // 복사할 비트맵 가로 세로 사이즈
+			RGB(0, 0, 0));	// 제거할 픽셀 색상 값
+	}
+}
 ```
 
 </Editor>

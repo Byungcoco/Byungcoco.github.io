@@ -61,12 +61,15 @@ void CPlayerState_Roll::Enter()
 	m_pPlayer->SetRolliong(true);
 	m_pPlayer->SetAfterImage(true);
 	AnimComp->PlayAnimation(L"Player_Roll", false);
-// ... 코드 중략
+	// ... 코드 중략
+}
 
 void CPlayerState_Roll::Exit()
 {
 	m_pPlayer->SetRolliong(false);
 	m_pPlayer->SetAfterImage(false);
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -101,12 +104,15 @@ void CBoss::Slash_Enter()
 	SetAfterImage(true);
 	SetCompleteCallback();
 	PlayAnimation(L"Boss_Slash", false, false);
+	// ... 코드 중략
+}
 // ... 코드 중략
-
 void CBoss::Slash_Exit()
 {
 	m_bAttacked = false;
 	SetAfterImage(false);
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -131,14 +137,16 @@ typedef struct tagAfterImageData
 	int iSheet_x = 0;
 	int iSheet_y = 0;
 	float fAlpha = 0.5f;
-// ... 코드 중략
-
+	// ... 코드 중략
 } AfterImageData;
-// ... 코드 중략
 
+class CAfterImage
+{
+	// ... 코드 중략
 private:
 	vector<AfterImageData> m_AfterImageDataPool{ DEFAULT_AFTERIMAGE_POOLSIZE };
 	int m_iActiveCount;
+};
 ```
 
 </Editor>
@@ -195,37 +203,39 @@ void CAfterImage::Update(const float _fDeltaTime)
 <Editor file="CAfterImage.cpp" fn="Draw(...)">
 
 ```cpp
-CAnimationBitmap* m_pAnim = m_AfterImageDataPool[_iIndex].pAnimationBmp;
-AlphaBitmapData DibBmp;
-if (m_pAnim->IsCustomColorAfterImage())
+void CAfterImage::Draw(HDC hDC, unsigned _iIndex)
 {
-	DibBmp = m_pAnim->GetDIB_CustomColor();
+	CAnimationBitmap* m_pAnim = m_AfterImageDataPool[_iIndex].pAnimationBmp;
+	AlphaBitmapData DibBmp;
+	if (m_pAnim->IsCustomColorAfterImage())
+	{
+		DibBmp = m_pAnim->GetDIB_CustomColor();
+	}
+	else
+	{
+		DibBmp = m_AfterImageDataPool[_iIndex].pAnimationBmp->GetDIB((TintColor)(_iIndex % 2));
+	}
+	// ... 코드 중략
+	BLENDFUNCTION bf = {};
+	bf.BlendOp = AC_SRC_OVER;
+	bf.BlendFlags = 0;
+	bf.SourceConstantAlpha = static_cast<BYTE>(fAlpha * 255);
+	bf.AlphaFormat = AC_SRC_ALPHA;
+
+	::AlphaBlend(
+		hDC,
+		RednerPos.x,
+		RednerPos.y,
+		Size.x, Size.y,
+		DibBmp.hDibDC,
+		m_AfterImageDataPool[_iIndex].iSheet_x,
+		m_AfterImageDataPool[_iIndex].iSheet_y,
+		Size.x, Size.y,
+		bf
+	);
+
+	m_AfterImageDataPool[_iIndex].fAlpha -= (CTimeManager::Get_Instance()->GetDeltaTime() * 1.f);
 }
-else
-{
-	DibBmp = m_AfterImageDataPool[_iIndex].pAnimationBmp->GetDIB((TintColor)(_iIndex % 2));
-}
-// ... 코드 중략
-
-BLENDFUNCTION bf = {};
-bf.BlendOp = AC_SRC_OVER;
-bf.BlendFlags = 0;
-bf.SourceConstantAlpha = static_cast<BYTE>(fAlpha * 255);
-bf.AlphaFormat = AC_SRC_ALPHA;
-
-::AlphaBlend(
-	hDC,
-	RednerPos.x,
-	RednerPos.y,
-	Size.x, Size.y,
-	DibBmp.hDibDC,
-	m_AfterImageDataPool[_iIndex].iSheet_x,
-	m_AfterImageDataPool[_iIndex].iSheet_y,
-	Size.x, Size.y,
-	bf
-);
-
-m_AfterImageDataPool[_iIndex].fAlpha -= (CTimeManager::Get_Instance()->GetDeltaTime() * 1.f);
 ```
 
 </Editor>
@@ -399,14 +409,17 @@ void CAnimatorComponent::Update(const float _fDeltaTime)
  		return;
 
 	m_AfterImage.Update(_fDeltaTime);
+	// ... 코드 중략
+}
 // ... 코드 중략
-
 void CAnimatorComponent::Render(HDC hDC)
 {
 	if (!m_pCurAnimation)
 		return;
 
 	m_AfterImage.Render(hDC);
+	// ... 코드 중략
+}
 ```
 
 </Editor>
