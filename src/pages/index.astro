@@ -114,7 +114,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   <button type="button" class="toggle" id="gtoggle" aria-expanded="false" data-more={`${games.length - GAMES_TOP}개 더 보기 ↓`}>{games.length - GAMES_TOP}개 더 보기 ↓</button>
 </section>
 
-<footer class="foot">Astro로 만들고 GitHub Pages로 배포했습니다.</footer>
+<footer class="foot">Design direction inspired by <a href="https://brittanychiang.com/" target="_blank" rel="noopener">Brittany Chiang</a>. Layout and code independently created.</footer>
 
 </main>
 </div>
@@ -226,6 +226,8 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .gnote { font-size: 13px; line-height: 1.6; }
   .toggle { margin-top: 16px; min-height: 44px; padding: 0 4px; background: none; border: 0; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: #7FB2FF; }
   .foot { max-width: 440px; font-size: 13px; color: #7C8BA8; }
+  .foot a { color: #B7C3D9; font-weight: 600; text-decoration: none; }
+  .foot a:hover { color: #7FB2FF; }
 
   /* PC에서 글자 1~2px 크게 */
   @media (min-width: 1024px) {
