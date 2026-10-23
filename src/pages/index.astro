@@ -9,6 +9,12 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
 ---
 <Base title="강병준 · 게임 클라이언트 프로그래머">
 <div class="page" id="page">
+<nav class="toc" aria-label="섹션 이동">
+  <a class="navlink on" href="#about"><span class="lbl">소개</span><span class="ln"></span></a>
+  <a class="navlink" href="#career"><span class="lbl">경력</span><span class="ln"></span></a>
+  <a class="navlink" href="#projects"><span class="lbl">학습 프로젝트</span><span class="ln"></span></a>
+  <a class="navlink" href="#play"><span class="lbl">플레이 로그</span><span class="ln"></span></a>
+</nav>
 <div class="wrap">
 
 <header class="left">
@@ -16,12 +22,6 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
     <h1 class="name"><a href="/">{profile.name}</a></h1>
     <p class="title">{profile.title}</p>
     <p class="tagline">{profile.tagline}</p>
-    <nav class="nav" aria-label="섹션 이동">
-      <a class="navlink on" href="#about"><span class="bar"></span>소개</a>
-      <a class="navlink" href="#career"><span class="bar"></span>경력</a>
-      <a class="navlink" href="#projects"><span class="bar"></span>학습 프로젝트</a>
-      <a class="navlink" href="#play"><span class="bar"></span>플레이 로그</a>
-    </nav>
   </div>
   <section class="stack" aria-label="기술 스택">
     <h2 class="stackh">기술 스택</h2>
@@ -162,12 +162,16 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .name a { text-decoration: none; }
   .title { margin: 0; font-size: 20px; font-weight: 500; color: #E3EAF6; }
   .tagline { margin: 4px 0 0; max-width: 360px; }
-  .nav { margin-top: 36px; display: flex; flex-direction: column; }
-  .navlink { display: flex; align-items: center; gap: 16px; padding: 9px 0; text-decoration: none; color: #7C8BA8; font-size: 12px; font-weight: 700; letter-spacing: 0.16em; }
-  .navlink .bar { width: 32px; height: 1px; background: #3A4A68; transition: width .15s; }
+  .toc { position: fixed; right: 20px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 10px 8px; border-radius: 10px; border: 1px solid transparent; }
+  .toc:hover { background: rgba(14,29,53,0.96); border-color: #1E3150; }
+  .navlink { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 30px; text-decoration: none; color: #7C8BA8; font-size: 13px; font-weight: 600; }
+  .navlink .ln { display: block; width: 16px; height: 2px; border-radius: 2px; background: #3A4A68; }
+  .navlink.on .ln { width: 28px; background: #7FB2FF; }
+  .navlink .lbl { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-width .15s, opacity .15s; }
+  .toc:hover .navlink .lbl { max-width: 160px; opacity: 1; }
   .navlink:hover, .navlink.on { color: #E3EAF6; }
-  .navlink:hover .bar, .navlink.on .bar { width: 64px; background: #E3EAF6; }
-  .stack { margin-top: 32px; display: flex; flex-direction: column; gap: 14px; }
+  .navlink:hover .ln { width: 28px; background: #E3EAF6; }
+  .stack { margin-top: 40px; display: flex; flex-direction: column; gap: 14px; }
   .stackh { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.16em; color: #E3EAF6; }
   .sg { display: flex; flex-direction: column; gap: 6px; }
   .sgk { font-size: 12px; font-weight: 600; color: #7C8BA8; }
@@ -226,7 +230,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   @media (max-width: 1023px) {
     .wrap { flex-direction: column; padding: 0 24px; gap: 0; }
     .left { position: static; height: auto; max-height: none; padding: 64px 0 24px; }
-    .nav { display: none; }
+    .toc { display: none; }
     .name { font-size: 38px; }
     .title { font-size: 18px; }
     .right { padding: 24px 0 64px; }
