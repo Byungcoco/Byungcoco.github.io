@@ -88,7 +88,7 @@ const lineage = [entry.data.lineage ?? []].flat().map((l) => {
   const modal = document.getElementById('modal')!;
   const mimg = document.getElementById('mimg') as HTMLImageElement;
   const close = () => { modal.hidden = true; };
-  document.querySelectorAll<HTMLButtonElement>('.fref').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll<HTMLButtonElement>('.fref, .figbtn').forEach((b) => b.addEventListener('click', () => {
     const fig = document.getElementById('fig-' + b.dataset.fig);
     if (!fig) return;
     const img = fig.querySelector('img')!;
@@ -199,6 +199,10 @@ const lineage = [entry.data.lineage ?? []].flat().map((l) => {
   .figw { display: block; padding: 14px; background: #FFFFFF; border-radius: 10px; }
   .figd { display: block; overflow: hidden; border: 1px solid #1E3150; border-radius: 10px; }
   .fig img { display: block; width: 100%; height: auto; }
+  .figbtn { margin: 0; font: inherit; cursor: zoom-in; text-align: left; width: 100%; box-sizing: border-box; transition: box-shadow .15s; }
+  button.figw { border: 0; }
+  button.figd { padding: 0; background: transparent; }
+  .figbtn:hover { box-shadow: 0 0 0 2px #7FB2FF; }
   .fig figcaption { font-size: 13px; color: #9AA8C2; line-height: 1.6; }
   .fig figcaption strong { font-weight: 700; color: #E3EAF6; }
   .fref { display: inline; margin: 0; padding: 0 2px; border: 0; border-bottom: 1px dashed #7FB2FF; background: none; font-family: inherit; font-size: inherit; font-weight: 700; color: #7FB2FF; cursor: zoom-in; }
@@ -223,8 +227,8 @@ const lineage = [entry.data.lineage ?? []].flat().map((l) => {
   .modal { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 32px; box-sizing: border-box; }
   .modal[hidden] { display: none; }
   .dimbg { position: absolute; inset: 0; border: 0; padding: 0; margin: 0; background: rgba(5,12,24,0.78); cursor: zoom-out; }
-  .mcard { position: relative; max-width: min(900px, 92vw); max-height: 88vh; display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #FFFFFF; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
-  .mcard img { display: block; max-width: 100%; max-height: 72vh; object-fit: contain; }
+  .mcard { position: relative; max-width: min(1400px, 96vw); max-height: 94vh; display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #FFFFFF; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+  .mcard img { display: block; max-width: 100%; max-height: 84vh; object-fit: contain; margin: 0 auto; }
   .mcap { font-size: 13px; line-height: 1.5; color: #3A4B6B; }
   .mcap strong { color: #0A1628; }
   .mx { position: absolute; top: -14px; right: -14px; width: 44px; height: 44px; border-radius: 999px; border: 0; background: #0A1628; color: #E3EAF6; font-size: 18px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }

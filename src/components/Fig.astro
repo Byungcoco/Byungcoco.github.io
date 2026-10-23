@@ -4,6 +4,6 @@ interface Props { n: number; src: string; caption: string; alt?: string; max?: n
 const { n, src, caption, alt, max = 760, white = false } = Astro.props;
 ---
 <figure class="fig" id={`fig-${n}`} style={`max-width:${max}px`} data-n={n} data-cap={caption}>
-  <span class={white ? 'figw' : 'figd'}><img src={src} alt={alt ?? caption} loading="lazy" /></span>
+  <button type="button" class={`figbtn ${white ? 'figw' : 'figd'}`} data-fig={n} aria-label={`그림 ${n} 크게 보기`}><img src={src} alt={alt ?? caption} loading="lazy" /></button>
   <figcaption><strong>▲ 그림 {n}.</strong> {caption}</figcaption>
 </figure>

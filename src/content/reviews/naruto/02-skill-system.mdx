@@ -57,31 +57,37 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="MainPlayer.cpp" fn="CMainPlayer::Ready_Ability()">
 
 ```cpp
+HRESULT CMainPlayer::Ready_Ability()
 {
-    CSkillStateContainer* pContainer = CSkillStateContainer::Create(pActionState, "Chidori");
+    // ... 코드 중략
     {
-        CState_Chidori_Start::STATE_DESC desc = {};
-        desc.bBlend = true;
-        desc.pModel = pModel;
-        desc.iAnimIndex = Get_AnimationIndex(L"Animation_Master_ChidoriStart");
-        if (FAILED(pContainer->Add_SkillState(CState_Chidori_Start::Create(pActionState, &desc))))
-            return E_FAIL;
-    }
-    {
-        CState_Chidori_Charge::STATE_DESC desc = {};
-        desc.bBlend = true;
-        desc.pModel = pModel;
-        desc.iAnimIndex = Get_AnimationIndex(L"Animation_Master_ChidoriCharge");
-        if (FAILED(pContainer->Add_SkillState(CState_Chidori_Charge::Create(pActionState, &desc))))
-            return E_FAIL;
+        CSkillStateContainer* pContainer = CSkillStateContainer::Create(pActionState, "Chidori");
+        {
+            CState_Chidori_Start::STATE_DESC desc = {};
+            desc.bBlend = true;
+            desc.pModel = pModel;
+            desc.iAnimIndex = Get_AnimationIndex(L"Animation_Master_ChidoriStart");
+            if (FAILED(pContainer->Add_SkillState(CState_Chidori_Start::Create(pActionState, &desc))))
+                return E_FAIL;
+        }
+        {
+            CState_Chidori_Charge::STATE_DESC desc = {};
+            desc.bBlend = true;
+            desc.pModel = pModel;
+            desc.iAnimIndex = Get_AnimationIndex(L"Animation_Master_ChidoriCharge");
+            if (FAILED(pContainer->Add_SkillState(CState_Chidori_Charge::Create(pActionState, &desc))))
+                return E_FAIL;
+        }
+        // ... 코드 중략
+        m_pSkillComp->Add_SkillAbility(AbilityState::SWORD, 1, pContainer);
     }
     // ... 코드 중략
-    m_pSkillComp->Add_SkillAbility(AbilityState::SWORD, 1, pContainer);
-}
-// ... 코드 중략
 
-m_pSkillComp->Set_SkillCoolTime(SWORD, 1, 10.f);
-m_pSkillComp->Set_SkillEffectModelTag(SWORD, 1, L"Prototype_GameObject_Chidori");
+    m_pSkillComp->Set_SkillCoolTime(SWORD, 1, 10.f);
+    m_pSkillComp->Set_SkillEffectModelTag(SWORD, 1, L"Prototype_GameObject_Chidori");
+    // ... 코드 중략
+    return S_OK;
+}
 ```
 
 </Editor>
@@ -93,11 +99,17 @@ m_pSkillComp->Set_SkillEffectModelTag(SWORD, 1, L"Prototype_GameObject_Chidori")
 <Editor file="State_Chidori_Start.cpp" fn="CState_Chidori_Start::Start(...)">
 
 ```cpp
-CPlayer* pPlayer = static_cast<CPlayer*>(Get_OwnerObject());
-CSkillChidori::SKILLBASE_DESC desc = {};
-desc.pOwner = Get_OwnerObject();
-pPlayer->Use_Skill(1, &desc);
-CGameInstance::GetInstance()->Broadcast<Skill_Appear>(Get_OwnerObject(), 1, 1);
+HRESULT CState_Chidori_Start::Start(void* pArg, _bool bForce)
+{
+	// ... 코드 중략
+	CPlayer* pPlayer = static_cast<CPlayer*>(Get_OwnerObject());
+	CSkillChidori::SKILLBASE_DESC desc = {};
+	desc.pOwner = Get_OwnerObject();
+	pPlayer->Use_Skill(1, &desc);
+	CGameInstance::GetInstance()->Broadcast<Skill_Appear>(Get_OwnerObject(), 1, 1);
+	// ... 코드 중략
+	return S_OK;
+}
 ```
 
 </Editor>
@@ -105,8 +117,14 @@ CGameInstance::GetInstance()->Broadcast<Skill_Appear>(Get_OwnerObject(), 1, 1);
 <Editor file="State_Chidori_ToRun.cpp" fn="CState_Chidori_ToRun::Start(...)">
 
 ```cpp
-SetupLook_Target_XZ();
-CGameInstance::GetInstance()->Broadcast<Skill_Active>(Get_OwnerObject(), 1, 1);
+HRESULT CState_Chidori_ToRun::Start(void* pArg, _bool bForce)
+{
+	// ... 코드 중략
+	SetupLook_Target_XZ();
+	CGameInstance::GetInstance()->Broadcast<Skill_Active>(Get_OwnerObject(), 1, 1);
+	// ... 코드 중략
+	return S_OK;
+}
 ```
 
 </Editor>
@@ -114,7 +132,13 @@ CGameInstance::GetInstance()->Broadcast<Skill_Active>(Get_OwnerObject(), 1, 1);
 <Editor file="State_Chidori_Attack.cpp" fn="CState_Chidori_Attack::Start(...)">
 
 ```cpp
-CGameInstance::GetInstance()->Broadcast<Skill_Disappear>(Get_OwnerObject(), 1, 1);
+HRESULT CState_Chidori_Attack::Start(void* pArg, _bool bForce)
+{
+	// ... 코드 중략
+	CGameInstance::GetInstance()->Broadcast<Skill_Disappear>(Get_OwnerObject(), 1, 1);
+	// ... 코드 중략
+	return S_OK;
+}
 ```
 
 </Editor>
@@ -141,6 +165,11 @@ struct Skill_Disappear { using Signature = void(CGameObject* pOwner, unsigned in
 <Editor file="EventBus_Manager.h" fn="CEventBus_Manager">
 
 ```cpp
+class CEventBus_Manager final : public CBase
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
 	template<typename Tag, typename T, typename... Args>
 	DelegateHandle Add_MemFunc(T* pObj, void (T::* memFunc)(Args...))
 	{
@@ -162,6 +191,8 @@ struct Skill_Disappear { using Signature = void(CGameObject* pOwner, unsigned in
 		pChannel->multicast.Broadcast(std::forward<Arg>(a)...);
 	}
 	// ... 코드 중략
+private:
+	// ... 코드 중략
 	template<typename Tag>
 	Channel<typename Tag::Signature>* GetOrCreate()
 	{
@@ -176,6 +207,8 @@ struct Skill_Disappear { using Signature = void(CGameObject* pOwner, unsigned in
 	}
 private:
 	std::unordered_map<std::type_index, IChannel*> m_channels;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -189,6 +222,12 @@ private:
 <Editor file="MulticastDelegate.h" fn="CMulticastDelegate<void(Args...)>">
 
 ```cpp
+template<class... Args>
+class CMulticastDelegate<void(Args...)>
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
 	template<typename... A>
 	void Broadcast(A&&... args)
 	{
@@ -207,6 +246,8 @@ private:
 		if (!IsBroadcasting())
 			Apply_Pending();
 	}
+	// ... 코드 중략
+};
 // ... 코드 중략
 
 template<class ...Args>
@@ -356,52 +397,58 @@ typedef struct tagSkillPreset
 <Editor file="SkillShuriken.cpp" fn="CSkillShuriken::Initialize_Prototype()">
 
 ```cpp
-SKILL_PRESET* pPreset = new SKILL_PRESET;
+HRESULT CSkillShuriken::Initialize_Prototype()
 {
-    vector<SKILL_CMD> vec;
-    // Core Enable
+    // ... 코드 중략
+    SKILL_PRESET* pPreset = new SKILL_PRESET;
     {
-        SKILL_CMD cmd;
-        cmd.eType = ESkillCommandType::EnablePart;
-        cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Core);
-        cmd.iEnable = 1;
-        vec.push_back(cmd);
-    }
-    // Core TweenScale Enable
-    {
-        SKILL_CMD cmd;
-        cmd.eType = ESkillCommandType::TweenScale;
-        cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Core);
-        cmd.iEnable = 1;
-        cmd.fA = 0.2f;
-        cmd.fB = 3.f;
-        cmd.fDuration = 1.5f;
-        vec.push_back(cmd);
-    }
-    // Shuriken Enable
-    {
-        SKILL_CMD cmd;
-        cmd.eType = ESkillCommandType::EnablePart;
-        cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Shuriken);
-        cmd.iEnable = 1;
-        vec.push_back(cmd);
-    }
-    // Shuriken Rotation Enable
-    {
-        SKILL_CMD cmd;
-        cmd.eType = ESkillCommandType::Rotate;
-        cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Shuriken);
-        cmd.iEnable = 1;
-        cmd.iAxis = ENUM_TO_UINT(ERotateAxis::Yaw);
-        cmd.fRotateSpeed = 20.f;
-        vec.push_back(cmd);
+        vector<SKILL_CMD> vec;
+        // Core Enable
+        {
+            SKILL_CMD cmd;
+            cmd.eType = ESkillCommandType::EnablePart;
+            cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Core);
+            cmd.iEnable = 1;
+            vec.push_back(cmd);
+        }
+        // Core TweenScale Enable
+        {
+            SKILL_CMD cmd;
+            cmd.eType = ESkillCommandType::TweenScale;
+            cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Core);
+            cmd.iEnable = 1;
+            cmd.fA = 0.2f;
+            cmd.fB = 3.f;
+            cmd.fDuration = 1.5f;
+            vec.push_back(cmd);
+        }
+        // Shuriken Enable
+        {
+            SKILL_CMD cmd;
+            cmd.eType = ESkillCommandType::EnablePart;
+            cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Shuriken);
+            cmd.iEnable = 1;
+            vec.push_back(cmd);
+        }
+        // Shuriken Rotation Enable
+        {
+            SKILL_CMD cmd;
+            cmd.eType = ESkillCommandType::Rotate;
+            cmd.iPartID = ENUM_TO_UINT(CSkillShuriken::EPart::Shuriken);
+            cmd.iEnable = 1;
+            cmd.iAxis = ENUM_TO_UINT(ERotateAxis::Yaw);
+            cmd.fRotateSpeed = 20.f;
+            vec.push_back(cmd);
+        }
+        // ... 코드 중략
+        pPreset->umapEventToCommands[ENUM_TO_UINT(ESkillEventID::AppearBegin)] = std::move(vec);
     }
     // ... 코드 중략
-    pPreset->umapEventToCommands[ENUM_TO_UINT(ESkillEventID::AppearBegin)] = std::move(vec);
-}
-// ... 코드 중략
 
-Set_Preset(pPreset);
+    Set_Preset(pPreset);
+
+    return S_OK;
+}
 ```
 
 </Editor>
@@ -540,7 +587,6 @@ void CSkillStateContainer::Update(const _float fTimeDelta)
 
 	Super::Update(fTimeDelta);
 
-	// Todo - desc 전달
 	if (m_vecSkillStates[m_iCurrentSkillState]->Is_FinishedState())
 	{
 		if(Goto_NextSkillState(nullptr))

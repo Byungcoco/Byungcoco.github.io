@@ -58,8 +58,13 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CDev.cpp" fn="CDev::Ready_Scene()">
 
 ```cpp
-// GameDataManager에 바닥을 z기준 정렬
-CGameDataManager::GetInstance()->Bind_FloorList(CObjectManager::GetInstance()->Get_ObjectList(SCENE_DEV, L"Floor_Layer"));
+HRESULT CDev::Ready_Scene()
+{
+    // ... 코드 중략
+    // GameDataManager에 바닥을 z기준 정렬
+    CGameDataManager::GetInstance()->Bind_FloorList(CObjectManager::GetInstance()->Get_ObjectList(SCENE_DEV, L"Floor_Layer"));
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -71,7 +76,6 @@ CGameDataManager::GetInstance()->Bind_FloorList(CObjectManager::GetInstance()->G
 <Editor file="CCharacter.cpp" fn="CCharacter::Set_OnTerrain(...)">
 
 ```cpp
-// TODO - 여러개의 terrain 해결
 // 추후에 여러개의 GridPanel이 들어왔을 때 연산량이 많아지는 문제가 발생한다.
 // 이를 방지하기 위해 MapLayer를 파싱할때 z값을 기준으로 Goal을 만들고, z정렬을 실시하여 저장한다.
 // z값에 기반하여 순차적으로 데이터를 불러와 인스턴싱을 하고, 순회를 할 때 선형적인 타임어택 게임에 아이디어를 가져온다.
@@ -229,28 +233,34 @@ void CGameDataManager::Sort_List_ByZValue(vector<PANELENTRY> &_veclist)
 <Editor file="CGrounding.cpp" fn="CGrounding::GetHeight(...)">
 
 ```cpp
-auto lambda_Inside =
-[&](int _i)->bool
+_bool CGrounding::GetHeight(const vector<PANELENTRY> *pPanelEntries, _float fX, _float fZ, _float *fOutY)
 {
-	return (*pPanelEntries)[_i].eType == WallType::FLOOR
-		? IsInside((*pPanelEntries)[_i], fX, fZ)
-		: IsInside_Slope((*pPanelEntries)[_i], fX, fZ);
-};
-// ... 코드 중략
+	if (pPanelEntries->empty())
+		return false;
 
-for (int i = 0; i < 3; ++i)
-{
-	if (lambda_Inside(m_iCurrentIndex))
-		return lambda_GetHeight(m_iCurrentIndex);
+	auto lambda_Inside =
+	[&](int _i)->bool
+	{
+		return (*pPanelEntries)[_i].eType == WallType::FLOOR
+			? IsInside((*pPanelEntries)[_i], fX, fZ)
+			: IsInside_Slope((*pPanelEntries)[_i], fX, fZ);
+	};
+	// ... 코드 중략
 
-	if (m_iCurrentIndex + i < (*pPanelEntries).size() && lambda_Inside(m_iCurrentIndex + i))
-		return lambda_GetHeight(m_iCurrentIndex + i);
+	for (int i = 0; i < 3; ++i)
+	{
+		if (lambda_Inside(m_iCurrentIndex))
+			return lambda_GetHeight(m_iCurrentIndex);
 
-	if (((m_iCurrentIndex - i) >= 0) && lambda_Inside(m_iCurrentIndex - i))
-		return lambda_GetHeight(m_iCurrentIndex - i);
+		if (m_iCurrentIndex + i < (*pPanelEntries).size() && lambda_Inside(m_iCurrentIndex + i))
+			return lambda_GetHeight(m_iCurrentIndex + i);
+
+		if (((m_iCurrentIndex - i) >= 0) && lambda_Inside(m_iCurrentIndex - i))
+			return lambda_GetHeight(m_iCurrentIndex - i);
+	}
+
+	return false;
 }
-
-return false;
 ```
 
 </Editor>
@@ -264,6 +274,9 @@ return false;
 <Editor file="CGrounding.cpp" fn="CGrounding::GetHeight(...), CGrounding::Y_OnPanelPlane(...)">
 
 ```cpp
+_bool CGrounding::GetHeight(const vector<PANELENTRY> *pPanelEntries, _float fX, _float fZ, _float *fOutY)
+{
+	// ... 코드 중략
 	auto lambda_GetHeight = [&](int _i)->bool
 	{
 		if ((*pPanelEntries)[_i].eType == WallType::FLOOR)
@@ -284,6 +297,8 @@ return false;
 			return true;
 		}
 	};
+	// ... 코드 중략
+}
 // ... 코드 중략
 
 _float CGrounding::Y_OnPanelPlane(const PANELENTRY &tPanelEntry, _float fX, _float fZ)
@@ -304,34 +319,41 @@ _float CGrounding::Y_OnPanelPlane(const PANELENTRY &tPanelEntry, _float fX, _flo
 <Editor file="CGrounding.cpp" fn="CGrounding::Compute_Height(...)">
 
 ```cpp
-int indexX = (int)floorf(fX * tPanelEntry.fInverseItv);
-int indexZ = (int)floorf(fZ * tPanelEntry.fInverseItv);
+_float CGrounding::Compute_Height(const PANELENTRY &tPanelEntry, _float fX, _float fZ)
+{
+	_ulong dwCntX = tPanelEntry.pBuffer->GetData()->dwCountX;
+	_ulong dwCntZ = tPanelEntry.pBuffer->GetData()->dwCountZ;
+	_vec3 *pTerrainVtxPos = tPanelEntry.pBuffer->GetVerticesData();
 
-// 배열 접근 오버런 방지
-indexX = (std::max)(0, (std::min)(indexX, (int)dwCntX - 2));
-indexZ = (std::max)(0, (std::min)(indexZ, (int)dwCntZ - 2));
+	int indexX = (int)floorf(fX * tPanelEntry.fInverseItv);
+	int indexZ = (int)floorf(fZ * tPanelEntry.fInverseItv);
 
-_ulong	dwIndex = indexZ * dwCntX + indexX;
-// ... 코드 중략
+	// 배열 접근 오버런 방지
+	indexX = (std::max)(0, (std::min)(indexX, (int)dwCntX - 2));
+	indexZ = (std::max)(0, (std::min)(indexZ, (int)dwCntZ - 2));
 
-const _vec3 &vLeftBottom = pTerrainVtxPos[dwIndex];
-const _vec3 &vRightBottom = pTerrainVtxPos[dwIndex + 1];
-const _vec3 &vLeftTop = pTerrainVtxPos[dwIndex + dwCntX];
-const _vec3 &vRightTop = pTerrainVtxPos[dwIndex + dwCntX + 1];
+	_ulong	dwIndex = indexZ * dwCntX + indexX;
+	// ... 코드 중략
+
+	const _vec3 &vLeftBottom = pTerrainVtxPos[dwIndex];
+	const _vec3 &vRightBottom = pTerrainVtxPos[dwIndex + 1];
+	const _vec3 &vLeftTop = pTerrainVtxPos[dwIndex + dwCntX];
+	const _vec3 &vRightTop = pTerrainVtxPos[dwIndex + dwCntX + 1];
 
 
-const _float fWidth = (fX - vLeftBottom.x) * tPanelEntry.fInverseItv;
-const _float fHeight = (fZ - vLeftBottom.z) * tPanelEntry.fInverseItv;
+	const _float fWidth = (fX - vLeftBottom.x) * tPanelEntry.fInverseItv;
+	const _float fHeight = (fZ - vLeftBottom.z) * tPanelEntry.fInverseItv;
 
-if (fWidth + fHeight <= 1.f) {
-	// 왼쪽 아래 삼각형
-	return vLeftBottom.y + (vRightBottom.y - vLeftBottom.y) * fWidth + (vLeftTop.y - vLeftBottom.y) * fHeight;
-}
-else {
-	// 오른쪽 위 삼각형
-	const _float fWidth2 = 1.f - fWidth;
-	const _float fHeight2 = 1.f - fHeight;
-	return vRightTop.y + (vRightBottom.y - vRightTop.y) * fHeight2 + (vLeftTop.y - vRightTop.y) * fWidth2;
+	if (fWidth + fHeight <= 1.f) {
+		// 왼쪽 아래 삼각형
+		return vLeftBottom.y + (vRightBottom.y - vLeftBottom.y) * fWidth + (vLeftTop.y - vLeftBottom.y) * fHeight;
+	}
+	else {
+		// 오른쪽 위 삼각형
+		const _float fWidth2 = 1.f - fWidth;
+		const _float fHeight2 = 1.f - fHeight;
+		return vRightTop.y + (vRightBottom.y - vRightTop.y) * fHeight2 + (vLeftTop.y - vRightTop.y) * fWidth2;
+	}
 }
 ```
 

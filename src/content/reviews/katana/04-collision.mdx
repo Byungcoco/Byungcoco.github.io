@@ -55,19 +55,24 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CGameScene.cpp" fn="Initialize()">
 
 ```cpp
-// Collision
+void CGameScene::Initialize()
 {
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::BULLET);
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::POMP);
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::GRUNT);
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::GANGSTER);
+	// ... 코드 중략
+	// Collision
+	{
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::BULLET);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::POMP);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::GRUNT);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::BULLET, ObjectType::GANGSTER);
 
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::POMP);
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::POMP);
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::GRUNT);
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::GRUNT);
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::GANGSTER);
-	CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::GANGSTER);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::POMP);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::POMP);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::GRUNT);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::GRUNT);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::RECT, ObjectType::GANGSTER);
+		CCollisionManager::Get_Instance()->CheckGroup(ObjectType::LINE, ObjectType::GANGSTER);
+	}
+	// ... 코드 중략
 }
 ```
 
@@ -101,7 +106,7 @@ void CBullet::OnCollisionEnter(CColliderComponent *_pOther)
 
 	if (OtherType >= ObjectType::DYNAMIC_END)
 		return;
-// ... 코드 중략
+	// ... 코드 중략
 }
 ```
 
@@ -167,42 +172,59 @@ void CCollisionManager::Update()
 <Editor file="CCollisionManager.cpp" fn="UpdateGroup(...)">
 
 ```cpp
-CColliderComponent *LeftColComp = static_cast<CColliderComponent *>(leftcomp);
-CColliderComponent *RightColComp = static_cast<CColliderComponent *>(rightcomp);
-
-Collider_ID ID;
-ID.Left_ID = LeftColComp->GetUniqueID();
-ID.Right_ID = RightColComp->GetUniqueID();
-
-itr = m_CollideInfo.find(ID.ID);
-if (itr == m_CollideInfo.end())
+void CCollisionManager::UpdateGroup(ObjectType _eLeft, ObjectType _eRight)
 {
-	m_CollideInfo.insert(unordered_map<unsigned long long, bool>::value_type(ID.ID, false));
-	itr = m_CollideInfo.find(ID.ID);
-}
+	// ... 코드 중략
+	for (int i = 0; i < LeftGroup.iActiveCount; ++i)
+	{
+		if (CComponent *leftcomp = LeftGroup.List[i]->GetComponent<CColliderComponent>())
+		{
+			for (int j = 0; j < RightGroup.iActiveCount; ++j)
+			{
+				if (CComponent *rightcomp = RightGroup.List[j]->GetComponent<CColliderComponent>())
+				{
+					// ... 코드 중략
+					CColliderComponent *LeftColComp = static_cast<CColliderComponent *>(leftcomp);
+					CColliderComponent *RightColComp = static_cast<CColliderComponent *>(rightcomp);
 
-bool bCollided = itr->second;
-if (IsCollision(LeftColComp, RightColComp))
-{
-	if (bCollided) // 이전에도 충돌 현재도 충돌
-	{
-		LeftColComp->OnCollision(RightColComp);
-		RightColComp->OnCollision(LeftColComp);
-	}
-	else // 이전에는 충돌안했었음
-	{
-		LeftColComp->OnCollisionEnter(RightColComp);
-		RightColComp->OnCollisionEnter(LeftColComp);
-		itr->second = true;
-	}
-}
-else
-{
-	if (bCollided)
-	{
-		LeftColComp->OnCollisionExit(RightColComp);
-		RightColComp->OnCollisionExit(LeftColComp);
-		itr->second = false;
+					Collider_ID ID;
+					ID.Left_ID = LeftColComp->GetUniqueID();
+					ID.Right_ID = RightColComp->GetUniqueID();
+
+					itr = m_CollideInfo.find(ID.ID);
+					if (itr == m_CollideInfo.end())
+					{
+						m_CollideInfo.insert(unordered_map<unsigned long long, bool>::value_type(ID.ID, false));
+						itr = m_CollideInfo.find(ID.ID);
+					}
+
+					bool bCollided = itr->second;
+					if (IsCollision(LeftColComp, RightColComp))
+					{
+						if (bCollided) // 이전에도 충돌 현재도 충돌
+						{
+							LeftColComp->OnCollision(RightColComp);
+							RightColComp->OnCollision(LeftColComp);
+						}
+						else // 이전에는 충돌안했었음
+						{
+							LeftColComp->OnCollisionEnter(RightColComp);
+							RightColComp->OnCollisionEnter(LeftColComp);
+							itr->second = true;
+						}
+					}
+					else
+					{
+						if (bCollided)
+						{
+							LeftColComp->OnCollisionExit(RightColComp);
+							RightColComp->OnCollisionExit(LeftColComp);
+							itr->second = false;
+						}
+					}
+				}
+			}
+		}
 	}
 }
 ```
@@ -242,8 +264,15 @@ union Collider_ID
 <Editor file="CCollisionManager.h" fn="CCollisionManager">
 
 ```cpp
-uint16_t m_CheckBit[g_All_ObjectTypeCount];
-unordered_map<unsigned long long, bool> m_CollideInfo;
+class CCollisionManager
+{
+	// ... 코드 중략
+private:
+	// ... 코드 중략
+	uint16_t m_CheckBit[g_All_ObjectTypeCount];
+	unordered_map<unsigned long long, bool> m_CollideInfo;
+	// ... 코드 중략
+};
 ```
 
 </Editor>

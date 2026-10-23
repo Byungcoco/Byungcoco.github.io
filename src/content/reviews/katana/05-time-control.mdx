@@ -56,16 +56,26 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CPlayer.cpp" fn="Update(...)">
 
 ```cpp
-m_bAbillity = m_fAbilityTime > 1.5f;
-if (m_bAbillity && KEY_BUTTON_HOLD(KeyType::V))
+void CPlayer::Update(const float _fDeltaTime)
 {
-	CTimeManager::Get_Instance()->SetState(TimeState::SLOW);
-	m_fAbilityTime = max(0.0f, m_fAbilityTime - fUnscaledDeltaTime);
-}
-else
-{
-	CTimeManager::Get_Instance()->SetState(TimeState::NORMAL);
-	m_fAbilityTime = min(11.f, m_fAbilityTime + fUnscaledDeltaTime);
+	// ... 코드 중략
+	if (m_eCurState < PLAYERSTATE::HURT_BEGIN)
+	{
+		// ... 코드 중략
+		m_bAbillity = m_fAbilityTime > 1.5f;
+		if (m_bAbillity && KEY_BUTTON_HOLD(KeyType::V))
+		{
+			CTimeManager::Get_Instance()->SetState(TimeState::SLOW);
+			m_fAbilityTime = max(0.0f, m_fAbilityTime - fUnscaledDeltaTime);
+		}
+		else
+		{
+			CTimeManager::Get_Instance()->SetState(TimeState::NORMAL);
+			m_fAbilityTime = min(11.f, m_fAbilityTime + fUnscaledDeltaTime);
+		}
+		// ... 코드 중략
+	}
+	// ... 코드 중략
 }
 ```
 
@@ -83,6 +93,10 @@ void CScene::BasicUIUpdate(const float _fDeltaTime)
 	if (CObject* pPlayer = CObjectManager::Get_Instance()->GetPlayer())
 	{
 		m_fLimitTime -= CTimeManager::Get_Instance()->GetUnscaledDeltaTime();
+		// ... 코드 중략
+	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -95,6 +109,8 @@ void CEffect::Update(const float _fDeltaTime)
 	float fDeltaTime = _fDeltaTime;
 	if (m_bUnscaledDelta)
 		fDeltaTime = CTimeManager::Get_Instance()->GetUnscaledDeltaTime();
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -177,7 +193,13 @@ void CObject::Restore(const CMemento &_m)
 <Editor file="CMementoManager.h" fn="CMementoManager">
 
 ```cpp
-unordered_map<ObjectType, deque<CMemento>> m_Snapshots;
+class CMementoManager
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	unordered_map<ObjectType, deque<CMemento>> m_Snapshots;
+};
 ```
 
 </Editor>
@@ -297,14 +319,20 @@ void CScene::Replay(float _fDeltaTime)
 <Editor file="CScene.cpp" fn="Late_Update()">
 
 ```cpp
-switch (m_CurSceneMode)
+void CScene::Late_Update()
 {
-case SceneMode::NORMAL:
-{
-	CObjectManager::Get_Instance()->Late_Update();
-	CCollisionManager::Get_Instance()->Update();
-	Store();
-} break;
+	// ... 코드 중략
+	switch (m_CurSceneMode)
+	{
+	case SceneMode::NORMAL:
+	{
+		CObjectManager::Get_Instance()->Late_Update();
+		CCollisionManager::Get_Instance()->Update();
+		Store();
+	} break;
+	// ... 코드 중략
+	}
+}
 ```
 
 </Editor>
@@ -355,6 +383,8 @@ void CTimeManager::Update()
 	m_fUnscaledDeltaTime = fElapsed;
 	m_fScaledDeltaTime = fElapsed * m_fTimeScale;
 	m_fTotalTime += m_fUnscaledDeltaTime;
+	// ... 코드 중략
+}
 ```
 
 </Editor>
