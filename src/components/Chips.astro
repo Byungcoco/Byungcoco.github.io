@@ -1,0 +1,5 @@
+---
+interface Props { items: string[] }
+const { items } = Astro.props;
+---
+<span class="chips">{items.map((c) => <span class="chip">{c}</span>)}</span>

@@ -1,0 +1,367 @@
+---
+project: duet
+order: 2
+title: 느슨한 옥트리 컬링
+topic: 컬링·공간 분할
+chips: [Loose Octree, Culling, AABB, Swap and Pop]
+lineage:
+  label: 카타나 제로 모작 — 카메라 컬링
+---
+import Chips from '../../../components/Chips.astro';
+import Summary from '../../../components/Summary.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+<Summary head="스트레스 장면 기준" items={[{ k: '컬링 시간', v: '4.4배 감소', s: '315.4 µs → 72.1 µs' }, { k: '검사 항목', v: '8.5%', s: '5,451개 중 464개만 검사' }]}>자세한 내용은 **5. 측정**에 있습니다.</Summary>
+
+옥트리는 3D 공간을 8개로 반복해 나누는 트리입니다. 카메라 절두체와 겹치지 않는 노드를 만나면 그 아래 오브젝트를 하나도 검사하지 않아도 됩니다. 느슨한 옥트리(Loose Octree)는 노드의 판정 경계를 실제보다 넓혀, 칸 경계에 걸친 오브젝트도 깊은 노드에 넣을 수 있게 한 변형입니다.
+
+## 2. 문제
+
+> 맵툴에서 오브젝트를 배치해 나갈수록 프레임 드랍이 심해졌고, 당시에는 오픈월드 맵까지 염두에 두고 있었습니다. 오브젝트가 계속 늘어날 것을 전제로, 보이지 않는 영역을 오브젝트 하나하나가 아니라 공간 단위로 한꺼번에 걸러 내는 구조가 필요했습니다.
+
+## 3. 구조 요약
+
+렌더 매니저가 매 프레임 오브젝트를 하나씩 검사하던 일을, 옥트리 시스템에 "이 절두체에 보이는 오브젝트"를 묻는 질의 하나로 바꿨습니다. 오브젝트는 등록할 때 한 번 트리에 들어가고, 노드는 자기 영역과 그 안의 항목만 압니다.
+
+<Fig n={1} white max={480} src="/img/reviews/duet/octree/class.png" caption="옥트리 관련 클래스·구조체 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 / 구조체 | 책임 |
+| --- | --- |
+| `COctree_Manager` | 등록·해제·갱신, 노드 분할, 절두체 질의 |
+| `OCTREE_NODE` | 실제 경계와 늘린 경계, 자식 8개, 이 노드에 머무는 항목 |
+| `OCTREE_ENTRY` | 오브젝트, 렌더 분류, AABB, 소속 노드와 노드 안 인덱스 |
+| `CRender_Manager` | 불투명 패스 직전에 절두체 질의로 그릴 오브젝트 수집 |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '노드 · 항목', '삽입 · 분할', '질의 · 갱신']}>
+<Tab>
+
+렌더 매니저는 불투명 패스를 시작할 때 절두체 하나로 질의해 그릴 목록을 받습니다.
+
+#### A. 불투명 패스의 질의
+
+<Editor file="Render_Manager.cpp" fn="Render_NoneBlend()">
+
+```cpp
+HRESULT CRender_Manager::Render_NoneBlend()
+{
+	if (FAILED(m_pGameInstance->Begin_MRT(EMRTLayer::GameObjects)))
+		return E_FAIL;
+
+	BoundingFrustum* pFrustrum = m_pGameInstance->Get_BoundingFrustrum_World();
+	// 디버그용
+	OCTREE_QUERY_STATS tStats{};
+	m_pGameInstance->m_pOctree_Manager->Query_Visible(*pFrustrum, RENDER_CATEGORY::NONEBLEND, m_filteredRenderObjects, &tStats);
+	// ... 코드 중략
+	return S_OK;
+}
+```
+
+</Editor>
+
+불투명 패스는 그릴 목록을 렌더 분류에서 가져오지 않고, 현재 카메라 절두체로 옥트리에 질의해 받습니다. 디버그 빌드에서는 60프레임마다 방문 노드·검사 항목·결과 개수를 로그로 남기도록 했습니다.
+
+<Fig n={2} max={520} src="/img/reviews/duet/octree/topdown.jpg" caption="탑다운 뷰로 확인한 절두체 컬링 — 붉은 선이 카메라 절두체" alt="게임 화면을 위에서 내려다본 두 장면, 붉은 선으로 표시한 절두체 밖 영역이 그려지지 않음" />
+
+</Tab>
+<Tab>
+
+노드와 항목은 서로를 가리킵니다. 노드는 실제 경계와 늘린 경계를 함께 들고 있고, 항목은 자기 노드(`pOwner`)와 그 노드 배열 안의 위치(`iOwnerIndex`)를 알고 있어서 빼낼 때 노드를 검색하지 않습니다.
+
+#### A. 서로를 가리키는 노드와 항목
+
+<Editor file="Octree_Manager.h" fn="OCTREE_ENTRY, OCTREE_NODE">
+
+```cpp
+typedef struct tagOctreeEntry
+{
+	_bool bDynamic{ false };
+	RENDER_CATEGORY eCategory{ RENDER_CATEGORY::NONEBLEND };
+	CGameObject* pGo{ nullptr };
+	tagOctreeNode* pOwner{ nullptr };
+	BoundingBox AABB;
+	size_t iOwnerIndex{ 0 };
+}OCTREE_ENTRY;
+
+typedef struct tagOctreeNode
+{
+	BoundingBox bounds;
+	BoundingBox looseBounds;
+	_int iDepth{ 0 };
+	tagOctreeNode* pChilds[DIVISION]{nullptr};
+	vector<tagOctreeEntry*> vecItems;
+
+	_bool Is_Leaf() const
+	{
+		for (_int i = 0; i < DIVISION; ++i)
+			if (pChilds[i] != nullptr)
+				return false;
+		return true;
+	}
+}OCTREE_NODE;
+```
+
+</Editor>
+
+<Editor file="Octree_Manager.cpp" fn="Add_ToNode(...), Remove_FromOwner(...)">
+
+```cpp
+void COctree_Manager::Add_ToNode(OCTREE_NODE* pNode, OCTREE_ENTRY* pEntry)
+{
+	pEntry->pOwner = pNode;
+	pEntry->iOwnerIndex = pNode->vecItems.size();
+	pNode->vecItems.push_back(pEntry);
+}
+
+// vecItems에서 엔트리 똑 떼기
+void COctree_Manager::Remove_FromOwner(OCTREE_ENTRY* pEntry)
+{
+	if (pEntry == nullptr || pEntry->pOwner == nullptr)
+		return;
+
+	OCTREE_NODE* pNode = pEntry->pOwner;
+	const size_t iSize = pNode->vecItems.size();
+	// ... 코드 중략
+	const size_t iIndex = pEntry->iOwnerIndex;
+	const size_t iLastIndex = iSize - 1;
+
+	// 삭제 된것과 마지막 Index 스왑 정렬
+	if (iIndex != iLastIndex)
+	{
+		pNode->vecItems[iIndex] = pNode->vecItems[iLastIndex];
+		pNode->vecItems[iIndex]->iOwnerIndex = iIndex;
+	}
+	pNode->vecItems.pop_back();
+
+	pEntry->pOwner = nullptr;
+	pEntry->iOwnerIndex = 0;
+}
+```
+
+</Editor>
+
+노드의 항목 배열은 순서가 의미 없으므로, 빼낼 때 마지막 항목을 그 자리로 옮기고 `pop_back` 합니다(Swap and Pop). 옮겨진 항목의 인덱스만 고치면 되므로 제거가 상수 시간입니다.
+
+</Tab>
+<Tab>
+
+삽입과 분할입니다. 자식을 고르는 기준은 AABB 중심이고, 넣을 수 있는지는 늘린 경계에 완전히 들어가는지로 판단합니다.
+
+#### A. 느슨한 경계와 자식 선택
+
+<Editor file="Octree_Manager.cpp" fn="Make_Loose(...), Candidate_ChildIndex(...)">
+
+```cpp
+BoundingBox COctree_Manager::Make_Loose(const BoundingBox& boundingBox, _float fLooseFactor)
+{
+	BoundingBox newBox = boundingBox;
+	newBox.Extents.x *= fLooseFactor;
+	newBox.Extents.y *= fLooseFactor;
+	newBox.Extents.z *= fLooseFactor;
+	return newBox;
+}
+
+_int COctree_Manager::Candidate_ChildIndex(const BoundingBox& node, const BoundingBox& object)
+{
+	// node의 center 기준 어디 쪽에 속하는가 ?
+	_int iX = (object.Center.x >= node.Center.x) ? 1 : 0;
+	_int iY = (object.Center.y >= node.Center.y) ? 1 : 0;
+	_int iZ = (object.Center.z >= node.Center.z) ? 1 : 0;
+
+	// 0 ~ 7
+	return (iX) | (iZ << 1) | (iY << 2);
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={820} src="/img/reviews/duet/octree/loose.png" caption="실제 경계와 늘린 경계(loose) — 경계에 걸친 오브젝트도 자식에 들어감" />
+
+일반 옥트리는 칸 경계에 조금이라도 걸친 오브젝트를 자식에 넣을 수 없어 위쪽 노드에 쌓이고, 그 노드가 보일 때마다 매번 검사됩니다. 느슨한 옥트리는 노드의 판정 경계를 배율만큼 늘려(<FigRef n={3} />), 중심이 들어 있는 칸의 늘린 경계 안이면 자식에 넣습니다. 자식 번호는 중심의 위치만으로 바로 정해지므로 8개를 모두 시험하지 않습니다.
+
+#### B. 필요할 때만 분할
+
+<Editor file="Octree_Manager.cpp" fn="Insert(...)">
+
+```cpp
+void COctree_Manager::Insert(OCTREE_NODE* pNode, OCTREE_ENTRY* pEntry)
+{
+	// ... 코드 중략
+	// 분할이 가능한 깊이인가 ?
+	const _bool bCanSplit = pNode->iDepth < m_Desc.iMaxDepth;
+
+	// 트리의 가장 끝에 있다면
+	if (pNode->Is_Leaf() == true)
+	{
+		// 더이상 분할이 불가능하다면 해당 노드에 추가
+		if (bCanSplit == false || pNode->vecItems.size() < m_Desc.iMaxItemsPerLeaf)
+		{
+			Add_ToNode(pNode, pEntry);
+			return;
+		}
+
+		// 분할을 하는데 최소 크기에 도달했다면
+		_bool bTooSmall = (
+			(pNode->bounds.Extents.x <= m_Desc.fMinNodeSizeXZ) ||
+			(pNode->bounds.Extents.z <= m_Desc.fMinNodeSizeXZ)
+			);
+
+		if (bTooSmall)
+		{
+			Add_ToNode(pNode, pEntry);
+			return;
+		}
+		else
+			Split(pNode);
+	}
+
+	// 자식 Index 후보 검출
+	const _int iIndex = Candidate_ChildIndex(pNode->bounds, pEntry->AABB);
+	// ... 코드 중략
+	// 완전히 포함된다면 해당 Entry 등록
+	if (pNode->pChilds[iIndex]->looseBounds.Contains(pEntry->AABB) == ContainmentType::CONTAINS)
+	{
+		Insert(pNode->pChilds[iIndex], pEntry);
+		return;
+	}
+
+	Add_ToNode(pNode, pEntry);
+}
+```
+
+</Editor>
+
+<Fig n={4} white max={780} src="/img/reviews/duet/octree/split.png" caption="노드가 가득 차면 8개 자식으로 나누고, 완전히 들어가는 오브젝트만 내려보내기" />
+
+리프에 항목이 정해진 수보다 많아지면 그때 분할합니다. 최대 깊이에 닿았거나 노드가 최소 크기보다 작아지면 더 나누지 않고 그 노드에 쌓아, 오브젝트가 한곳에 몰려도 트리가 끝없이 깊어지지 않습니다(<FigRef n={4} />). 자식 노드는 실제로 항목이 들어갈 때만 만들기 때문에, 빈 공간에는 노드가 생기지 않습니다.
+
+</Tab>
+<Tab>
+
+절두체 질의와 움직이는 항목의 갱신입니다. 노드의 늘린 경계가 절두체 밖이면 하위 전체를 건너뛰고, 안쪽 노드에서만 항목의 AABB를 검사합니다.
+
+#### A. 절두체 질의
+
+<Editor file="Octree_Manager.cpp" fn="Query_Node(...)">
+
+```cpp
+void COctree_Manager::Query_Node(OCTREE_NODE* pNode, const BoundingFrustum& frustrum, RENDER_CATEGORY eCtegory, OUT vector<CGameObject*>& outObjects, OUT OCTREE_QUERY_STATS* pDebugStat) const
+{
+	if (pNode == nullptr)
+		return;
+
+	// Entry Frustrum 테스트 시도 횟수
+	++(*pDebugStat).iVisitedNodes;
+
+	if (frustrum.Contains(pNode->looseBounds) == ContainmentType::DISJOINT)
+		return;
+
+	for (auto* pEntry : pNode->vecItems)
+	{
+		if (eCtegory != pEntry->eCategory)
+			continue;
+
+		++(*pDebugStat).iTestedEntries;
+
+		if (frustrum.Contains(pEntry->AABB) != ContainmentType::DISJOINT)
+			outObjects.push_back(pEntry->pGo);
+	}
+
+	for (_int i = 0; i < DIVISION; ++i)
+	{
+		if (pNode->pChilds[i] != nullptr)
+			Query_Node(pNode->pChilds[i], frustrum, eCtegory, outObjects, pDebugStat);
+	}
+}
+```
+
+</Editor>
+
+<Fig n={5} white max={560} src="/img/reviews/duet/octree/query.png" caption="절두체와 겹치지 않는 노드는 하위 전체를 건너뜀" />
+
+노드 판정에 실제 경계가 아니라 늘린 경계를 써야, 그 노드에 들어간 오브젝트가 경계 밖으로 삐져나와 있어도 놓치지 않습니다(<FigRef n={5} />). 통계 인자로 방문한 노드 수, 검사한 항목 수, 최종 개수를 셉니다. 이 통계는 나중에 측정에서 그대로 썼습니다.
+
+#### B. 움직이는 항목 갱신
+
+<Editor file="Octree_Manager.cpp" fn="Update_AABB(...)">
+
+```cpp
+void COctree_Manager::Update_AABB(CGameObject* pGo, const BoundingBox& newAABB)
+{
+	auto itr = m_umapEntries.find(pGo);
+	if (itr == m_umapEntries.end())
+		return;
+
+	OCTREE_ENTRY* pEntry = itr->second;
+	pEntry->AABB = newAABB;
+
+	// Owner 등록 안됬으면 넣기
+	if (pEntry->pOwner == nullptr)
+	{
+		Insert(m_pRoot, pEntry);
+		return;
+	}
+
+	// 갱신된 AABB가 LooseBound에 완전포함 안되어있다면 Owner로부터 빠지고 재삽입
+	if (pEntry->pOwner->looseBounds.Contains(pEntry->AABB) != ContainmentType::CONTAINS)
+	{
+		Remove_FromOwner(pEntry);
+		Insert(m_pRoot, pEntry);
+	}
+}
+```
+
+</Editor>
+
+움직이는 오브젝트는 AABB가 바뀔 때마다 트리를 고치면 비용이 크므로, 지금 노드의 늘린 경계 안에 있는 동안은 AABB 값만 바꿉니다. 늘린 경계를 벗어날 때만 빼서 루트부터 다시 넣습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 측정
+
+도입할 때는 리프 최대 항목 수와 경계 배율(1.3)을 측정 없이 정했고, 리프 최대 항목 수는 128까지 올려 두었습니다. 효과를 숫자로 확인하려고, 옥트리 질의와 같은 항목을 모두 하나씩 검사하는 전수 검사를 실행 인자로 바꿔 가며 비교했습니다. Release 빌드에서 컬링 구간에 NVTX 범위를 걸어 Nsight Systems로 10초간 시간을 재고, 같은 구간의 방문 노드·검사 항목·결과 개수를 600프레임 동안 CSV로 기록했습니다. 카메라는 고정했습니다.
+
+<Fig n={6} src="/img/reviews/duet/octree/chart.png" caption="측정한 중앙값을 그래프로 옮긴 것 (아래 표와 같은 값)" alt="세 조건의 컬링 시간 막대그래프. 스트레스 장면에서 옥트리 72.1µs, 일반 컬링 315.4µs" />
+
+<div class="tbl"><table>
+<thead><tr><th scope="col">조건</th><th scope="col">노드 수</th><th scope="col">검사 항목 (옥트리 / 전수)</th><th scope="col">컬링 중앙값 (옥트리 / 전수)</th></tr></thead>
+<tbody>
+<tr><td><span class="cn">실제 맵 · 넓은 시야</span><br />520개, 리프 최대 128</td><td>16</td><td>520 / 520</td><td>43.7 µs / 42.8 µs</td></tr>
+<tr><td><span class="cn">실제 맵 · 좁은 시야</span><br />520개, 리프 최대 128</td><td>16</td><td>412 / 520</td><td>31.6 µs / 38.6 µs</td></tr>
+<tr class="hl"><td><span class="cn">스트레스 장면</span><br />더미 AABB 5,000개 추가(총 5,451개), 리프 최대 32</td><td>137</td><td>464 / 5,451</td><td><strong>72.1 µs / 315.4 µs</strong></td></tr>
+</tbody></table></div>
+
+**결과는 예상과 달랐습니다.** 실제 맵 넓은 시야 장면에서 옥트리는 전수 검사보다 오히려 조금 느렸습니다. 방문 노드가 어느 장면에서나 16개로 고정된 것을 보고 원인을 찾았습니다. 520개를 8칸으로 나누면 칸당 평균 65개라 128에 못 미쳐 더 나뉘지 않았고, 칸 하나가 맵의 1/8 크기라 어느 방향을 봐도 대부분의 칸이 절두체와 겹쳤습니다. 화면 밖 오브젝트가 많은 좁은 시야 장면에서도 검사 수는 21%만 줄었습니다.
+
+리프 최대 항목 수를 32로 낮추고, 오브젝트가 늘어난 상황을 보기 위해 그리지 않는 AABB 더미 5,000개를 넣어 스트레스 장면을 만들어 다시 쟀습니다. 노드가 137개로 나뉘면서 옥트리는 전체의 8.5%만 검사했고, 전수 검사는 항목 수에 거의 비례해 늘어 컬링 시간이 약 4.4배 차이 났습니다.
+
+- 실제 맵 규모에서 컬링은 프레임당 약 0.04 ms로, 렌더 전체(약 2.3 ms)에 비하면 병목이 아니었습니다. 옥트리의 효과는 오브젝트가 늘어날수록 커집니다.
+- 스트레스 장면은 합성 부하입니다. 측정 사이 카메라 위치가 조금 달라 보이는 오브젝트 수가 수십 개 차이 나지만, 검사 수와 시간 비교에는 영향이 작습니다.
+
+## 6. 피드백
+
+**스트레스 장면의 측정만 보고 판단한 것이 가장 큰 문제였습니다.** 리프 최대 항목 수를 128에서 32로 낮춘 근거는 더미 5,000개를 넣은 스트레스 장면의 결과였습니다. 오브젝트가 많을 때 옥트리가 유리하다는 것은 확인했지만, 실제 맵에서 오브젝트가 밀집한 곳을 카메라가 비추는 경우는 따로 따져 보지 않았습니다.
+
+이런 장면에서는 대부분의 노드가 절두체와 겹쳐 결국 거의 모든 항목을 검사하게 되고, 노드를 방문하는 비용만큼 일반 컬링(전수 검사)보다 아주 조금 느려집니다. 같은 경향은 리프 최대 128로 잰 넓은 시야 장면에서도 이미 보였지만(43.7 µs / 42.8 µs), 값을 조정할 때 이 오버헤드를 함께 확인하지 못했습니다. 스트레스 장면 하나가 아니라 넓은 장면·좁은 장면·밀집 장면을 같은 조건으로 함께 측정해 비교했어야 했습니다.
+
+남은 개선점입니다.
+
+- 절두체 안에 완전히 들어온 노드도 항목을 하나씩 검사합니다. 완전히 안인 노드는 하위 항목을 검사 없이 담으면 검사 수가 더 줄어듭니다.
+- 항목이 빠져 빈 노드가 생겨도 레벨을 바꾸기 전까지 지우지 않습니다.
+- 자식 번호를 AABB 중심으로만 고르기 때문에, 큰 오브젝트는 늘린 경계에도 들어가지 못하고 위쪽 노드에 남습니다.

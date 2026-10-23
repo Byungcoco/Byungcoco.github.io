@@ -1,0 +1,9 @@
+---
+// 본문 그림. n = 그림 번호(읽는 순서), white = 흰 바탕 도식(여백 포함)
+interface Props { n: number; src: string; caption: string; alt?: string; max?: number; white?: boolean }
+const { n, src, caption, alt, max = 760, white = false } = Astro.props;
+---
+<figure class="fig" id={`fig-${n}`} style={`max-width:${max}px`} data-n={n} data-cap={caption}>
+  <span class={white ? 'figw' : 'figd'}><img src={src} alt={alt ?? caption} loading="lazy" /></span>
+  <figcaption><strong>▲ 그림 {n}.</strong> {caption}</figcaption>
+</figure>

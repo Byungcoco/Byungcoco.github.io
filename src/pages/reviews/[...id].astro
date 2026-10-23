@@ -1,0 +1,235 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import { projects } from '../../data/site';
+
+export async function getStaticPaths() {
+  const all = await getCollection('reviews');
+  return all.map((entry) => ({ params: { id: entry.id }, props: { entry } }));
+}
+
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+const project = projects.find((p) => p.key === entry.data.project)!;
+const siblings = (await getCollection('reviews', (r) => r.data.project === entry.data.project))
+  .sort((a, b) => a.data.order - b.data.order);
+const idx = siblings.findIndex((r) => r.id === entry.id);
+const prev = siblings[idx - 1];
+const next = siblings[idx + 1];
+const toc = headings.filter((h) => h.depth === 2);
+const href = (r: { id: string }) => `/reviews/${r.id}/`;
+---
+<Base title={`${entry.data.title} · ${project.name} 코드 리뷰`}>
+<header class="top">
+  <div class="topin">
+    <a class="back" href="/#projects"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg><span>홈으로</span></a>
+    <div class="ttl">
+      <span class="crumb">{project.name} · 코드 리뷰 {idx + 1} / {siblings.length}</span>
+      <h1>{entry.data.title}</h1>
+    </div>
+    <nav class="nav3" aria-label="리뷰 이동">
+      {prev ? <a class="nb" href={href(prev)}><span class="nk"><span aria-hidden="true">←</span> 이전 글</span><span class="nt">{prev.data.title}</span></a>
+            : <span class="nb off"><span class="nk">← 이전 글</span><span class="nt">처음 글입니다</span></span>}
+      <span class="ddwrap">
+        <button type="button" class="nb mid" id="ddbtn" aria-haspopup="true" aria-expanded="false" aria-controls="dd"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1" fill="currentColor"/><circle cx="3.5" cy="12" r="1" fill="currentColor"/><circle cx="3.5" cy="18" r="1" fill="currentColor"/></svg><span class="nk" style="color:#E3EAF6">목차 보기</span></button>
+        <div class="dd" id="dd" role="menu" aria-label="같은 프로젝트의 코드 리뷰" hidden>
+          <span class="ddh">{project.name}의 코드 리뷰</span>
+          {siblings.map((r, i) => (
+            <a class={`ddi${r.id === entry.id ? ' cur' : ''}`} role="menuitem" href={r.id === entry.id ? '#top' : href(r)}><span class="ddn">{String(i + 1).padStart(2, '0')}</span><span class="ddx"><span class="ddt">{r.data.title}</span><span class="dds">{r.data.topic}</span></span></a>
+          ))}
+        </div>
+      </span>
+      {next ? <a class="nb right" href={href(next)}><span class="nk">다음 글 <span aria-hidden="true">→</span></span><span class="nt">{next.data.title}</span></a>
+            : <span class="nb right off"><span class="nk">다음 글 →</span><span class="nt">마지막 글입니다</span></span>}
+    </nav>
+  </div>
+</header>
+
+<nav class="toc" aria-label="목차">
+  {toc.map((h, i) => <a class={`ti${i === 0 ? ' on' : ''}`} href={`#${h.slug}`}><span class="lbl">{h.text}</span><span class="ln"></span></a>)}
+</nav>
+
+<main class="article" id="top">
+  <Content />
+  {entry.data.lineage && (
+    <p class="lineage">개선 과정 · 이전 단계: {entry.data.lineage.href ? <a href={entry.data.lineage.href}>{entry.data.lineage.label}</a> : <span>{entry.data.lineage.label}</span>}</p>
+  )}
+</main>
+
+<div class="modal" id="modal" role="dialog" aria-modal="true" hidden>
+  <button type="button" class="dimbg" data-close aria-label="미리보기 닫기"></button>
+  <div class="mcard">
+    <button type="button" class="mx" data-close aria-label="닫기">✕</button>
+    <img id="mimg" alt="" />
+    <span class="mcap"><strong id="mnum"></strong> <span id="mtext"></span></span>
+  </div>
+</div>
+
+<script>
+  // 탭
+  document.querySelectorAll<HTMLElement>('[data-tabs]').forEach((box) => {
+    const btns = [...box.querySelectorAll<HTMLButtonElement>(':scope > .tabbar > .tab')];
+    const panels = [...box.querySelectorAll<HTMLElement>(':scope > .tabpanel')];
+    const pick = (k: number) => {
+      btns.forEach((b, i) => { b.classList.toggle('on', i === k); b.setAttribute('aria-selected', String(i === k)); });
+      panels.forEach((p, i) => { p.hidden = i !== k; });
+    };
+    btns.forEach((b, i) => b.addEventListener('click', () => pick(i)));
+    pick(0);
+  });
+
+  // 그림 미리보기
+  const modal = document.getElementById('modal')!;
+  const mimg = document.getElementById('mimg') as HTMLImageElement;
+  const close = () => { modal.hidden = true; };
+  document.querySelectorAll<HTMLButtonElement>('.fref').forEach((b) => b.addEventListener('click', () => {
+    const fig = document.getElementById('fig-' + b.dataset.fig);
+    if (!fig) return;
+    const img = fig.querySelector('img')!;
+    mimg.src = img.src; mimg.alt = img.alt;
+    document.getElementById('mnum')!.textContent = `▲ 그림 ${fig.dataset.n}.`;
+    document.getElementById('mtext')!.textContent = fig.dataset.cap ?? '';
+    modal.setAttribute('aria-label', `그림 ${fig.dataset.n}`);
+    modal.hidden = false;
+    (modal.querySelector('.mx') as HTMLButtonElement).focus();
+  }));
+  modal.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+
+  // 같은 프로젝트 리뷰 목록
+  const ddbtn = document.getElementById('ddbtn')!;
+  const dd = document.getElementById('dd')!;
+  const setDd = (open: boolean) => { dd.hidden = !open; ddbtn.setAttribute('aria-expanded', String(open)); };
+  ddbtn.addEventListener('click', (e) => { e.stopPropagation(); setDd(dd.hidden); });
+  document.addEventListener('click', (e) => { if (!dd.hidden && !dd.contains(e.target as Node)) setDd(false); });
+  dd.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => setDd(false)));
+
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); setDd(false); } });
+
+  // 오른쪽 목차 강조
+  const tis = [...document.querySelectorAll<HTMLAnchorElement>('.ti')];
+  const hs = tis.map((a) => document.getElementById(decodeURIComponent(a.hash.slice(1)))!);
+  const onScroll = () => {
+    const y = window.scrollY + 140;
+    let cur = 0;
+    hs.forEach((h, i) => { if (h && h.getBoundingClientRect().top + window.scrollY <= y) cur = i; });
+    tis.forEach((a, i) => a.classList.toggle('on', i === cur));
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+</script>
+
+<style is:global>
+  .top { position: sticky; top: 0; z-index: 5; background: rgba(10,22,40,0.88); backdrop-filter: blur(8px); border-bottom: 1px solid #1E3150; }
+  .topin { max-width: 1200px; margin: 0 auto; padding: 12px 48px; box-sizing: border-box; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .back { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid #24385A; border-radius: 8px; font-size: 14px; font-weight: 600; color: #7FB2FF; text-decoration: none; box-sizing: border-box; }
+  .back:hover { border-color: #7FB2FF; background: rgba(127,178,255,0.08); }
+  .ttl { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
+  .crumb { font-size: 13px; font-weight: 600; color: #7C8BA8; }
+  .ttl h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: #E3EAF6; }
+  .nav3 { display: flex; align-items: stretch; gap: 8px; }
+  .nb { display: flex; flex-direction: column; justify-content: center; gap: 2px; width: 170px; min-height: 52px; padding: 6px 14px; box-sizing: border-box; border: 1px solid #24385A; border-radius: 8px; background: transparent; text-decoration: none; font-family: inherit; color: #C9D4E8; cursor: pointer; }
+  .nb:hover { border-color: #7FB2FF; background: rgba(127,178,255,0.08); }
+  .nb.right { text-align: right; align-items: flex-end; }
+  .nb.off { opacity: 0.45; cursor: default; }
+  .nb.off:hover { border-color: #24385A; background: transparent; }
+  .nb.mid { width: auto; height: 100%; flex-direction: row; align-items: center; gap: 8px; padding: 0 16px; color: #7FB2FF; }
+  .nk { font-size: 12px; font-weight: 600; color: #7C8BA8; line-height: 1.3; }
+  .nt { font-size: 13px; font-weight: 600; color: #E3EAF6; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .ddwrap { position: relative; display: flex; }
+  .dd { position: absolute; top: calc(100% + 10px); right: 0; z-index: 8; width: 340px; max-width: 86vw; display: flex; flex-direction: column; padding: 8px; background: #0E1D35; border: 1px solid #24385A; border-radius: 12px; box-shadow: 0 16px 40px rgba(0,0,0,0.45); }
+  .dd[hidden] { display: none; }
+  .ddh { padding: 6px 10px 8px; font-size: 12px; font-weight: 600; color: #7C8BA8; }
+  .ddi { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: #C9D4E8; }
+  .ddi:hover { background: rgba(127,178,255,0.10); color: #E3EAF6; }
+  .ddi.cur { background: rgba(127,178,255,0.14); }
+  .ddi.cur .ddt { color: #7FB2FF; }
+  .ddn { flex: 0 0 22px; font-size: 12px; font-weight: 700; color: #7C8BA8; }
+  .ddx { min-width: 0; display: flex; flex-direction: column; }
+  .ddt { font-size: 14px; font-weight: 600; line-height: 1.4; }
+  .dds { font-size: 12px; color: #7C8BA8; line-height: 1.4; }
+
+  .toc { position: fixed; right: 20px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 10px 8px; border-radius: 10px; border: 1px solid transparent; }
+  .toc:hover { background: rgba(14,29,53,0.96); border-color: #1E3150; }
+  .ti { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 30px; text-decoration: none; color: #7C8BA8; font-size: 13px; font-weight: 600; }
+  .ti .ln { display: block; width: 16px; height: 2px; border-radius: 2px; background: #3A4A68; }
+  .ti.on .ln { width: 28px; background: #7FB2FF; }
+  .ti .lbl { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-width .15s, opacity .15s; }
+  .toc:hover .ti .lbl { max-width: 160px; opacity: 1; }
+  .ti:hover, .ti.on { color: #E3EAF6; }
+  .ti:hover .ln { width: 28px; background: #E3EAF6; }
+
+  /* 본문 */
+  .article { max-width: 1200px; margin: 0 auto; padding: 56px 96px 96px 48px; box-sizing: border-box; line-height: 1.8; }
+  .article .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0; }
+  .article h2 { margin: 96px 0 18px; font-size: 28px; line-height: 1.3; font-weight: 700; letter-spacing: -0.02em; color: #E3EAF6; scroll-margin-top: 96px; }
+  .article h2:first-child { margin-top: 0; }
+  .article h3 { margin: 26px 0 12px; font-size: 18px; font-weight: 600; color: #E3EAF6; scroll-margin-top: 96px; }
+  .article h4 { margin: 30px 0 18px; font-size: 17px; font-weight: 600; color: #E3EAF6; }
+  .article p { margin: 0 0 18px; }
+  .article strong { color: #E3EAF6; font-weight: 600; }
+  .article ul { margin: 0 0 18px; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+  .article :not(pre) > code { font-family: 'IBM Plex Mono', monospace; font-size: 0.88em; padding: 1px 6px; background: #13233F; border-radius: 4px; color: #C9D4E8; }
+  .article blockquote { margin: 0 0 18px; padding: 4px 0 4px 20px; border-left: 3px solid #7FB2FF; font-size: 17px; line-height: 1.8; color: #C9D4E8; }
+  .article blockquote p { margin: 0; }
+  .article table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .article th { text-align: left; padding: 12px 14px; background: #13233F; color: #E3EAF6; font-weight: 600; }
+  .article td { padding: 12px 14px; border-top: 1px solid #1E3150; vertical-align: top; }
+  .article tr.hl td { background: rgba(127,178,255,0.07); color: #E3EAF6; }
+  .article td strong { font-weight: 700; }
+  .tbl { overflow-x: auto; border: 1px solid #1E3150; border-radius: 8px; margin: 0 0 18px; }
+  .cn { font-weight: 600; color: #E3EAF6; }
+
+  .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 640px; padding: 20px; margin: 0 0 18px; box-sizing: border-box; background: #0E1D35; border: 1px solid #1E3150; border-radius: 10px; }
+  .summary .si { display: flex; flex-direction: column; gap: 4px; }
+  .summary .sh { grid-column: 1 / -1; font-size: 13px; font-weight: 600; color: #E3EAF6; }
+  .summary .k { font-size: 12px; font-weight: 600; color: #7C8BA8; }
+  .summary .v { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; color: #FF6B6B; line-height: 1.4; }
+  .summary .s { font-size: 13px; color: #9AA8C2; }
+  .summary .sf { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid #1E3150; font-size: 13px; color: #7C8BA8; }
+  .summary .sf p { margin: 0; }
+  .summary .sf strong { color: #7C8BA8; font-weight: 700; }
+
+  .fig { margin: 0 0 18px; display: flex; flex-direction: column; gap: 10px; }
+  .figw { display: block; padding: 14px; background: #FFFFFF; border-radius: 10px; }
+  .figd { display: block; overflow: hidden; border: 1px solid #1E3150; border-radius: 10px; }
+  .fig img { display: block; width: 100%; height: auto; }
+  .fig figcaption { font-size: 13px; color: #9AA8C2; line-height: 1.6; }
+  .fig figcaption strong { font-weight: 700; color: #E3EAF6; }
+  .fref { display: inline; margin: 0; padding: 0 2px; border: 0; border-bottom: 1px dashed #7FB2FF; background: none; font-family: inherit; font-size: inherit; font-weight: 700; color: #7FB2FF; cursor: zoom-in; }
+  .fref:hover { background: rgba(127,178,255,0.14); }
+
+  .tabbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+  .tab { min-height: 44px; padding: 0 16px; border: 1px solid #24385A; border-radius: 8px; background: transparent; color: #9AA8C2; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .tab:hover { color: #E3EAF6; border-color: #3A5480; }
+  .tab.on { background: rgba(127,178,255,0.12); border-color: #7FB2FF; color: #7FB2FF; cursor: default; }
+  .tabpanel > :first-child { margin-top: 0; }
+
+  .ed { margin: 0 0 18px; display: flex; flex-direction: column; border: 1px solid #2B2B2B; border-radius: 8px; overflow: hidden; background: #1E1E1E; }
+  .ed + .ed { margin-top: -6px; }
+  .edbar { display: flex; align-items: stretch; gap: 12px; background: #252526; border-bottom: 1px solid #2B2B2B; font-size: 12px; line-height: 1.4; }
+  .edtab { display: flex; align-items: center; padding: 8px 14px; background: #1E1E1E; border-top: 2px solid #007ACC; color: #FFFFFF; font-family: 'IBM Plex Mono', monospace; }
+  .edfn { display: flex; align-items: center; min-width: 0; color: #9DA5B4; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-right: 12px; }
+  .ed pre { margin: 0; padding: 16px 20px; overflow-x: auto; font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; line-height: 1.65; tab-size: 4; background-color: #1E1E1E !important; }
+
+  .lineage { margin: 48px 0 0 !important; padding-top: 28px; border-top: 1px solid #1E3150; font-size: 14px; color: #7C8BA8; }
+  .lineage a { font-weight: 600; color: #7FB2FF; text-decoration: none; }
+
+  .modal { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 32px; box-sizing: border-box; }
+  .modal[hidden] { display: none; }
+  .dimbg { position: absolute; inset: 0; border: 0; padding: 0; margin: 0; background: rgba(5,12,24,0.78); cursor: zoom-out; }
+  .mcard { position: relative; max-width: min(900px, 92vw); max-height: 88vh; display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #FFFFFF; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+  .mcard img { display: block; max-width: 100%; max-height: 72vh; object-fit: contain; }
+  .mcap { font-size: 13px; line-height: 1.5; color: #3A4B6B; }
+  .mcap strong { color: #0A1628; }
+  .mx { position: absolute; top: -14px; right: -14px; width: 44px; height: 44px; border-radius: 999px; border: 0; background: #0A1628; color: #E3EAF6; font-size: 18px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+
+  @media (max-width: 1023px) {
+    .topin { padding: 10px 20px; gap: 12px; }
+    .nav3 { width: 100%; }
+    .nb { flex: 1 1 0; width: auto; min-width: 0; }
+    .article { padding: 32px 20px 64px; }
+    .toc { display: none; }
+    .summary { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+</Base>

@@ -1,0 +1,11 @@
+---
+// 탭 묶음. labels 순서대로 <Tab> 자식과 짝지어진다.
+interface Props { labels: string[]; label?: string }
+const { labels, label = '코드 리뷰 탭' } = Astro.props;
+---
+<div class="tabs" data-tabs>
+  <div class="tabbar" role="tablist" aria-label={label}>
+    {labels.map((l, i) => <button type="button" role="tab" class={`tab${i === 0 ? ' on' : ''}`} aria-selected={i === 0 ? 'true' : 'false'}>{l}</button>)}
+  </div>
+  <slot />
+</div>

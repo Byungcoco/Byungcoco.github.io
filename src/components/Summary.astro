@@ -1,0 +1,10 @@
+---
+// 개요의 요약 카드. 아래 설명은 slot으로.
+interface Props { head?: string; items: { k: string; v: string; s: string }[] }
+const { head, items } = Astro.props;
+---
+<div class="summary">
+  {head && <span class="sh">{head}</span>}
+  {items.map((it) => <div class="si"><span class="k">{it.k}</span><span class="v">{it.v}</span><span class="s">{it.s}</span></div>)}
+  {Astro.slots.has('default') && <span class="sf"><slot /></span>}
+</div>

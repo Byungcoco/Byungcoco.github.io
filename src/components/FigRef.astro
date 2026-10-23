@@ -1,0 +1,6 @@
+---
+// 본문 속 "▲그림 N." — 누르면 해당 그림을 팝업으로 보여 줌
+interface Props { n: number }
+const { n } = Astro.props;
+---
+<button type="button" class="fref" data-fig={n}>▲그림 {n}.</button>

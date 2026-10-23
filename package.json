@@ -1,0 +1,23 @@
+{
+  "name": "byungcoco-github-io",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Byungcoco/byungcoco.github.io.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Byungcoco/byungcoco.github.io/issues"
+  },
+  "homepage": "https://github.com/Byungcoco/byungcoco.github.io#readme",
+  "dependencies": {
+    "@astrojs/mdx": "^4.3.14",
+    "astro": "^5.18.2"
+  },
+  "private": true,
+  "type": "module"
+}

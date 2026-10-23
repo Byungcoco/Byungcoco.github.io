@@ -1,0 +1,9 @@
+---
+// VS Code 느낌의 코드 창. 안에 ```cpp 코드 펜스를 넣는다.
+interface Props { file: string; fn?: string }
+const { file, fn } = Astro.props;
+---
+<figure class="ed">
+  <figcaption class="edbar"><span class="edtab">{file}</span>{fn && <span class="edfn">{fn}</span>}</figcaption>
+  <slot />
+</figure>
