@@ -80,7 +80,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
           <span class="side"><span>{p.start}</span><span>~{p.end} ({p.dur})</span><span class="team">{p.team}</span></span>
           <div class="main">
             <span class="ptitle"><span class="etitle">{p.name}</span><span class="genre">{p.genre}</span></span>
-            <span class="role">역할 : {p.lead && <><strong class="lead">팀장</strong> </>}{p.roleText}</span>
+            <span class="role">{p.lead && <><strong class="lead">팀장</strong> </>}{p.roleText}</span>
             <img class="thumb" src={p.thumb} alt={`${p.name} 플레이 화면`} loading="lazy" />
             <span class="desc">{p.desc}</span>
             <span class="tags">{p.tags.map((t) => <span class="pill">{t}</span>)}</span>
