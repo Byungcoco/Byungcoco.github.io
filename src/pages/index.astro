@@ -227,6 +227,27 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .toggle { margin-top: 16px; min-height: 44px; padding: 0 4px; background: none; border: 0; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: #7FB2FF; }
   .foot { max-width: 440px; font-size: 13px; color: #7C8BA8; }
 
+  /* PC에서 글자 1~2px 크게 */
+  @media (min-width: 1024px) {
+    .title { font-size: 21px; }
+    .stackh, .sgk { font-size: 13px; }
+    .contact { font-size: 15px; }
+    .navlink { font-size: 14px; }
+    .side { font-size: 15px; }
+    .team { font-size: 14px; }
+    .etitle { font-size: 19px; }
+    .genre { font-size: 14px; }
+    .role { font-size: 15px; }
+    .cl, .desc, .lede { font-size: 16px; }
+    .review { font-size: 21px; }
+    .gname { font-size: 16px; }
+    .gb { font-size: 12px; }
+    .gmeta { font-size: 13px; }
+    .gnote { font-size: 14px; }
+    .toggle { font-size: 15px; }
+    .foot { font-size: 14px; }
+    .subhead { font-size: 30px; }
+  }
   @media (max-width: 1023px) {
     .wrap { flex-direction: column; padding: 0 24px; gap: 0; }
     .left { position: static; height: auto; max-height: none; padding: 64px 0 24px; }
