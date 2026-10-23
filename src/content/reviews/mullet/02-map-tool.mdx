@@ -60,23 +60,29 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CMainApp.cpp" fn="CMainApp::Ready_MapFactorFunc()">
 
 ```cpp
-std::function<CGameObject *(void *)> _func =
-	[](void *pData = nullptr)->CGameObject *
+void CMainApp::Ready_MapFactorFunc()
 {
-	_uint iTargetScene = CMapFactory::GetInstance()->GetTargetSceneIndex();
-	return CObjectManager::GetInstance()->Clone_GameObject(L"Prototype_GameObject_DefaultPanel", iTargetScene, L"Wall_Layer", pData);
-};
-pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::WALL_HOR), _func);
-pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::WALL_VER), _func);
+	CMapFactory *pMapFactory = CMapFactory::GetInstance();
+	// ... 코드 중략
+	std::function<CGameObject *(void *)> _func =
+		[](void *pData = nullptr)->CGameObject *
+	{
+		_uint iTargetScene = CMapFactory::GetInstance()->GetTargetSceneIndex();
+		return CObjectManager::GetInstance()->Clone_GameObject(L"Prototype_GameObject_DefaultPanel", iTargetScene, L"Wall_Layer", pData);
+	};
+	pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::WALL_HOR), _func);
+	pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::WALL_VER), _func);
 
-_func =
-	[](void *pData = nullptr)->CGameObject *
-{
-	_uint iTargetScene = CMapFactory::GetInstance()->GetTargetSceneIndex();
-	return CObjectManager::GetInstance()->Clone_GameObject(L"Prototype_GameObject_DefaultPanel", iTargetScene, L"Floor_Layer", pData);
-};
-pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::FLOOR), _func);
-pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::INCLINE), _func);
+	_func =
+		[](void *pData = nullptr)->CGameObject *
+	{
+		_uint iTargetScene = CMapFactory::GetInstance()->GetTargetSceneIndex();
+		return CObjectManager::GetInstance()->Clone_GameObject(L"Prototype_GameObject_DefaultPanel", iTargetScene, L"Floor_Layer", pData);
+	};
+	pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::FLOOR), _func);
+	pMapFactory->Register(ObjectCategory::WALL, static_cast<_uint>(WallType::INCLINE), _func);
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -127,12 +133,18 @@ void CDev::InstancingObjects(const wstring &_Layer)
 <Editor file="CStage_Car.cpp" fn="CStage_Car::Ready_Scene()">
 
 ```cpp
-CPrefabRecycleSystem *pPrefabSystem = CPrefabRecycleSystem::GetInstance();
-if (FAILED(pPrefabSystem->Set_Player(CObjectManager::GetInstance()->Get_ObjectList(SCENE_CAR, L"Player_Layer")->front())))
-    return E_FAIL;
+HRESULT CStage_Car::Ready_Scene()
+{
+    // ... 코드 중략
+    CPrefabRecycleSystem *pPrefabSystem = CPrefabRecycleSystem::GetInstance();
+    if (FAILED(pPrefabSystem->Set_Player(CObjectManager::GetInstance()->Get_ObjectList(SCENE_CAR, L"Player_Layer")->front())))
+        return E_FAIL;
 
-if (FAILED(pPrefabSystem->Set_PrefabList(CObjectManager::GetInstance()->Get_ObjectList(SCENE_CAR, L"Prefab_Layer"))))
-    return E_FAIL;
+    if (FAILED(pPrefabSystem->Set_PrefabList(CObjectManager::GetInstance()->Get_ObjectList(SCENE_CAR, L"Prefab_Layer"))))
+        return E_FAIL;
+
+    return S_OK;
+}
 ```
 
 </Editor>
@@ -199,6 +211,8 @@ void CGridPanel::ExportData(void *pData)
 			::memcpy(&p->transform.Pos, &((*m_pTransformCom->Get_World()).m[3][0]), sizeof(_vec3));
 		}
 	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -210,25 +224,41 @@ void CGridPanel::ExportData(void *pData)
 <Editor file="CDummyTile.cpp" fn="CDummyTile::PosUpdate()">
 
 ```cpp
-if (CGuiManager::GetInstance()->IsSnap())
+void CDummyTile::PosUpdate()
 {
-	switch (pBuffer->Get_Data()->eType)
+	if (CGameObject *pGo = CEditorPickingManager::GetInstance()->GetPickedObject_ForDummy())
 	{
-	case WallType::WALL_HOR:
-	{
-		pTransform->SetDegreeForEditor(_vec3{ 0.f, 0.f,1.f }, 90.f);
-		pickPos.x = (int)pickPos.x + 0.5f * pTransform->Get_Scale().x;
-		pickPos.y = (int)pickPos.y + 0.5f * pTransform->Get_Scale().y;
-		pickPos.z -= 0.001f;
-	} break;
-	case WallType::WALL_VER:
-	{
-		pTransform->SetDegreeForEditor(_vec3{ 0.f,1.f,0.f }, 90.f);
-		pickPos.x += 0.001f;
-		pickPos.y = (int)pickPos.y + 0.5f * pTransform->Get_Scale().y;
-		pickPos.z = (int)pickPos.z + 0.5f * pTransform->Get_Scale().x;
-	} break;
-	// ... 코드 중략
+		if (CGridPanel *pGridPanel = dynamic_cast<CGridPanel *>(pGo))
+		{
+			if (CVIBuffer_GridPanel_Editor *pBuffer = static_cast<CVIBuffer_GridPanel_Editor *>(pGridPanel->GetBuffer()))
+			{
+				CTransform *pTransform = GetTransform();
+				_vec3 pickPos = CEditorPickingManager::GetInstance()->Get_DummyPickingPos();
+
+				if (CGuiManager::GetInstance()->IsSnap())
+				{
+					switch (pBuffer->Get_Data()->eType)
+					{
+					case WallType::WALL_HOR:
+					{
+						pTransform->SetDegreeForEditor(_vec3{ 0.f, 0.f,1.f }, 90.f);
+						pickPos.x = (int)pickPos.x + 0.5f * pTransform->Get_Scale().x;
+						pickPos.y = (int)pickPos.y + 0.5f * pTransform->Get_Scale().y;
+						pickPos.z -= 0.001f;
+					} break;
+					case WallType::WALL_VER:
+					{
+						pTransform->SetDegreeForEditor(_vec3{ 0.f,1.f,0.f }, 90.f);
+						pickPos.x += 0.001f;
+						pickPos.y = (int)pickPos.y + 0.5f * pTransform->Get_Scale().y;
+						pickPos.z = (int)pickPos.z + 0.5f * pTransform->Get_Scale().x;
+					} break;
+					// ... 코드 중략
+					}
+				}
+				// ... 코드 중략
+			}
+		}
 	}
 }
 ```
@@ -344,14 +374,19 @@ HRESULT CFileManager::LoadDataFile(_uint iSceneID, const _tchar *szLayerTag)
 <Editor file="CMapFactory.h" fn="CMapFactory">
 
 ```cpp
+class ENGINE_DLL CMapFactory : public CBase
+{
+	DECLARE_SINGLETON(CMapFactory)
 	using CreateFunction = std::function<CGameObject* (void *)>;
 	// ... 코드 중략
+public:
 	void Register(ObjectCategory _eCategory, _uint _iType, CreateFunction _func);
 	CGameObject *Create(ObjectCategory _eCategory, _uint _iType, void* _pData);
-// ... 코드 중략
-
+	// ... 코드 중략
 private:
 	std::map<_uint, CreateFunction> m_Register[g_ObjectCategoryCount];
+	_uint m_iTargetSceneIndex{ 0 };
+};
 ```
 
 </Editor>
@@ -390,40 +425,52 @@ CGameObject *CMapFactory::Create(ObjectCategory _eCategory, _uint _iType, void *
 <Editor file="CPrefab.cpp" fn="CPrefab::Set_Data(...), CPrefab::Set_ChildrensMatrix()">
 
 ```cpp
-// 데이터에 저장된 TransformData는 Local 정보
-for (int i = 0; i < _pData->vecChildrensData.size(); ++i)
+HRESULT CPrefab::Set_Data(PREFABDATA *_pData)
 {
-	_pData->vecChildrensData[i].bChild = true;
-	if (CGameObject *pGo = CMapFactory::GetInstance()->Create(
-		_pData->vecChildrensData[i].eCategory,
-		_pData->vecChildrensData[i].iType,
-		&_pData->vecChildrensData[i]))
-	{
-		if (pGo)
-		{
-			m_pChildrens.push_back(pGo);
-			pGo->SetParent(this);
-		}
 	// ... 코드 중략
+	// 데이터에 저장된 TransformData는 Local 정보
+	for (int i = 0; i < _pData->vecChildrensData.size(); ++i)
+	{
+		_pData->vecChildrensData[i].bChild = true;
+		if (CGameObject *pGo = CMapFactory::GetInstance()->Create(
+			_pData->vecChildrensData[i].eCategory,
+			_pData->vecChildrensData[i].iType,
+			&_pData->vecChildrensData[i]))
+		{
+			if (pGo)
+			{
+				m_pChildrens.push_back(pGo);
+				pGo->SetParent(this);
+			}
+			// ... 코드 중략
+		}
 	}
-}
 
-Set_ChildrensMatrix();
+	Set_ChildrensMatrix();
+
+	return S_OK;
+}
 // ... 코드 중략
 
-_matrix matResult;
-CTransform *pTransform;
-for (int i = 0; i < m_pChildrens.size(); ++i)
+void CPrefab::Set_ChildrensMatrix()
 {
-	if (m_pChildrens[i])
+	if (IsEmpty())
+		return;
+
+	_matrix matResult;
+	CTransform *pTransform;
+	for (int i = 0; i < m_pChildrens.size(); ++i)
 	{
-		if (pTransform = m_pChildrens[i]->GetTransform())
+		if (m_pChildrens[i])
 		{
-			matResult = (*pTransform->Get_Local()) * (*GetTransform()->Get_World());
-			pTransform->Set_Info(INFO::INFO_RIGHT, (*(_vec3 *)&matResult.m[0]));
-			pTransform->Set_Info(INFO::INFO_UP, (*(_vec3 *)&matResult.m[1]));
-			pTransform->Set_Info(INFO::INFO_LOOK, (*(_vec3 *)&matResult.m[2]));
-			pTransform->Set_Info(INFO::INFO_POS, (*(_vec3 *)&matResult.m[3]));
+			if (pTransform = m_pChildrens[i]->GetTransform())
+			{
+				matResult = (*pTransform->Get_Local()) * (*GetTransform()->Get_World());
+				pTransform->Set_Info(INFO::INFO_RIGHT, (*(_vec3 *)&matResult.m[0]));
+				pTransform->Set_Info(INFO::INFO_UP, (*(_vec3 *)&matResult.m[1]));
+				pTransform->Set_Info(INFO::INFO_LOOK, (*(_vec3 *)&matResult.m[2]));
+				pTransform->Set_Info(INFO::INFO_POS, (*(_vec3 *)&matResult.m[3]));
+			}
 		}
 	}
 }
@@ -443,7 +490,12 @@ for (int i = 0; i < m_pChildrens.size(); ++i)
 <Editor file="CPrefabRecycleSystem.cpp" fn="CPrefabRecycleSystem::Set_PrefabList(...), CPrefabRecycleSystem::Update(), CPrefabRecycleSystem::Sorting()">
 
 ```cpp
+HRESULT CPrefabRecycleSystem::Set_PrefabList(list<CGameObject *> *p)
+{
+	// ... 코드 중략
 	m_fDistance = std::fabs(pFirst->GetTransform()->Get_Info(INFO::INFO_POS).z - pSecond->GetTransform()->Get_Info(INFO::INFO_POS).z);
+	// ... 코드 중략
+}
 // ... 코드 중략
 
 void CPrefabRecycleSystem::Update()

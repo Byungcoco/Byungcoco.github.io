@@ -55,10 +55,21 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CGameScene.cpp" fn="Initialize()">
 
 ```cpp
-ObjMgr->CreateObject<CPlayer>([](CObject *_p) {
-	_p->SetPos({ 128.f, 660.f });
-	CCameraManager::Get_Instance()->SetTarget(_p);
-	});
+void CGameScene::Initialize()
+{
+	// ... 코드 중략
+	// Player
+	{
+		if (!ObjMgr->Get_Instance()->GetPlayer())
+		{
+			ObjMgr->CreateObject<CPlayer>([](CObject *_p) {
+				_p->SetPos({ 128.f, 660.f });
+				CCameraManager::Get_Instance()->SetTarget(_p);
+				});
+		}
+	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -70,14 +81,19 @@ ObjMgr->CreateObject<CPlayer>([](CObject *_p) {
 <Editor file="CKatanaComponent.cpp" fn="PlayerAttack()">
 
 ```cpp
-CObjectManager::Get_Instance()->CreateObject<CBullet>(
-	[this](CBullet *pBullet)
-	{
-		CColliderComponent *colComp = static_cast<CColliderComponent *>(pBullet->GetComponent<CColliderComponent>());
-colComp->SetSize(Vector2{ 50.f, 50.f });
-pBullet->SetOwner(this);
+void CKatanaComponent::PlayerAttack()
+{
 	// ... 코드 중략
-	});
+	CObjectManager::Get_Instance()->CreateObject<CBullet>(
+		[this](CBullet *pBullet)
+		{
+			CColliderComponent *colComp = static_cast<CColliderComponent *>(pBullet->GetComponent<CColliderComponent>());
+	colComp->SetSize(Vector2{ 50.f, 50.f });
+	pBullet->SetOwner(this);
+	// ... 코드 중략
+		});
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -85,14 +101,19 @@ pBullet->SetOwner(this);
 <Editor file="CBullet.cpp" fn="Update(...)">
 
 ```cpp
-if (m_bCountdown)
+void CBullet::Update(const float _fDeltaTime)
 {
-	m_fElapsedTime += _fDeltaTime;
-	if(m_fElapsedTime >= m_fDuration)
+	// ... 코드 중략
+	if (m_bCountdown)
 	{
-		CObjectManager::Get_Instance()->DeleteObject(this);
-		m_fElapsedTime = 0.f;
+		m_fElapsedTime += _fDeltaTime;
+		if(m_fElapsedTime >= m_fDuration)
+		{
+			CObjectManager::Get_Instance()->DeleteObject(this);
+			m_fElapsedTime = 0.f;
+		}
 	}
+	// ... 코드 중략
 }
 ```
 
@@ -212,22 +233,30 @@ struct ObjectTraits<CTriggerButton>
 <Editor file="CObjectManager.h" fn="GetPool<T>()">
 
 ```cpp
-template<typename T>
-CObjectPool<T> &GetPool();
-template<>
-CObjectPool<CGrunt> &GetPool<CGrunt>() { return m_GruntPool; }
-template<>
-CObjectPool<CGangster> &GetPool<CGangster>() { return m_GangsterPool; }
-template<>
-CObjectPool<CPomp> &GetPool<CPomp>() { return m_PompPool; }
-template<>
-CObjectPool<CBullet> &GetPool<CBullet>() { return m_BulletPool; }
-// ... 코드 중략
-// Pool
-CObjectPool<CBullet> m_BulletPool;
-CObjectPool<CGrunt> m_GruntPool;
-CObjectPool<CGangster> m_GangsterPool;
-CObjectPool<CPomp> m_PompPool;
+class CObjectManager
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	template<typename T>
+	CObjectPool<T> &GetPool();
+	template<>
+	CObjectPool<CGrunt> &GetPool<CGrunt>() { return m_GruntPool; }
+	template<>
+	CObjectPool<CGangster> &GetPool<CGangster>() { return m_GangsterPool; }
+	template<>
+	CObjectPool<CPomp> &GetPool<CPomp>() { return m_PompPool; }
+	template<>
+	CObjectPool<CBullet> &GetPool<CBullet>() { return m_BulletPool; }
+	// ... 코드 중략
+private:
+	// ... 코드 중략
+	// Pool
+	CObjectPool<CBullet> m_BulletPool;
+	CObjectPool<CGrunt> m_GruntPool;
+	CObjectPool<CGangster> m_GangsterPool;
+	CObjectPool<CPomp> m_PompPool;
+};
 ```
 
 </Editor>
@@ -249,7 +278,11 @@ typedef struct tagGameEvent
 	EventType type;
 	std::function<void()> action = nullptr;
 }GameEvent;
+
+class CEventManager
+{
 	// ... 코드 중략
+public:
 	void PushEvent(EventType _eType, std::function<void()> _action) { m_Events.push(GameEvent{_eType, std::move(_action)}); }
 	void Flush() { while (!m_Events.empty()) {
 		m_Events.front().action();
@@ -257,6 +290,7 @@ typedef struct tagGameEvent
 private:
 	static CEventManager *m_pInstance;
 	queue<GameEvent> m_Events;
+};
 ```
 
 </Editor>
@@ -293,19 +327,24 @@ void CMainGame::Render()
 <Editor file="CObjectManager.cpp" fn="Initialize()">
 
 ```cpp
-// BulletPool Init
+void CObjectManager::Initialize()
 {
-	auto &list = m_BulletPool.GetObjectList();
-	list.reserve(50);
-	size_t iCapacity = list.capacity();
-	CBullet *pNewBullet = nullptr;
-	for (int i = 0; i < iCapacity; ++i)
+	// ... 코드 중략
+	// BulletPool Init
 	{
-		pNewBullet = new CBullet;
-		list.push_back(pNewBullet);
-		m_AllObjects[static_cast<unsigned int>(pNewBullet->GetType())].push_back(pNewBullet);
+		auto &list = m_BulletPool.GetObjectList();
+		list.reserve(50);
+		size_t iCapacity = list.capacity();
+		CBullet *pNewBullet = nullptr;
+		for (int i = 0; i < iCapacity; ++i)
+		{
+			pNewBullet = new CBullet;
+			list.push_back(pNewBullet);
+			m_AllObjects[static_cast<unsigned int>(pNewBullet->GetType())].push_back(pNewBullet);
+		}
+		m_BulletPool.Initialize();
 	}
-	m_BulletPool.Initialize();
+	// ... 코드 중략
 }
 ```
 

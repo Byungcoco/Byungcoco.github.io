@@ -60,12 +60,16 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="Object_Manager.cpp" fn="Add_GameObject(...)">
 
 ```cpp
-pGo->Set_Layer(wstrLayerTag);
+CGameObject* CObject_Manager::Add_GameObject(_uint iCloneLevelIndex, const wstring& wstrLayerTag, CGameObject* pGo)
+{
+	// ... 코드 중략
+	pGo->Set_Layer(wstrLayerTag);
 
-if (m_pGameInstance->Is_Awaked(iCloneLevelIndex) == true && (pGo->Is_Awaked() == false))
-	pGo->Awake(iCloneLevelIndex);
+	if (m_pGameInstance->Is_Awaked(iCloneLevelIndex) == true && (pGo->Is_Awaked() == false))
+		pGo->Awake(iCloneLevelIndex);
 
-return pGo;
+	return pGo;
+}
 ```
 
 </Editor>
@@ -126,7 +130,12 @@ struct ChangeLevelEventDesc
 	_int iNewLevelID = { -1 };
 	CLevel* pNewLevel = { nullptr };
 };
+
+class CEvent_Manager final : public CBase
+{
+	using Super = CBase;
 	// ... 코드 중략
+private:
 	_bool m_bFlushing = { false };
 	class CGameInstance* m_pGameInstance = { nullptr };
 	std::queue<AddEventDesc> m_queAddGameObject;
@@ -135,6 +144,8 @@ struct ChangeLevelEventDesc
 	std::queue<RemoveEventDesc> m_queRemoveGameObject_Pending;
 	std::queue<ChangeLevelEventDesc> m_queChangeLevel;
 	std::queue<ChangeLevelEventDesc> m_queChangeLevel_Pending;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -362,6 +373,12 @@ enum class ELifeState : _ushort
 	Pending,
 	Pooled,
 };
+// ... 코드 중략
+
+class ENGINE_DLL CGameObject abstract : public CBase
+{
+	// ... 코드 중략
+public:
 	// ... 코드 중략
 	enum EFlag : _uint
 	{
@@ -373,6 +390,8 @@ enum class ELifeState : _ushort
 		DEFAULT = ACTIVE | RENDER | COLLIDE,
 		ALL = 0xFFFFFFFF,
 	};
+	// ... 코드 중략
+};
 ```
 
 </Editor>

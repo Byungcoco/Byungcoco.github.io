@@ -161,6 +161,10 @@ private:
 	vector<COLLIDED_DESC> m_vecPending_Write;
 	vector<COLLIDED_DESC> m_vecPending_Read;
 	CGameInstance* m_pGameInstance{ nullptr };
+public:
+	static CJudgementSystem* Create();
+	virtual void Free() override;
+};
 ```
 
 </Editor>
@@ -202,11 +206,16 @@ void CJudgementSystem::Flush_CollidedEvent()
 <Editor file="GameInstance.cpp" fn="Update_Engine(...)">
 
 ```cpp
-// 피직스 시뮬레이트
-if (fScaledTimeDelta > g_XMEpsilon.f[0])
-	m_pPhysics_Module->StepPhysics(fScaledTimeDelta);
+void CGameInstance::Update_Engine(_float fTimeDelta)
+{
+	// ... 코드 중략
+	// 피직스 시뮬레이트
+	if (fScaledTimeDelta > g_XMEpsilon.f[0])
+		m_pPhysics_Module->StepPhysics(fScaledTimeDelta);
 
-m_pJudgementSystem->Flush_CollidedEvent();
+	m_pJudgementSystem->Flush_CollidedEvent();
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -366,8 +375,15 @@ Vec3 CJudgementSystem::Compute_HitNormal(CGameObject* pAttacker, CGameObject* pV
 <Editor file="GameObject.h" fn="CGameObject">
 
 ```cpp
-virtual _bool On_Hit(const HIT_DESC& hitDesc) { return true; }
-virtual void Try_Attack(const HIT_DESC& hitDesc) {};
+class ENGINE_DLL CGameObject abstract : public CBase
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	virtual _bool On_Hit(const HIT_DESC& hitDesc) { return true; }
+	virtual void Try_Attack(const HIT_DESC& hitDesc) {};
+	// ... 코드 중략
+};
 ```
 
 </Editor>

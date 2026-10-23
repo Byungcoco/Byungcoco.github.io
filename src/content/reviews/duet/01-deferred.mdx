@@ -224,29 +224,33 @@ HRESULT CRender_Manager::Render()
 <Editor file="Render_Manager.cpp" fn="Ready_MRT()">
 
 ```cpp
-// For. MRT_GameObjects
+HRESULT CRender_Manager::Ready_MRT()
 {
-	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Diffuse)))
-		return E_FAIL;
-	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Normal)))
-		return E_FAIL;
-	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::SpecularMask)))
-		return E_FAIL;
-	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Depth)))
-		return E_FAIL;
-	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::ObjectInfo)))
-		return E_FAIL;
-	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Emissive)))
-		return E_FAIL;
-}
+	// For. MRT_GameObjects
+	{
+		if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Diffuse)))
+			return E_FAIL;
+		if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Normal)))
+			return E_FAIL;
+		if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::SpecularMask)))
+			return E_FAIL;
+		if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Depth)))
+			return E_FAIL;
+		if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::ObjectInfo)))
+			return E_FAIL;
+		if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::GameObjects, ERenderTarget::Emissive)))
+			return E_FAIL;
+	}
 
-// For. MRT_LightAcc
-{
-	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::LightAcc, ERenderTarget::Shade)))
-		return E_FAIL;
+	// For. MRT_LightAcc
+	{
+		if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::LightAcc, ERenderTarget::Shade)))
+			return E_FAIL;
 
-	if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::LightAcc, ERenderTarget::Specular)))
-		return E_FAIL;
+		if (FAILED(m_pGameInstance->Add_MRT(EMRTLayer::LightAcc, ERenderTarget::Specular)))
+			return E_FAIL;
+	}
+	// ... 코드 중략
 }
 ```
 
@@ -255,26 +259,31 @@ HRESULT CRender_Manager::Render()
 <Editor file="Render_Manager.cpp" fn="Ready_RT()">
 
 ```cpp
-// For. Target_Diffuse
+HRESULT CRender_Manager::Ready_RT()
 {
-	CRenderTarget::RENDERTARGET_DESC desc = {};
-	desc.ePixelFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
-	desc.iWidth = iWidth;
-	desc.iHeight = iHeight;
-	desc.vClearColor = Vec4::Zero;
-	if (FAILED(m_pGameInstance->Add_RenderTarget(ERenderTarget::Diffuse, &desc)))
-		return E_FAIL;
-}
-// ... 코드 중략
-// For. Target_ObjectInfo
-{
-	CRenderTarget::RENDERTARGET_DESC desc = {};
-	desc.ePixelFormat = DXGI_FORMAT_R32_UINT;
-	desc.iWidth = iWidth;
-	desc.iHeight = iHeight;
-	desc.vClearColor = Vec4::Zero;
-	if (FAILED(m_pGameInstance->Add_RenderTarget(ERenderTarget::ObjectInfo, &desc)))
-		return E_FAIL;
+	// ... 코드 중략
+	// For. Target_Diffuse
+	{
+		CRenderTarget::RENDERTARGET_DESC desc = {};
+		desc.ePixelFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		desc.iWidth = iWidth;
+		desc.iHeight = iHeight;
+		desc.vClearColor = Vec4::Zero;
+		if (FAILED(m_pGameInstance->Add_RenderTarget(ERenderTarget::Diffuse, &desc)))
+			return E_FAIL;
+	}
+	// ... 코드 중략
+	// For. Target_ObjectInfo
+	{
+		CRenderTarget::RENDERTARGET_DESC desc = {};
+		desc.ePixelFormat = DXGI_FORMAT_R32_UINT;
+		desc.iWidth = iWidth;
+		desc.iHeight = iHeight;
+		desc.vClearColor = Vec4::Zero;
+		if (FAILED(m_pGameInstance->Add_RenderTarget(ERenderTarget::ObjectInfo, &desc)))
+			return E_FAIL;
+	}
+	// ... 코드 중략
 }
 ```
 

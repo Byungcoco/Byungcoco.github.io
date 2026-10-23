@@ -207,16 +207,20 @@ void CPlayerState::HandleInput(const float _fDeltaTime)
 <Editor file="CPlayer.cpp" fn="Initialize()">
 
 ```cpp
-// State
+void CPlayer::Initialize()
 {
-	m_arrayStates[(uint8_t)PLAYERSTATE::IDLE] = new CPlayerState_Idle(this);
-	m_arrayStates[(uint8_t)PLAYERSTATE::IDLETORUN] = new CPlayerState_IdletoRun(this);
-	m_arrayStates[(uint8_t)PLAYERSTATE::RUN] = new CPlayerState_Run(this);
-	m_arrayStates[(uint8_t)PLAYERSTATE::RUNTOIDLE] = new CPlayerState_RuntoIdle(this);
 	// ... 코드 중략
-	m_arrayStates[(uint8_t)PLAYERSTATE::DUMMY] = new CPlayerState_Dummy(this);
+	// State
+	{
+		m_arrayStates[(uint8_t)PLAYERSTATE::IDLE] = new CPlayerState_Idle(this);
+		m_arrayStates[(uint8_t)PLAYERSTATE::IDLETORUN] = new CPlayerState_IdletoRun(this);
+		m_arrayStates[(uint8_t)PLAYERSTATE::RUN] = new CPlayerState_Run(this);
+		m_arrayStates[(uint8_t)PLAYERSTATE::RUNTOIDLE] = new CPlayerState_RuntoIdle(this);
+		// ... 코드 중략
+		m_arrayStates[(uint8_t)PLAYERSTATE::DUMMY] = new CPlayerState_Dummy(this);
 
-	ChangeState(PLAYERSTATE::IDLE);
+		ChangeState(PLAYERSTATE::IDLE);
+	}
 }
 ```
 
@@ -229,22 +233,29 @@ void CPlayerState::HandleInput(const float _fDeltaTime)
 <Editor file="CPlayer.h" fn="ChangeState(...)">
 
 ```cpp
-void ChangeState(PLAYERSTATE _eState)
-{
-	if (_eState == m_eCurState)
-		return;
+class CPlayer : public CCharacter
+{	
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	void ChangeState(PLAYERSTATE _eState)
+	{
+		if (_eState == m_eCurState)
+			return;
 
-	if (_eState < PLAYERSTATE::IDLE || _eState >= PLAYERSTATE::END)
-		return;
+		if (_eState < PLAYERSTATE::IDLE || _eState >= PLAYERSTATE::END)
+			return;
 
-	if (m_pCurState)
-		m_pCurState->Exit();
+		if (m_pCurState)
+			m_pCurState->Exit();
 
-	m_pCurState = m_arrayStates[(uint8_t)_eState];
-	m_ePrevState = m_eCurState;
-	m_eCurState = _eState;
-	m_pCurState->Enter();
-}
+		m_pCurState = m_arrayStates[(uint8_t)_eState];
+		m_ePrevState = m_eCurState;
+		m_eCurState = _eState;
+		m_pCurState->Enter();
+	}
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -260,9 +271,11 @@ void ChangeState(PLAYERSTATE _eState)
 ```cpp
 void CPlayer::Update(const float _fDeltaTime)
 {
- 	// ... 코드 중략
- 	m_pCurState->HandleInput(_fDeltaTime);
+	// ... 코드 중략
+	m_pCurState->HandleInput(_fDeltaTime);
 	m_pCurState->Update(_fDeltaTime);
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -340,7 +353,7 @@ void CPlayerState_IdletoRun::Enter()
 	CAnimatorComponent *AnimComp = static_cast<CAnimatorComponent *>(m_pPlayer->GetComponent<CAnimatorComponent>());
 	AnimComp->PlayAnimation(L"Player_IdletoRun", false);
 	AnimComp->SetCompleteCallback([this]() ->void {m_bAnimEnd = true; });
-// ... 코드 중략
+	// ... 코드 중략
 }
 // ... 코드 중략
 
@@ -420,6 +433,8 @@ void CBoss::Update(const float _fDeltaTime)
 		m_fElapsedTime = 0.f;
 		m_bCanPattern = false;
 	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -433,6 +448,9 @@ void CBoss::Update(const float _fDeltaTime)
 <Editor file="CBoss.cpp" fn="Update(...), ChangeState_Boss(...)">
 
 ```cpp
+void CBoss::Update(const float _fDeltaTime)
+{
+	// ... 코드 중략
 	switch (m_eCurState)
 	{
 	case IDLE_CASUAL:
@@ -447,6 +465,11 @@ void CBoss::Update(const float _fDeltaTime)
 	{
 		Idle_Battle(_fDeltaTime);
 	} break;
+	// ... 코드 중략
+	}
+
+	GetComponent<CAnimatorComponent>()->Update(_fDeltaTime);
+}
 // ... 코드 중략
 
 void CBoss::ChangeState_Boss(BossState _eState)

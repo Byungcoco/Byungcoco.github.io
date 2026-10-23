@@ -129,6 +129,10 @@ HRESULT CLoader::Loading_File(_uint iLevelID, DTO::ECategory eCategory, const ws
 <Editor file="DataRepository.h" fn="TStoreEntry, Regist_Category<T>(...)">
 
 ```cpp
+class CDataRepository final : public CBase
+{
+	using Super = CBase;
+public:
 	using DataRepository_LoadFunc = std::function<HRESULT(CDataStore*, const path&)>;
 	using DataRepository_CreateFunc = std::function<CDataDocumentBase*()>;
 	// DataStore를 생성하여 캐싱, load함수와 CDataDocument 생성하는 함수를 바인딩한 Entry 구조체
@@ -139,6 +143,8 @@ HRESULT CLoader::Loading_File(_uint iLevelID, DTO::ECategory eCategory, const ws
 		DataRepository_LoadFunc load;
 		DataRepository_CreateFunc create;
 	};
+	// ... 코드 중략
+};
 // ... 코드 중략
 
 template<typename T>

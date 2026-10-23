@@ -76,6 +76,8 @@ void CPlayer::Initialize()
 			AnimComp->SetAnimation_Offset(true);
 		}
 	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -87,12 +89,17 @@ void CPlayer::Initialize()
 <Editor file="CPlayer.cpp" fn="Update(...), Late_Update()">
 
 ```cpp
+void CPlayer::Update(const float _fDeltaTime)
+{
+	// ... 코드 중략
+	if (m_eCurState < PLAYERSTATE::HURT_BEGIN)
+	{
+		// ... 코드 중략
 		GetComponent<CWeaponComponent>()->Update(_fDeltaTime);
 	}
 
 	GetComponent<CAnimatorComponent>()->Update(_fDeltaTime);
 }
-// ... 코드 중략
 
 void CPlayer::Late_Update()
 {
@@ -115,17 +122,23 @@ void CPlayer::Late_Update()
 <Editor file="CObject.h" fn="CObject">
 
 ```cpp
-template<IsComponent T>
-bool HasComponent() { return m_Components.HasComponent<T>(); }
-template<IsComponent T>
-CComponent* GetComponent() { return m_Components.GetComponent<T>(); }
-template<IsComponent T>
-CComponent *AddComponent() { return m_Components.AddComponent<T>(this); }
-template<IsComponent T>
-bool RemoveComponent() { return m_Components.RemoveComponent<T>(); }
-// ... 코드 중략
-
-ComponentContainer m_Components;
+class CObject abstract
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	template<IsComponent T>
+	bool HasComponent() { return m_Components.HasComponent<T>(); }
+	template<IsComponent T>
+	CComponent* GetComponent() { return m_Components.GetComponent<T>(); }
+	template<IsComponent T>
+	CComponent *AddComponent() { return m_Components.AddComponent<T>(this); }
+	template<IsComponent T>
+	bool RemoveComponent() { return m_Components.RemoveComponent<T>(); }
+	// ... 코드 중략
+protected:
+	ComponentContainer m_Components;
+};
 ```
 
 </Editor>
@@ -159,7 +172,13 @@ constexpr size_t g_CompCount = static_cast<size_t>(ComponentType::END);
 <Editor file="CColliderComponent.h" fn="CColliderComponent">
 
 ```cpp
-constexpr static ComponentType _ID = ComponentType::COLLIDE;
+class CColliderComponent : public CComponent
+{
+	// ... 코드 중략
+public:
+	constexpr static ComponentType _ID = ComponentType::COLLIDE;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -171,28 +190,33 @@ constexpr static ComponentType _ID = ComponentType::COLLIDE;
 <Editor file="CComponentManager.h" fn="ComponentContainer::GetComponent<T>(), ComponentContainer::AddComponent<T>(...)">
 
 ```cpp
-template<IsComponent T>
-CComponent *GetComponent() const
+typedef struct tagComponentContainer
 {
-	constexpr ComponentType _eType = T::_ID;
-	static_assert(static_cast<size_t>(_eType) < g_CompCount);
-	return Components[static_cast<size_t>(_eType)];
-}
-
-template<IsComponent T>
-CComponent *AddComponent(CObject *_p)
-{
-	constexpr ComponentType _eType = T::_ID;
-	if (Components[static_cast<size_t>(_eType)])
+	// ... 코드 중략
+	template<IsComponent T>
+	CComponent *GetComponent() const
+	{
+		constexpr ComponentType _eType = T::_ID;
+		static_assert(static_cast<size_t>(_eType) < g_CompCount);
 		return Components[static_cast<size_t>(_eType)];
+	}
 
-	CComponent *pReturn = nullptr;
-	if (!(pReturn = CComponentManager::Get_Instance()->Create<T>(_p)))
+	template<IsComponent T>
+	CComponent *AddComponent(CObject *_p)
+	{
+		constexpr ComponentType _eType = T::_ID;
+		if (Components[static_cast<size_t>(_eType)])
+			return Components[static_cast<size_t>(_eType)];
+
+		CComponent *pReturn = nullptr;
+		if (!(pReturn = CComponentManager::Get_Instance()->Create<T>(_p)))
+			return pReturn;
+
+		Components[static_cast<size_t>(_eType)] = pReturn;
 		return pReturn;
-
-	Components[static_cast<size_t>(_eType)] = pReturn;
-	return pReturn;
-}
+	}
+	// ... 코드 중략
+} ComponentContainer;
 ```
 
 </Editor>
@@ -248,15 +272,22 @@ typedef struct tagComponentContainer
 <Editor file="CComponentManager.h" fn="Create<T>(...)">
 
 ```cpp
-template<IsComponent T>
-CComponent *Create(CObject *_Owner)
+class CComponentManager
 {
-	if (!_Owner) return nullptr;
-	CComponent *pComp = new T(_Owner);
-	pComp->Initialize();
+	// ... 코드 중략
+public:
+	template<IsComponent T>
+	CComponent *Create(CObject *_Owner)
+	{
+		if (!_Owner) return nullptr;
+		CComponent *pComp = new T(_Owner);
+		pComp->Initialize();
 
-	return pComp;
-}
+		return pComp;
+	}
+private:
+	static CComponentManager *m_pInstance;
+};
 ```
 
 </Editor>
@@ -320,10 +351,16 @@ private:
 
 ```cpp
 class CWeaponComponent : public CComponent
+{
+public:
 	// ... 코드 중략
 	constexpr static ComponentType _ID = ComponentType::WEAPON;
 	// ... 코드 중략
+public:
+	// ... 코드 중략
 	virtual void Attack();
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -332,6 +369,9 @@ class CWeaponComponent : public CComponent
 
 ```cpp
 class CKatanaComponent : public CWeaponComponent
+{
+	// ... 코드 중략
+};
 ```
 
 </Editor>

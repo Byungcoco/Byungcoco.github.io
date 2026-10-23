@@ -58,20 +58,44 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="CMini_Gun.cpp" fn="CMini_Gun::LateUpdate_GameObject(...) (팀원 작성)">
 
 ```cpp
-BulletData tData;
-// ... 코드 중략
+void CMini_Gun::LateUpdate_GameObject(const _float& fTimeDelta)
+{
+	// ... 코드 중략
+	switch (m_tInfo.ePlayerState)
+	{
+	case ATTACK:
+	case ATTACK_ZOOM:
+		// ... 코드 중략
+		if (pEff)
+		{
+			if (m_fEffRenderTime != 0)
+			{
+				// ... 코드 중략
+				if (m_fEffRenderTime <= 0)
+				{
+					// ... 코드 중략
+					BulletData tData;
+					// ... 코드 중략
 
-tData.vMuzzlePosition = vCameraPos + vCameraLook * 1.5;
-tData.vLookDir = vCameraLook;
-// ... 코드 중략
+					tData.vMuzzlePosition = vCameraPos + vCameraLook * 1.5;
+					tData.vLookDir = vCameraLook;
+					// ... 코드 중략
 
-tData.fSpeed = pPlayer->Get_NormalSpeed() * 2.f;
-// ... 코드 중략
+					tData.fSpeed = pPlayer->Get_NormalSpeed() * 2.f;
+					// ... 코드 중략
 
-tData.eOwner = BulletData::OWNER::PLAYER;
-// ... 코드 중략
+					tData.eOwner = BulletData::OWNER::PLAYER;
+					// ... 코드 중략
 
-CObjectPoolManager::GetInstance()->Spawn(PoolType::BULLET, &tData);
+					CObjectPoolManager::GetInstance()->Spawn(PoolType::BULLET, &tData);
+				}
+			}
+			// ... 코드 중략
+		}
+		// ... 코드 중략
+	}
+	// ... 코드 중략
+}
 ```
 
 </Editor>
@@ -406,10 +430,17 @@ HRESULT CBullet::Despawn_Pooling()
 <Editor file="ObjectPool_Manager.h" fn="CObjectPool_Manager">
 
 ```cpp
-HRESULT Regist_Pool(_uint iTargetLevelIndex, const wstring& wstrPoolTag, const wstring& wstrLayerTag, _uint iSeedLevelID, const wstring& wstrSeedPrototypeTag, void* pArg, _uint iPoolCapacityCount);
-// ... 코드 중략
-
-vector<unordered_map<wstring, CObjectPool*>> m_Pools;
+class CObjectPool_Manager final : public CBase
+{
+	// ... 코드 중략
+public:
+	HRESULT Regist_Pool(_uint iTargetLevelIndex, const wstring& wstrPoolTag, const wstring& wstrLayerTag, _uint iSeedLevelID, const wstring& wstrSeedPrototypeTag, void* pArg, _uint iPoolCapacityCount);
+	// ... 코드 중략
+private:
+	_uint m_iLevelCount = { 0 };
+	vector<unordered_map<wstring, CObjectPool*>> m_Pools;
+	// ... 코드 중략
+};
 ```
 
 </Editor>

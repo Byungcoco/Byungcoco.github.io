@@ -61,15 +61,20 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="Player.cpp" fn="CPlayer::Ready_BaseStates()">
 
 ```cpp
-// Idle
+HRESULT CPlayer::Ready_BaseStates()
 {
-    CState_Idle::STATE_DESC desc = {};
-    desc.iAnimIndex = Get_AnimationIndex(L"Animation_Master_IdleLoop");
-    desc.bBlend = true;
-    desc.bLoop = true;
-    desc.pModel = pModel;
-    if (FAILED(pActionState->Add_State(ENUM_TO_UINT(State::IDLE), CState_Idle::Create(pActionState, &desc))))
-        return E_FAIL;
+    // ... 코드 중략
+    // Idle
+    {
+        CState_Idle::STATE_DESC desc = {};
+        desc.iAnimIndex = Get_AnimationIndex(L"Animation_Master_IdleLoop");
+        desc.bBlend = true;
+        desc.bLoop = true;
+        desc.pModel = pModel;
+        if (FAILED(pActionState->Add_State(ENUM_TO_UINT(State::IDLE), CState_Idle::Create(pActionState, &desc))))
+            return E_FAIL;
+    }
+    // ... 코드 중략
 }
 ```
 
@@ -78,8 +83,13 @@ import Tab from '../../../components/Tab.astro';
 <Editor file="MainPlayer.cpp" fn="CMainPlayer::Initialize(...)">
 
 ```cpp
-if (FAILED(Add_Component<CPlayerControlContext>(0 /*static*/, L"Prototype_Component_PlayerControlContext", nullptr)))
-    return E_FAIL;
+HRESULT CMainPlayer::Initialize(void* pArg)
+{
+    // ... 코드 중략
+    if (FAILED(Add_Component<CPlayerControlContext>(0 /*static*/, L"Prototype_Component_PlayerControlContext", nullptr)))
+        return E_FAIL;
+    // ... 코드 중략
+}
 ```
 
 </Editor>
@@ -87,6 +97,9 @@ if (FAILED(Add_Component<CPlayerControlContext>(0 /*static*/, L"Prototype_Compon
 <Editor file="Enemy_Glove.cpp" fn="CEnemy_Glove::Initialize(...), CEnemy_Glove::Update_Priority(...)">
 
 ```cpp
+HRESULT CEnemy_Glove::Initialize(void* pArg)
+{
+    // ... 코드 중략
     CEnemyControlContext::ENEMYCC_DESC desc = {};
     desc.fNearDistance = m_pGameInstance->Rand_Float(1.f, 2.f);
     desc.fFarDistance = (_float)m_pGameInstance->Rand_Int(7, 20);
@@ -95,6 +108,8 @@ if (FAILED(Add_Component<CPlayerControlContext>(0 /*static*/, L"Prototype_Compon
     desc.fAggressive = (_float)m_pGameInstance->Rand_Int(5, 8) / 10.f;
     if (FAILED(Add_Component<CEnemyControlContext>(0 /*static*/, L"Prototype_Component_EnemyControlContext", &desc)))
         return E_FAIL;
+    // ... 코드 중략
+}
 // ... 코드 중략
 
 void CEnemy_Glove::Update_Priority(const _float fTimeDelta)
@@ -118,23 +133,30 @@ void CEnemy_Glove::Update_Priority(const _float fTimeDelta)
 <Editor file="ControlContext.h" fn="CControlContext">
 
 ```cpp
-virtual _bool Is_LeftAttackPressed() PURE;
-virtual _bool Is_RightAttackPressed() PURE;
-virtual _bool Is_FrontDashPressed() PURE;
-virtual _bool Is_LeftDashPressed() PURE;
-virtual _bool Is_RightDashPressed() PURE;
-virtual _bool Is_BackDashPressed() PURE;
-virtual _bool Is_MovePressed() PURE;
-virtual _bool Is_WalkPressed() PURE;
-virtual _bool Is_JumpPressed() PURE;
-virtual _bool Is_WirePressed() PURE;
-virtual _bool Is_DodgePressed() PURE;
-virtual _bool Is_ChakraJumpPressed() PURE;
-virtual _bool Is_FirstSkillPressed() PURE;
-virtual _bool Is_SecondSkillPressed() PURE;
-virtual _bool Is_ThirdSkillPressed() PURE;
-virtual _bool Is_RopePressed() PURE;
-virtual _fvector Get_MoveDir() PURE;
+class ENGINE_DLL CControlContext abstract : public CComponent
+{
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	virtual _bool Is_LeftAttackPressed() PURE;
+	virtual _bool Is_RightAttackPressed() PURE;
+	virtual _bool Is_FrontDashPressed() PURE;
+	virtual _bool Is_LeftDashPressed() PURE;
+	virtual _bool Is_RightDashPressed() PURE;
+	virtual _bool Is_BackDashPressed() PURE;
+	virtual _bool Is_MovePressed() PURE;
+	virtual _bool Is_WalkPressed() PURE;
+	virtual _bool Is_JumpPressed() PURE;
+	virtual _bool Is_WirePressed() PURE;
+	virtual _bool Is_DodgePressed() PURE;
+	virtual _bool Is_ChakraJumpPressed() PURE;
+	virtual _bool Is_FirstSkillPressed() PURE;
+	virtual _bool Is_SecondSkillPressed() PURE;
+	virtual _bool Is_ThirdSkillPressed() PURE;
+	virtual _bool Is_RopePressed() PURE;
+	virtual _fvector Get_MoveDir() PURE;
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -163,14 +185,20 @@ _bool CPlayerControlContext::Is_FrontDashPressed()
 <Editor file="EnemyControlContext.h" fn="CEnemyControlContext">
 
 ```cpp
-virtual _bool Is_LeftAttackPressed() override { return m_bLeftAttack; }
-virtual _bool Is_RightAttackPressed() override { return m_bRightAttack; }
-virtual _bool Is_FrontDashPressed() override { return m_bFrontDash; }
-virtual _bool Is_LeftDashPressed() override { return m_bLeftDash; }
-virtual _bool Is_RightDashPressed() override { return m_bRightDash; }
-virtual _bool Is_BackDashPressed() override { return m_bBackDash; }
-virtual _bool Is_MovePressed() override { return m_bMove; }
-virtual _bool Is_WalkPressed() override { return m_bWalk; }
+class CEnemyControlContext final : public CControlContext
+{
+	// ... 코드 중략
+public:
+	virtual _bool Is_LeftAttackPressed() override { return m_bLeftAttack; }
+	virtual _bool Is_RightAttackPressed() override { return m_bRightAttack; }
+	virtual _bool Is_FrontDashPressed() override { return m_bFrontDash; }
+	virtual _bool Is_LeftDashPressed() override { return m_bLeftDash; }
+	virtual _bool Is_RightDashPressed() override { return m_bRightDash; }
+	virtual _bool Is_BackDashPressed() override { return m_bBackDash; }
+	virtual _bool Is_MovePressed() override { return m_bMove; }
+	virtual _bool Is_WalkPressed() override { return m_bWalk; }
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -221,13 +249,7 @@ HRESULT CActionState::Change_State(_uint iIndex, _bool bForce, void* pArg)
 ```cpp
 HRESULT CStateBase::Start(void *pArg, _bool bForce)
 {
-	if (pArg)
-	{
-		STATE_START_DESC *pDesc = static_cast<STATE_START_DESC*>(pArg);
-
-		// TODO
-	}
-
+	// ... 코드 중략
 	Request_ChangeAnimation(m_iAnimIndex, m_bBlend, m_bLoop, bForce);
 	return S_OK;
 }
@@ -345,6 +367,12 @@ inline constexpr _bool Has_Capability(_uint iMask, StateCapability eFlag)
 {
 	return (iMask & ToMask(eFlag)) != 0;
 }
+// ... 코드 중략
+
+class ENGINE_DLL CStateBase abstract : public CBase
+{
+	// ... 코드 중략
+public:
 	// ... 코드 중략
 	virtual _uint Get_Capabilities() const
 	{
@@ -356,6 +384,8 @@ inline constexpr _bool Has_Capability(_uint iMask, StateCapability eFlag)
 			| StateCapability::ATTACK
 			| StateCapability::BEATTACKED;
 	}
+	// ... 코드 중략
+};
 ```
 
 </Editor>
@@ -363,10 +393,17 @@ inline constexpr _bool Has_Capability(_uint iMask, StateCapability eFlag)
 <Editor file="State_Chidori_Start.h" fn="CState_Chidori_Start::Get_Capabilities()">
 
 ```cpp
-virtual _uint Get_Capabilities() const override
+class CState_Chidori_Start final : public CSkillState
 {
-	return	ToMask(StateCapability::ROTATE);
-}
+	// ... 코드 중략
+public:
+	// ... 코드 중략
+	virtual _uint Get_Capabilities() const override
+	{
+		return	ToMask(StateCapability::ROTATE);
+	}
+	// ... 코드 중략
+};
 ```
 
 </Editor>
