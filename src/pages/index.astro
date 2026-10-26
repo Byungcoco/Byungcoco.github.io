@@ -196,8 +196,8 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
 
 <style>
   .page { --x: 300px; --y: 240px; min-height: 100vh; background: radial-gradient(600px at var(--x) var(--y), rgba(29,78,216,0.16), transparent 80%), #0A1628; background-attachment: fixed; }
-  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 56px 0 48px; box-sizing: border-box; display: flex; gap: 64px; }
-  .left { flex: 0 0 30%; position: sticky; top: 0; height: 100vh; max-height: 1000px; overflow-y: auto; box-sizing: border-box; padding: 72px 0; display: flex; flex-direction: column; justify-content: space-between; }
+  .wrap { max-width: 1480px; margin: 0 auto; padding: 0 32px 0 72px; box-sizing: border-box; display: flex; gap: 80px; }
+  .left { flex: 0 0 32%; position: sticky; top: 0; height: 100vh; max-height: 1000px; overflow-y: auto; box-sizing: border-box; padding: 72px 0; display: flex; flex-direction: column; justify-content: space-between; }
   .right { flex: 1 1 auto; min-width: 0; padding: 96px 0; }
   .intro { display: flex; flex-direction: column; gap: 14px; }
   .name { margin: 0; font-size: 48px; line-height: 1.15; font-weight: 700; letter-spacing: -0.03em; color: #F4F6F9; }
@@ -287,7 +287,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
     .contact { font-size: 15px; }
     .navlink { font-size: 14px; }
     .navlink.on { font-size: 16.5px; }
-    .right { padding-right: 150px; }
+    .right { padding-right: 170px; }
     .side { font-size: 15px; }
     .team { font-size: 14px; }
     .etitle { font-size: 19px; }
