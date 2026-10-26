@@ -40,7 +40,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   </section>
   <ul class="contact" aria-label="연락처">
     <li><a href={profile.github} target="_blank" rel="noopener">GitHub ↗</a></li>
-    <li><a href={`mailto:${profile.email}`}>{profile.email} ↗</a></li>
+    <li><button type="button" class="mail" id="copymail" data-mail={profile.email} title="눌러서 이메일 주소 복사"><span id="mailtxt">{profile.email}</span> <span aria-hidden="true">⧉</span></button></li>
     <li><a href={profile.techDoc} target="_blank" rel="noopener">기술 문서 PDF ↗</a></li>
   </ul>
 </header>
@@ -238,6 +238,9 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .contact { margin: 32px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 24px; font-size: 14px; font-weight: 600; }
   .contact a { text-decoration: none; color: #CDD5E1; }
   .contact a:hover { color: #7FB2FF; }
+  .mail { padding: 0; border: 0; background: none; font: inherit; color: #CDD5E1; cursor: pointer; }
+  .mail:hover { color: #7FB2FF; }
+  .mail.done { color: #7FB2FF; }
 
   .sec { margin-bottom: 112px; }
   .sec.last { margin-bottom: 96px; }
@@ -343,4 +346,16 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
     .games { grid-template-columns: minmax(0, 1fr); }
   }
 </style>
+<script>
+  // 이메일 주소 복사
+  const mb = document.getElementById('copymail')!;
+  const mt = document.getElementById('mailtxt')!;
+  mb.addEventListener('click', async () => {
+    const mail = mb.dataset.mail ?? '';
+    try { await navigator.clipboard.writeText(mail); }
+    catch { const t = document.createElement('textarea'); t.value = mail; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+    mt.textContent = '복사했습니다'; mb.classList.add('done');
+    setTimeout(() => { mt.textContent = mail; mb.classList.remove('done'); }, 1500);
+  });
+</script>
 </Base>

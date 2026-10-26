@@ -55,7 +55,7 @@ export const games = [
   { title: '발로란트', badge: '40위권', meta: 'FPS · 한국 서버 40위권', note: '' },
   { title: '배틀그라운드', badge: '300위권', meta: '배틀로얄 · 첫 시즌 한국 서버 300위권', note: '' },
   { title: '붉은사막', badge: '40시간', meta: '오픈월드', note: '끊김 없는 월드 스트리밍과 다수 상호작용 객체의 동시 관리 구조를 자체 엔진의 리소스 로딩·객체 상태 설계 관점에서 분석' },
-  { title: '사이버펑크 2077', badge: '30시간', meta: '오픈월드', note: '게임 프로그래밍에 관심을 갖게 된 계기' },
+  { title: '사이버펑크 2077', badge: '엔딩 2회차', meta: '오픈월드', note: '게임 프로그래밍에 관심을 갖게 된 계기' },
   { title: '메이플스토리', badge: 'Lv.280', meta: '2D 횡스크롤 MMORPG · 유니온 8680 · Lv.280', note: '' },
   { title: '에이펙스 레전드', badge: '150시간', meta: '배틀로얄', note: '' },
   { title: '데드록', badge: '120시간', meta: 'TPS · MOBA', note: '' },
