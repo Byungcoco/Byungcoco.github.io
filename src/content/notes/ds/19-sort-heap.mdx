@@ -1,0 +1,77 @@
+---
+series: ds
+order: 19
+title: "히프 정렬"
+date: "2025-04-28"
+topic: "선택 정렬 · 정렬 정리"
+---
+import Fig from '../../../components/Fig.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 히프 정렬 (Heap Sort)
+
+히프 정렬이란? 히프 자료구조를 이용하여 자료를 정렬한다. 히프를 복기해 보자.
+
+히프는 <strong>완전 이진 트리</strong>이면서 최대 트리 또는 최소 트리 속성을 가져야 히프라 정의할 수 있다.
+
+또한 삭제(Delete) 시 루트 노드인 최댓값 또는 최솟값을 항상 반환한다. 부모와 자식 간의 키 값 관계가 크거나 같고, 작거나 같은 약간 느슨한 제약 관계를 가지지만, 삭제 시 최솟값(최댓값)을 반환하는 정책은 꼭 지켜진다.
+
+그래서 간단하게 최소 히프 트리에 자료들을 순차적으로 넣어 주고, 다시 빼내어 배열에 순차적으로 복사하면 오름차순으로 정렬이 이루어진다.
+
+<Fig n={1} src="/img/notes/ds/sort-heap/heapsort.png" caption="모든 자료를 최소 히프에 삽입한 뒤, 루트를 차례로 삭제하면 오름차순이 된다" max={720} />
+
+<Editor file="CMySort.cpp" fn="CMySort::HeapSort()">
+
+```cpp
+void CMySort::HeapSort()
+{
+	if (!m_pArray || m_iSize < 0)
+		return;
+
+	CArrayHeap SortHeap;
+	HeapNode pSrcNode;
+	SortHeap.CreateArrayHeap(false, 3);
+
+	for (int i = 0; i < m_iSize; ++i)
+	{
+		pSrcNode.m_iKey = m_pArray[i];
+		SortHeap.InsertNode(pSrcNode);
+	}
+
+	for(int i=0; i<m_iSize; ++i)
+	{
+		if (HeapNode *pSrcNode = SortHeap.DeleteNode())
+		{
+			m_pArray[i] = pSrcNode->m_iKey;
+			delete pSrcNode;
+		}
+	}
+	
+	Print();
+}
+```
+
+</Editor>
+
+정렬하고자 하는 자료를 <strong>히프에 삽입, 삭제하는 것만으로</strong> 정렬이 이루어진다. 루트 노드의 삭제 자체는 단순하지만, 삭제 이후 완전 이진 트리의 재구성에 평균 O(log n)의 시간이 소요된다. n개의 자료를 모두 꺼내므로
+
+- 최선, 평균, 최악: O(n log n)
+
+매우 우수한 평균 효율성을 보여준다. 반면 히프 정렬은 히프를 이용해 정렬을 수행하기 때문에 히프 생성에 메모리가 소모되며, <strong>정렬의 안정성은 유지하지 못한다.</strong>
+
+## 2. 정렬 알고리즘 정리
+
+<div class="tbl">
+
+| 정렬 | 최선 | 평균 | 최악 | 안정성 | 특징 |
+|---|---|---|---|---|---|
+| 선택 정렬 | O(n²) | O(n²) | O(n²) | 불안정 | 이동 연산 O(n), 느리다 |
+| 버블 정렬 | O(n²) | O(n²) | O(n²) | 안정 | 느리고 이동 연산도 O(n²) |
+| 퀵 정렬 | O(n log n) | O(n log n) | O(n²) | 불안정 | 자료 상태에 따라 최악 O(n²) |
+| 삽입 정렬 | O(n) | O(n²) | O(n²) | 안정 | 거의 정렬된 자료면 O(n) |
+| 셸 정렬 | O(n) | O(n<sup>1.25</sup>) | O(n²) | 불안정 | 삽입 정렬을 개선 |
+| 병합 정렬(2-way) | O(n log n) | O(n log n) | O(n log n) | 안정 | 자료 상태 영향 적음, 추가 메모리 필요 |
+| 기수 정렬 | O(d·n) | O(d·n) | O(d·n) | 안정 | 문자 키에 적용 어려움, 버킷 메모리 필요 |
+| 히프 정렬 | O(n log n) | O(n log n) | O(n log n) | 불안정 | 우수한 효율, 추가 메모리 필요 |
+
+</div>

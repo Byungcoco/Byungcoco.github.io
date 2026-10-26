@@ -1,0 +1,178 @@
+---
+series: ds
+order: 18
+title: "병합 정렬과 기수 정렬"
+date: "2025-04-28"
+topic: "병합 · 분배 정렬"
+---
+import Fig from '../../../components/Fig.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 병합 정렬 (Merge Sort)
+
+병합 정렬은 같은 개수의 원소를 가지는 부분집합으로 분할(Divide)하고, 다시 병합하며 정렬 작업을 완성하는 분할 정복 기법에 의한 정렬 방식이다. 2개의 정렬된 집합을 병합하는 경우를 2-way, n개의 정렬된 자료 집합을 결합하는 경우를 n-way 병합이라 한다.
+
+<Fig n={1} src="/img/notes/ds/sort-merge-radix/merge-tree.png" caption="8개의 자료를 원소 1개짜리 부분집합까지 나눈 뒤, 둘씩 정렬하며 병합한다" max={620} />
+
+- <strong>분할 단계</strong>: 전체 8개의 자료가 2개의 부분집합으로 계속 나누어져, 결국 8개의 부분집합으로 분할된다.
+- <strong>병합 단계</strong>: 병합을 하며 <strong>2개의 부분집합이 합쳐지는 순간</strong>에 정렬을 시행한다.
+
+<Fig n={2} src="/img/notes/ds/sort-merge-radix/merge-step.png" caption="두 부분집합의 맨 앞 원소끼리 비교해 작은 쪽을 버퍼에 옮긴다" max={620} />
+
+두 부분집합에서 각각 첫 원소를 가리키도록 하고, 작은 순으로 정렬을 시행한다. 이때 어느 쪽이든 상관없이 가리키는 값이 작다면 우선적으로 정렬된다. 그래서 한쪽 부분집합의 원소가 먼저 소진되고 다른 쪽 원소가 남아 있다면, 남은 원소들을 순차적으로 단순 복사해서 정렬을 마친다.
+
+퀵 정렬과 같이 분할 정복 기법에 의해 구현되는 정렬은 재귀적 호출로 구현이 가능하다.
+
+<Editor file="CMySort.cpp" fn="CMySort::MergeSort(...)">
+
+```cpp
+void CMySort::MergeSort(int *pBuffer, const int &iStart, const int &iEnd)
+{
+	int iMiddle = (iStart + iEnd) / 2;
+	if (iStart < iEnd)
+	{
+		MergeSort(pBuffer, iStart, iMiddle);
+		MergeSort(pBuffer, iMiddle + 1, iEnd);
+
+		MergeSortInternal(pBuffer, iStart, iMiddle, iEnd);
+	}
+}
+```
+
+</Editor>
+
+<Editor file="CMySort.cpp" fn="CMySort::MergeSortInternal(...)">
+
+```cpp
+void CMySort::MergeSortInternal(int *pBuffer, const int &iStart, const int &iMiddle, const int &iEnd)
+{
+	int i = iStart;
+	int j = iMiddle + 1;
+	int k = iStart;
+	while (i <= iMiddle && j <= iEnd)
+	{
+		if (m_pArray[i] <= m_pArray[j])
+		{
+			pBuffer[k] = m_pArray[i];
+			++i;
+		}
+		else
+		{
+			pBuffer[k] = m_pArray[j];
+			++j;
+		}
+		++k;
+	}
+	if (i <= iMiddle)
+	{
+		for (int t = i; t <= iMiddle; ++t, ++k)
+		{
+			pBuffer[k] = m_pArray[t];
+		}
+	}
+	else
+	{
+		for (int t = j; j <= iEnd; ++t, ++k)
+		{
+			pBuffer[k] = m_pArray[t];
+		}
+	}
+
+	for (int i = iStart; i <= iEnd; ++i)
+	{
+		m_pArray[i] = pBuffer[i];
+	}
+
+	Print();
+}
+```
+
+</Editor>
+
+재귀로 분할하고 `MergeSortInternal`에서 병합을 진행한다.
+
+## 2. 병합 정렬의 효율성
+
+각 부분집합을 병합하며 정렬을 수행하는 정렬 방식으로, 2-way 병합 정렬의 이동 및 비교 연산 횟수는 최선, 평균, 최악 모두 O(n log n)이다. 그래서 정렬 전 상태의 영향이 적고 효율이 매우 우수하다.
+
+단, <strong>추가 버퍼를 위한 메모리 공간이 필요</strong>하고 이동 횟수가 잦다는 단점이 있다. 따라서 자료형의 크기가 클수록 시간 낭비가 심해지므로, 이때는 <strong>배열 대신 연결 리스트</strong>를 이용해 포인터를 변경하는 방식으로 <strong>물리적 이동을 줄이고 논리적으로 정렬하는</strong> 최적화 기법이 필요하다.
+
+또한 <strong>정렬의 안정성이 유지</strong>된다.
+
+## 3. 기수 정렬 (Radix Sort)
+
+기수는 숫자의 자릿수를 말한다. 42는? 10의 자리 수 4, 1의 자리 수 2.
+
+기수 정렬은 키 값의 자릿수에 따라 자료를 분배하는 방식으로 정렬하는 알고리즘이다. 앞선 정렬 알고리즘들은 각 자료의 키 값을 비교하여 이동을 수행했지만, 기수 정렬은 비교 연산이 필요 없으며 <strong>버킷(Bucket)</strong>이라 불리는 자료 보관 큐에 자료를 분배하고, 다시 이를 꺼내는 연산을 통해 정렬이 이루어진다.
+
+일반적으로 키 값의 진법(기수)만큼 버킷을 사용하는데, 키 값이 10진수라면 버킷은 0~9로 모두 10개가 사용된다.
+
+<Fig n={3} src="/img/notes/ds/sort-merge-radix/radix.png" caption="1의 자리로 분배·수집한 결과를 다시 10의 자리로 분배·수집하면 정렬이 끝난다" max={720} />
+
+- <strong>1의 자리 분배</strong>: 10진수이니 0~9를 나타내는 버킷에 1의 자리에 맞는 자료를 분배한다.
+- <strong>1의 자리 저장</strong>: 도대체 뭐 하는 짓이지? 싶지만 잘 보면 1의 자리 오름차순으로 나열된 것을 확인할 수 있다. 즉, 1의 자리에 따라 각 버킷에 분배하고, 버킷을 오름차순으로 돌며 모든 원소를 꺼내 나열한다.
+- <strong>10의 자리 분배와 저장</strong>: 1의 자리 분배와 저장이 끝났으니 10의 자리에 대해 같은 과정을 반복한다. 버킷은 큐이므로, 저장할 때 FIFO에 따라 먼저 들어온 자료부터 Dequeue된다. 그래서 10의 자리가 같은 15와 17은 1의 자리 단계에서 정해진 순서를 그대로 유지한다.
+
+이처럼 1의 자리 수부터 높은 자리 수로 올라가며 정렬한다(LSD 방식). 역순으로 높은 자리 수부터 1의 자리 수로 내려가는 방식(MSD)도 있는데, 재귀 함수로 구현한다고 한다. 나중에 시간 나면 찾아보자.
+
+<Editor file="CMySort.cpp" fn="CMySort::RadixSort(...)">
+
+```cpp
+void CMySort::RadixSort(const int &iRadix, const int &iDigit)
+{
+	if (m_iSize < 0 || !m_pArray)
+		return;
+
+	MyLinkedQueue *pMyLinkedQueue = new MyLinkedQueue[iRadix];
+	
+	int iSrc = MySquare(iRadix, iDigit - 1);
+	for (int d = 1; d <= iSrc; d *= iRadix)
+	{
+		int iBucket(0);
+		for (int i = 0; i < m_iSize; ++i)
+		{
+			/*iTmp = m_pArray[i] % (d * iRadix);
+
+			if (m_pArray[i] / iRadix >= iRadix)
+			{
+				iTmp /= d;
+			}*/
+
+			iBucket = (m_pArray[i] / d) % iRadix;
+			pMyLinkedQueue[iBucket].Enqueue({ m_pArray[i], });
+		}
+
+		int *pArray = m_pArray;
+		for (int i = 0; i < iRadix; ++i)
+		{
+			QueueNode *pSrcNode = nullptr;
+			while (!pMyLinkedQueue[i].isEmpty())
+			{
+				pSrcNode = pMyLinkedQueue[i].Dequeue();
+				if (pSrcNode)
+				{
+					*pArray = pSrcNode->_iData;
+					++pArray;
+				}
+				delete pSrcNode;
+			}
+		}
+	}
+
+	Print();
+	delete[] pMyLinkedQueue;
+	pMyLinkedQueue = nullptr;
+}
+```
+
+</Editor>
+
+Enqueue하기 전의 버킷 계산이 처음에는 복잡하게 구현되었다. 일일이 디버깅하며 맞추다 보니 조금 꼬였는데, 주석 처리한 기존 식은 `m_pArray[i] / iRadix >= iRadix` 같은 조건에 의존하고 있어서 키의 범위에 따라 버그가 날 우려가 있었다. 지금처럼 `(m_pArray[i] / d) % iRadix`로 자릿수를 바로 뽑으면 훨씬 단순하고 안전하다. 단, 음수 키는 나머지가 음수가 되어 버킷 인덱스로 쓸 수 없으므로 따로 처리해야 한다.
+
+## 4. 기수 정렬의 효율성
+
+각 자료의 키 값을 비교하는 연산 없이 <strong>분배와 저장만으로</strong> 정렬이 이루어진다. 키의 자릿수를 d라 하면 최선, 평균, 최악 모두 O(d·n)으로 선형에 가까운 효율성을 보여준다.
+
+하지만 기수 정렬 특성상 자릿수 개념이 적용되는 숫자 키에만 적용하기 쉽고, 한글 같은 문자 키인 경우 상당히 많은 버킷이 필요하다. 그리고 버킷을 위한 추가 메모리가 필요하다.
+
+<strong>정렬의 안정성은 유지</strong>된다.

@@ -1,0 +1,309 @@
+---
+series: ds
+order: 24
+title: "AVL 트리 구현"
+date: "2025-05-02"
+topic: "탐색 트리"
+---
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. InsertNode
+
+#### 탐색
+
+일반적인 이진 탐색 트리의 탐색 과정과 같다. 다른 점은 <strong>Stack에 추가 경로상의 조상 노드를 담아 두고</strong>, `UpdateBalance`, `UpdateHeight`로 높이와 BF를 갱신하는 동시에 <strong>문제가 생긴 BF를 바로 점검</strong>한다는 것이다(<FigRef n={1} />).
+
+<Fig n={1} src="/img/notes/ds/avl/insert-stack.png" caption="삽입 경로를 Stack에 쌓고 거꾸로 꺼내며 갱신" max={680} />
+
+균형 이진 탐색 트리의 제약을 지키기 위해, BF의 절대값이 1을 초과하는 문제가 발생한 노드를 P로 잡아 회전시키고 조상 노드를 계속해서 업데이트하면 되기 때문이다. BF를 모두 갱신한 뒤 다시 탐색하는 방법은 쓰지 않는다.
+
+#### Stack에 담긴 조상 노드의 Balance와 Height 갱신
+
+Stack을 pop하며 새 노드의 부모부터 루트까지 거슬러 올라가 높이와 BF를 갱신하고, 균형이 깨진 노드를 만나면 `CheckBalance`를 호출한다.
+
+<Editor file="MyAVLTree.cpp" fn="CMyAVLTree::InsertNode(...)">
+
+```cpp
+bool CMyAVLTree::InsertNode(const int &iKey_in, const char *pValue_in)
+{
+	// ... 코드 중략
+
+	LinkedListStack DstStack;
+	AVLNode *pSearchNode = m_pRootNode;
+
+	while (pSearchNode)
+	{
+		DstStack.Push({ pSearchNode, });
+
+		if (iKey_in > pSearchNode->m_tData.m_iKey)
+		{
+			pSearchNode = pSearchNode->m_pRightChild;
+		}
+		else if (iKey_in < pSearchNode->m_tData.m_iKey)
+		{
+			pSearchNode = pSearchNode->m_pLeftChild;
+		}
+		else
+		{
+			std::cout << "InsertNode, 이미 해당 키값이 존재합니다.\n";
+			return false;
+		}
+	}
+
+	// ... 코드 중략
+
+	ListStackNode *pPopNode = nullptr;
+	AVLNode *pPopData = nullptr;
+	while (!DstStack.isEmpty())
+	{
+		pPopNode = DstStack.Pop();
+		pPopData = pPopNode->_pData;
+
+		UpdateBalance(pPopData);
+		UpdateHeight(pPopData);
+		
+		if (pPopData->m_iBalance > 1 || pPopData->m_iBalance < -1)
+		{
+			if (DstStack.Peek())
+			{
+				CheckBalance(pPopData, DstStack.Peek()->_pData);
+			}
+			else
+			{
+				CheckBalance(pPopData, nullptr);
+			}
+		}
+
+		delete pPopNode;
+		pPopNode = nullptr;
+		pPopData = nullptr;
+	}
+	PrintNode(pInsertNode);
+	++m_iCurElementCount;
+	return true;
+}
+```
+
+</Editor>
+
+## 2. CheckBalance — 회전 판단
+
+여기서는 Stack을 pop하며 `CheckBalance`를 호출하게 했지만, Stack을 넘겨 함수 내부에서 점검하도록 하면 좀 더 깔끔하다.
+
+- LL은 BF가 2인 지점에서 왼쪽 자식의 BF가 양수(1)이다.
+- LR은 BF가 2인 지점에서 왼쪽 자식의 BF가 -1이다.
+- RR은 BF가 -2인 지점에서 오른쪽 자식의 BF가 -1이다.
+- RL은 BF가 -2인 지점에서 오른쪽 자식의 BF가 1이다.
+
+또한 LR과 RL이 각각 RR, LL 회전을 먼저 하는 이유는, LR 문제를 RR 회전으로 LL 문제로 만든 뒤 LL 회전으로 해결하기 위해서다. RL은 그 반대이다. 그래서 `LRRotate`는 `P`의 왼쪽 자식에서 `RRRotate`를 한 뒤 `P`에서 `LLRotate`를 호출하는 두 줄로 끝난다.
+
+<strong>L 관련 문제</strong> (`m_iBalance`가 1보다 큼)
+
+- LL이라면? 문제가 발생한 P의 왼쪽 자식 노드 BF 값이 0보다 크다.
+- LR이라면? 문제가 발생한 P의 왼쪽 자식 노드 BF 값이 0보다 작다.
+
+<strong>R 관련 문제</strong> (`m_iBalance`가 -1보다 작음)
+
+- RR이라면? 문제가 발생한 P의 오른쪽 자식 노드 BF 값이 0보다 작다.
+- RL이라면? 문제가 발생한 P의 오른쪽 자식 노드 BF 값이 0보다 크다.
+
+부모 노드가 존재하지 않는 경우는 `m_pRootNode`가 갱신될 때이다. 부모 노드가 존재한다면 회전 결과로 올라온 노드를 부모의 링크에 달아 줘야 하는데, 이때 왼쪽·오른쪽은 <strong>원래 P가 부모의 어느 쪽 자식이었는지</strong>로 정해야 한다.
+
+<Editor file="MyAVLTree.cpp" fn="CMyAVLTree::CheckBalance(...)">
+
+```cpp
+void CMyAVLTree::CheckBalance(AVLNode *pPNode, AVLNode *pParentNode)
+{
+	AVLNode *pReturnedNode = nullptr;
+	if (pPNode->m_iBalance > 1)
+	{
+		if (pPNode->m_pLeftChild->m_iBalance > 0)
+		{
+			//LLRotate
+			pReturnedNode = LLRotate(pPNode);
+			if (pParentNode)
+			{
+				pParentNode->m_pLeftChild = pReturnedNode;
+			}
+			else
+			{
+				m_pRootNode = pReturnedNode;
+			}
+		}
+		else if (pPNode->m_pLeftChild->m_iBalance < 0)
+		{
+			//LRRotate => RR회전을통해 문제를 LL로 만들고 LL회전
+			pReturnedNode = LRRotate(pPNode);
+			if (pParentNode)
+			{
+				pParentNode->m_pRightChild = pReturnedNode;
+			}
+			else
+			{
+				m_pRootNode = pReturnedNode;
+			}
+		}
+	}
+	else if (pPNode->m_iBalance < -1)
+	{
+		if (pPNode->m_pRightChild->m_iBalance < 0)
+		{
+			//RRRotate
+			pReturnedNode = RRRotate(pPNode);
+			if (pParentNode)
+			{
+				pParentNode->m_pRightChild = pReturnedNode;
+			}
+			else
+			{
+				m_pRootNode = pReturnedNode;
+			}
+		}
+		else if (pPNode->m_pRightChild->m_iBalance > 0)
+		{
+			//RLRotate => RL 발생시 LL회전으로 문제를 RR로 바꾸어 해결
+			pReturnedNode = RLRotate(pPNode);
+			if (pParentNode)
+			{
+				pParentNode->m_pLeftChild = pReturnedNode;
+			}
+			else
+			{
+				m_pRootNode = pReturnedNode;
+			}
+		}
+	}
+}
+```
+
+</Editor>
+
+<div class="note-box">
+
+<strong>보완할 점</strong>: 위 코드는 부모에 다시 연결하는 방향을 회전 종류(LL이면 왼쪽, LR이면 오른쪽 등)로 정하고 있다. P가 부모의 반대쪽 자식인 경우(예: 부모의 왼쪽 자식에서 LR 불균형) 링크가 잘못 연결되므로, `pParentNode->m_pLeftChild == pPNode`인지 비교해서 방향을 정해야 한다. 또 삭제 과정에서는 자식의 BF가 0인 경우도 생길 수 있어서, LL·RR 판정 조건은 `>= 0`, `<= 0`으로 두는 것이 안전하다.
+
+</div>
+
+<Fig n={2} src="/img/notes/ds/avl/rr-rl.png" caption="RR 회전과 RL 회전 예시" max={760} />
+
+<FigRef n={2} />의 위쪽은 12를 추가해 9에서 RR 불균형이 생긴 경우, 아래쪽은 6을 추가해 3에서 RL 불균형이 생긴 경우이다. RL은 먼저 오른쪽 자식 10에서 LL 회전을 해 RR 모양으로 만든 뒤, 3에서 RR 회전을 한다.
+
+## 3. DeleteNode
+
+"균형" 이진 탐색 트리의 노드 삭제는 조금 복잡하다. 이진 탐색 트리의 삭제 과정을 따르지만, <strong>BF 갱신을 위해 2개의 스택</strong>이 필요하기 때문이다.
+
+- 삭제할 노드까지의 탐색 경로를 담은 Main Stack
+- 삭제한 노드를 대체할 노드를 찾는 탐색 경로를 담은 Sub Stack
+
+잠깐 복기해 보자. 이진 탐색 트리의 제약을 이용한 두 가지 패턴이 있었다. 루트 기준으로
+
+- 왼쪽 서브트리의 오른쪽 끝 노드는 최대값
+- 오른쪽 서브트리의 왼쪽 끝 노드는 최소값
+
+그리고 트리 전체로 보면 레벨별 가장 좌측 노드는 그 레벨의 최소값, 가장 우측 노드는 그 레벨의 최대값이다.
+
+그래서 이진 탐색 트리의 제약을 유지하며 대체 노드를 찾는 방법은, 삭제 노드를 루트로 하는 서브트리에서
+
+- 왼쪽 서브트리의 가장 오른쪽 아래 노드 (삭제 노드에 가장 가까운 작은 값)
+- 오른쪽 서브트리의 가장 왼쪽 아래 노드 (삭제 노드에 가장 가까운 큰 값)
+
+중 하나를 고르는 것이다. 이 구현은 왼쪽 서브트리의 최대값을 쓴다.
+
+#### 자식 수에 따른 처리
+
+- 삭제할 노드의 자식이 없을 때: 가장 쉽다. 대체 노드 없이 부모의 링크만 끊으면 된다.
+- 삭제할 노드의 자식이 하나만 있을 때: 그 자식이 바로 대체 노드가 된다.
+- 삭제할 노드의 자식이 모두 있을 때: 가장 어렵다. 아래에서 자세히 본다.
+
+이후 삭제할 노드의 부모와 대체 노드를 연결하고, 삭제할 노드가 `m_pRootNode`라면 루트를 대체 노드로 바꾼다.
+
+#### 자식이 모두 있을 때
+
+<Fig n={3} src="/img/notes/ds/avl/delete-stack.png" caption="삭제 시 MainStack과 SubStack의 범위와 갱신 순서" max={760} />
+
+`pPreccesorNode`는 전임자(교체될 노드의 직전 부모), `pSuccesorNode`는 후임자(교체될 노드)이다. 자세히 보면 SubStack에 후임자 노드를 넣는다.
+
+SubStack은 <strong>삭제할 노드의 대체 노드를 찾으며 경로상의 노드를 push해 놓은 것</strong>이다.
+
+코드 주석처럼 <strong>SubStack에 마지막으로 들어간 노드는 교체될 노드</strong>, 즉 탐색이 완료된 노드이다. 이 노드는 삭제 노드 자리로 올라가므로 SubStack에서 꺼내 MainStack에 넣어 준다. 그래야 Main의 조상 노드들보다 먼저 BF가 갱신된다.
+
+또한 `pPreccesorNode`가 존재한다면, 대체 노드의 자식을 모든 업데이트 대상 중 가장 먼저 처리해야 하므로 SubStack에 push한다.
+
+이후는 이진 탐색 트리의 삭제 과정처럼 대체 노드의 링크들을 연결해 주는 과정이다. 이때 `pPreccesorNode`는 탐색이 완료되기 직전의 부모 노드로, 대체 노드의 자식을 옮겨 받는 역할이다. 헷갈리지 말자.
+
+#### SubStack과 MainStack을 pop하며 BF 일괄 업데이트
+
+<strong>SubStack을 먼저, 그다음 MainStack</strong>을 처리한다. 논리적으로 삭제 노드 기준 아래쪽의 BF가 갱신되어야 위쪽의 BF가 올바르게 갱신되기 때문이다.
+
+SubStack은 흐름상 삭제할 노드의 자식이 모두 있는 경우에만 채워진다. 이 경우에만 대체 노드를 찾기 위한 탐색이 이루어지고, 그 탐색 경로의 노드들의 BF 갱신이 필요하기 때문이다.
+
+<Editor file="MyAVLTree.cpp" fn="CMyAVLTree::DeleteNode(...)">
+
+```cpp
+bool CMyAVLTree::DeleteNode(const int &iKey_in)
+{
+	// ... 코드 중략
+	else if (pDeleteNode->m_pLeftChild && pDeleteNode->m_pRightChild)
+	{
+		AVLNode *pPreccesorNode = nullptr;
+		// 후임자
+		AVLNode *pSuccesorNode = pDeleteNode->m_pLeftChild;
+		SubStack.Push({ pSuccesorNode , });
+		while (pSuccesorNode->m_pRightChild)
+		{
+			pPreccesorNode = pSuccesorNode;
+			pSuccesorNode = pSuccesorNode->m_pRightChild;
+			SubStack.Push({ pSuccesorNode , });
+		}
+
+		// SubStack의 마지막에 삽입된 child는 교체될 node로써
+		// MainNode에 넣는 이유는 가장 먼저 BF 계산이 되어야하기때문
+		ListStackNode *pTmp = SubStack.Pop();
+		MainStack.Push(*pTmp);
+		delete pTmp;
+		pTmp = nullptr;
+
+		if (pPreccesorNode)
+		{
+			pPreccesorNode->m_pRightChild = pSuccesorNode->m_pLeftChild;
+			pSuccesorNode->m_pRightChild = pDeleteNode->m_pRightChild;
+			pSuccesorNode->m_pLeftChild = pDeleteNode->m_pLeftChild;
+
+			SubStack.Push({ pPreccesorNode->m_pRightChild });
+		}
+		else
+		{
+			pSuccesorNode->m_pRightChild = pDeleteNode->m_pRightChild;
+		}
+
+		pExchangeNode = pSuccesorNode;
+	}
+	// ... 코드 중략
+	ListStackNode *pPopNode = nullptr;
+	AVLNode *pPopData = nullptr;
+	while (!SubStack.isEmpty())
+	{
+		pPopNode = SubStack.Pop();
+		pPopData = pPopNode->_pData;
+		// ... 코드 중략
+	}
+
+	while (!MainStack.isEmpty())
+	{
+		pPopNode = MainStack.Pop();
+		pPopData = pPopNode->_pData;
+		// ... 코드 중략
+	}
+	// ... 코드 중략
+}
+```
+
+</Editor>
+
+## 4. 정리
+
+- 삽입은 탐색 경로를 Stack에 쌓고, pop하며 아래에서 위로 높이·BF를 갱신하다가 `|BF| > 1`인 노드에서 바로 회전한다.
+- 회전 종류는 문제 노드의 BF 부호와 해당 방향 자식의 BF 부호로 결정한다.
+- 삭제는 MainStack(삭제 노드까지)과 SubStack(대체 노드 탐색 경로)을 두고, SubStack → MainStack 순서로 갱신한다.

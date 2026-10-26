@@ -1,0 +1,163 @@
+---
+series: ds
+order: 29
+title: "충돌 해결 — 체이닝"
+date: "2025-04-30"
+topic: "해싱"
+---
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 체이닝(Chaining)
+
+해싱 충돌 해결 방법의 두 번째이다. 체이닝은 <strong>테이블의 구조를 변경</strong>해서 각 주소(버킷)마다 하나 이상의 검색 키 값이 저장될 수 있도록 하는 방법이다. 연결 리스트를 사용해, 충돌이 발생할 때 동적으로 여러 개의 검색 키 값을 저장할 수 있게 한다.
+
+<Fig n={1} src="/img/notes/ds/hashing-chaining/chain.png" caption="체이닝을 사용한 해시 테이블에 키 1, 8, 3을 저장한 모습" max={620} />
+
+테이블 크기 5, 나머지 함수(`mod 5`)로 키 1, 8, 3을 저장하면 1은 1번, 8과 3은 모두 3번 버킷으로 계산된다. 서로 다른 검색 키를 가지지만 해싱 함수로 계산된 주소가 같은 <strong>동거자</strong> 2개가 3번 버킷의 리스트에 함께 저장된다(<FigRef n={1} />).
+
+새로운 자료를 추가할 때 연결 리스트의 어디에 추가할지는 여러 방식이 있다.
+
+- 정렬하지 않고 저장: 무조건 맨 앞에 저장, 무조건 맨 뒤에 저장
+- 정렬해서 저장: 키 값 오름차순으로 저장, 키 값 내림차순으로 저장
+
+구현상의 편의를 위해 <strong>맨 뒤에 추가</strong>하는 정책을 따르자.
+
+## 2. 구현
+
+1. 호너의 방법으로 문자열을 정수로 변환한다.
+2. 나머지 함수로 index를 도출한다.
+3. 충돌 해결법으로 체이닝을 사용한다.
+
+<Editor file="HashingLinkedList.cpp" fn="CHashingLinkedList::AddElement(...)">
+
+```cpp
+bool CHashingLinkedList::AddElement(const char *pKey_in, const int &iValue_in)
+{
+	if(!pKey_in || !m_ppTable)
+		return false;
+
+	int iHash = HonerFunc(pKey_in);
+	if (iHash == FAIL_NUM)
+		return false;
+	int iIndex = DivideFunc(iHash);
+	if (iIndex == FAIL_NUM)
+		return false;
+
+	if (!ChainInsert(iIndex, HashListElement({ pKey_in, iValue_in })))
+	{
+		std::cout << "ChainInsert 실패?\n";
+		return false;
+	}
+
+	++m_iCurElementSize;
+	return true;
+}
+```
+
+</Editor>
+
+버킷의 리스트에 이미 같은 키가 있는지 먼저 확인하고, 없으면 리스트 맨 뒤에 추가한다.
+
+<Editor file="HashingLinkedList.cpp" fn="CHashingLinkedList::ChainInsert(...)">
+
+```cpp
+bool CHashingLinkedList::ChainInsert(const int &iIndex, const HashListElement &Element_in)
+{
+	MyLinkedList<HashListElement> *pSearchList = nullptr;
+	Node<HashListElement> *pSearchNode = nullptr;
+	if (!(pSearchList = m_ppTable[iIndex]))
+		return false;
+
+	if (pSearchList->GetHeadNode()->_pLink)
+	{
+		if (SearchInSynonym(Element_in.m_pKey, pSearchList))
+		{
+			return false;
+		}
+	}
+
+	return pSearchList->Push_Back(Element_in);
+}
+```
+
+</Editor>
+
+동거자 검색은 해당 버킷의 리스트를 처음부터 따라가며 키를 비교한다.
+
+<Editor file="HashingLinkedList.cpp" fn="CHashingLinkedList::SearchInSynonym(...)">
+
+```cpp
+Node<HashListElement> *CHashingLinkedList::SearchInSynonym(const char *pKey_in, MyLinkedList<HashListElement> *pSearchList_in)
+{
+	MyLinkedList<HashListElement> *pSearchList = pSearchList_in;
+	Node<HashListElement> *pSearchNode = pSearchList->GetHeadNode()->_pLink;
+	for (; pSearchNode; pSearchNode = pSearchNode->_pLink)
+	{
+		if (MyStrCmp(pKey_in, pSearchNode->_Data.m_pKey))
+		{
+			std::cout << pKey_in << " 검색 성공!\n";
+			return pSearchNode;
+		}
+	}
+
+	return nullptr;
+}
+```
+
+</Editor>
+
+## 3. 해싱의 성능 분석
+
+해싱은 자료의 검색, 추가, 삭제에 걸리는 시간 복잡도가 최선의 경우 <strong>O(1)</strong>이다. 하지만 충돌이 많이 발생하는 최악의 경우에는 <strong>O(n)</strong>이 된다.
+
+그래서 빠른 검색이 필요한 경우에 많이 쓰고, 최악의 경우를 줄이기 위해 자료의 개수나 특성에 맞게 적절한 튜닝이 필요하다.
+
+#### 키 값 밀도(Key Density)
+
+사용 가능한 전체 키 값 중에서 테이블에 저장되어 실제로 사용되는 키 값의 비율이다.
+
+`키 값 밀도 = 실제 사용 중인 키 값의 개수 / 사용 가능한 전체 키 값의 개수`
+
+키 값 밀도로 <strong>해싱 함수의 성능을 평가</strong>할 수 있다. 키 값 밀도가 낮을수록 넓은 키 공간을 작은 테이블에 대응시켜야 하므로, 해싱 함수가 키를 고르게 흩뜨리지 못하면 특정 주소에 데이터가 몰려 충돌이 잦아진다.
+
+#### 적재 밀도(Load Factor)
+
+해시 테이블에 저장 가능한 자료의 개수 중에서 실제로 저장된 자료의 개수 비율이다.
+
+`적재 밀도(α) = 저장된 자료의 개수 / 해시 테이블에 저장 가능한 전체 자료의 개수`
+
+공식에 따라 적재 밀도가 0이면 빈 해시 테이블이다. 하지만 생각해 보면 선형 조사법과 체이닝에서 적재 밀도의 의미에 차이가 있다. 선형 조사법에서는 그대로 의미가 있지만, 체이닝은 자료의 수가 늘어나도 실제로 쓰는 버킷은 적을 수 있기 때문이다.
+
+<Fig n={2} src="/img/notes/ds/hashing-chaining/load.png" caption="적재 밀도에 따른 평균 조사 횟수: 선형 조사와 체이닝" max={720} />
+
+#### 선형 조사법
+
+저장 가능한 버킷의 개수가 한정되어 있으므로 최대 적재 밀도는 1이다. 평균 조사 횟수는 다음과 같다.
+
+- 실패한 검색: `1/2 × (1 + 1/(1-α)²)`
+- 성공한 검색: `1/2 × (1 + 1/(1-α))`
+
+밀도가 증가함에 따라 <strong>실패한 검색의 조사 횟수가 성공한 검색에 비해 매우 가파르게 증가</strong>한다(<FigRef n={2} />). α가 0.5일 때 실패 2.5회·성공 1.5회지만, 0.8이면 실패 13회·성공 3회가 된다.
+
+그래서 선형 조사법으로 해싱을 구현할 때는 <strong>적재 밀도가 0.5를 넘지 않도록</strong> 설계하는 것이 일반적이다. 0.5를 넘는다면 0.5 미만이 되도록 다시 설계한다.
+
+#### 체이닝
+
+연결 리스트를 사용하기 때문에 "저장 가능한 전체 자료의 개수"가 의미가 없다. 그래서 분모를 버킷(연결 리스트)의 개수로 둔다.
+
+`적재 밀도(α) = 저장된 자료의 개수 / 해시 테이블의 버킷(연결 리스트) 개수`
+
+즉 하나의 연결 리스트에 평균적으로 저장된 자료의 개수를 나타내며, 평균 조사 횟수는
+
+- 실패한 검색: `α`
+- 성공한 검색: `1 + α/2`
+
+가 된다. 실패한 경우에는 해당 연결 리스트를 끝까지 순회해야 하기 때문이고, 성공했을 때는 해당 연결 리스트에 접근해 평균적으로 절반쯤에서 자료를 찾기 때문이다. 선형 조사법보다는 급격히 증가하지 않지만, 가능한 낮게 유지할 수 있도록 설계를 잘 해야 한다.
+
+## 4. 정리
+
+- 체이닝은 버킷마다 연결 리스트를 두어 동거자를 이어 붙이는 방식이다.
+- 해싱은 최선 O(1), 충돌이 몰리는 최악 O(n)이다.
+- 선형 조사는 α가 커지면 실패 검색 비용이 급증하므로 보통 α를 0.5 이하로 유지하고, 체이닝은 α에 대해 완만하게 증가한다.

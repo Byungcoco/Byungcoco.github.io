@@ -1,0 +1,165 @@
+---
+series: ds
+order: 4
+title: "큐"
+date: "2025-04-14"
+topic: "선형 자료구조"
+---
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 큐의 개념
+
+대기열과 큐에는 공통적인 특성이 있다. 오래 기다린 사람이 먼저 서비스를 받는다는 것, 즉 <strong>선입선출(FIFO)</strong>이다.
+
+큐 또한 선형 자료구조로 선후 관계가 1:1이며, 가장 먼저 들어간 자료가 가장 먼저 나온다. 이 특성을 유지하기 위해 다음 제약을 따른다.
+
+1. 자료의 반환(Dequeue)은 앞쪽인 <strong>Front</strong>에서 한다.
+2. 자료의 입력(Enqueue)은 끝쪽에서 하며, 이를 <strong>Rear</strong>라 부른다.
+
+스택과의 공통점은 자료의 입력이 모두 끝인 Top과 Rear에서 이루어진다는 것이다.
+
+- Enqueue를 하면 Rear에 자료가 쌓이고 Rear 인덱스가 증가한다.
+- Dequeue를 하면 Front에서 자료가 삭제되고 Front 인덱스가 증가한다.
+
+큐의 크기는 큐가 저장할 수 있는 최대 자료의 수이다.
+
+## 2. 선형 큐
+
+배열로 큐를 구현할 수 있다. 배열은 크기가 고정되어 있지만 연결 리스트로 구현하면 크기가 가변적이라 유연하다. 대신 구현의 복잡도가 올라간다. 배열 큐에서는 Rear가 `maxElementCount - 1` 위치에 있다면 큐가 가득 찬 것으로 본다.
+
+처음에 오해했던 부분인데, 선형 큐는 모든 자료가 비워지지 않는 한 Front를 0번 인덱스로 고정시키지 않는다. Dequeue로 자료를 꺼내면 0번 인덱스는 빈 상태로 남고 Front 인덱스만 증가한다.
+
+그래서 가득 찬 큐에서 Dequeue를 해도 자료가 남아 있다면, Front 인덱스는 증가하지만 Rear 인덱스는 그대로이다. 이 상태에서 자료를 추가하면 앞쪽에 빈 공간이 있는데도 <strong>오버플로우</strong>가 발생한다(<FigRef n={1} />).
+
+<Fig n={1} src="/img/notes/ds/queue/linear.png" caption="선형 큐의 문제 — 빈 공간이 있어도 쓸 수 없다" max={720} />
+
+## 3. 원형 큐
+
+배열 전체를 앞으로 이동시키면 되지 않을까 싶지만, 자료구조의 크기가 커질수록 수행 시간이 늘어나고 이는 성능 문제와 직결되므로 효율적인 해결 방법이 아니다.
+
+이 문제를 해결하기 위해 나온 것이 <strong>원형 큐</strong>이다. 배열의 오른쪽 끝을 배열의 왼쪽 끝과 연결시킨 구조로, 선형 큐에서 Rear가 배열의 오른쪽 끝에 고정되어 더 이상 움직일 수 없던 문제를 해결한다. 배열이 계속 이어져 있다고 가정하기 때문에, Rear가 마지막 인덱스일 때 새로운 자료를 Enqueue하면 비어 있는 0번 인덱스에 추가된다.
+
+Dequeue를 하면 Front였던 자료가 추출되고 다음 자료가 Front가 된다. 이렇게 앞쪽이 비면 다시 Enqueue로 자료가 들어올 수 있는 구조가 된다.
+
+이를 어떻게 표현할까? 선형 큐에서 Enqueue 시 `rear += 1`이었다면, 원형 큐에서는 다음과 같다.
+
+`rear = (rear + 1) % maxElementCount`
+
+최대 크기가 4이고 Rear가 3인 상태에서 자료 추가가 가능하다면, `(3 + 1) % 4 = 0`으로 0번 인덱스가 Rear가 된다. Front도 같은 공식으로 증가시키면 인덱스가 최대 배열 크기 안에서 순회한다(<FigRef n={2} />).
+
+<Fig n={2} src="/img/notes/ds/queue/circular.png" caption="원형 큐 — Front 3, Rear 0, 원소 3개인 상태" max={720} />
+
+<Editor file="MyCircleQueue.cpp" fn="MyCircleQueue::DecreaseDataCount() / IncreaseDataCount()">
+
+```cpp
+void MyCircleQueue::DecreaseDataCount()
+{
+	if (!_pQueueArray || isEmpty())
+		return;
+
+	--_iCurrentElementCount;
+	_iFront = (_iFront + 1) % _iMaxElementCount;
+}
+
+void MyCircleQueue::IncreaseDataCount()
+{
+	if (!_pQueueArray || isFull())
+		return;
+
+	++_iCurrentElementCount;
+	_iRear = (_iRear + 1) % _iMaxElementCount;
+}
+```
+
+</Editor>
+
+#### 원형 큐 순회 출력
+
+원형 큐에서는 <strong>Front가 Rear보다 큰 상황</strong>이 자주 생긴다. 그렇다면 큐를 순서대로 순회하며 출력하는 함수는 어떻게 대응해야 할까?
+
+구현한 코드는 Front가 0으로 정렬된 구조일 때는 인덱스를 그대로 출력한다. Front가 0이 아니라면 Rear가 Front보다 작을 수 있는 구조이므로 인덱스를 계산한다.
+
+Front가 3이고 Rear가 0이며 `_iCurrentElementCount = 3`, `_iMaxElementCount = 5`라고 하자. 데이터의 수만큼 순회하면서 `i`에 Front 인덱스를 더한 뒤 `_iMaxElementCount`로 나눈 나머지를 구하면 3, 4, 0이 된다. 정확히 Front부터 Rear까지 출력하는 인덱스를 만들 수 있다.
+
+<Editor file="MyCircleQueue.h" fn="operator << (std::ostream &, const MyCircleQueue &)">
+
+```cpp
+inline std::ostream &operator << (std::ostream &out, const MyCircleQueue &Queue_in)
+{
+	if (!Queue_in._pQueueArray || Queue_in.isEmpty())
+		return out;
+
+	int index = 0;
+	out << "Front: " << Queue_in._pQueueArray[Queue_in._iFront]._cData << '\n';
+	out << "Rear: " << Queue_in._pQueueArray[Queue_in._iRear]._cData << '\n';
+	for (int i = 0; i < Queue_in._iCurrentElementCount; ++i)
+	{
+		if (Queue_in._iFront == 0)
+		{
+			out << Queue_in._pQueueArray[i]._cData;
+		}
+		else
+		{
+			index = (i + Queue_in._iFront) % Queue_in._iMaxElementCount;
+			out << Queue_in._pQueueArray[index]._cData;
+		}		
+	}
+	out << '\n';
+	return out;
+}
+```
+
+</Editor>
+
+## 4. 연결 리스트로 구현한 큐
+
+큐의 특성을 그대로 연결 리스트에 적용하면 된다. 연결 리스트의 특성상 개수 제한이 없으므로 오버플로우가 발생하지 않는다.
+
+주의할 점은 노드의 링크가 <strong>Front에서 Rear 방향</strong>으로 이어진다는 것이다(<FigRef n={3} />). Enqueue하면 Rear에 추가하고, Dequeue하면 Front에서 추출한다.
+
+<Fig n={3} src="/img/notes/ds/queue/linkedqueue.png" caption="연결 리스트 큐 — Front와 Rear 두 포인터를 관리한다" max={720} />
+
+#### Enqueue
+
+- 큐가 비어 있을 때: Rear와 Front가 모두 새로 추가된 노드를 가리켜야 한다. 논리적으로 Front이자 Rear이기 때문이다.
+- 비어 있지 않을 때: 기존 Rear 노드의 링크가 새 노드를 가리키고, 새 노드가 곧 Rear 노드가 된다. 새 Rear 노드의 링크는 nullptr이어야 한다.
+
+#### Dequeue
+
+- 노드가 하나뿐일 때: 반환할 노드를 새로 동적 할당하여 포인터를 리턴하고, <strong>Rear와 Front 모두 nullptr을 가리키도록</strong> 해야 한다.
+- 일반적인 경우: 현재 Front 노드만 떼어 내고, Front가 `_FrontNode._pLink->_pLink`, 즉 다음 노드를 가리키게 하면 된다.
+
+<Editor file="MyLinkedQueue.cpp" fn="MyLinkedQueue::Dequeue()">
+
+```cpp
+QueueNode *MyLinkedQueue::Dequeue()
+{
+	if (isEmpty())
+		return nullptr;
+	
+	if (_iElementCount == 1)
+	{
+		QueueNode *pReturnNode = new QueueNode(*_FrontNode._pLink);
+
+		delete _FrontNode._pLink;
+		_FrontNode._pLink = nullptr;
+		_RearNode._pLink = nullptr;
+		DecreaseDataCount();
+		return pReturnNode;
+	}
+	QueueNode *pDeleteNode = _FrontNode._pLink;
+	QueueNode *pNextNode = pDeleteNode->_pLink;
+	QueueNode *pReturnNode = new QueueNode(*pDeleteNode);
+	pReturnNode->_pLink = nullptr;
+
+	_FrontNode._pLink = pNextNode;
+
+	delete pDeleteNode;
+	DecreaseDataCount();
+	return pReturnNode;
+}
+```
+
+</Editor>

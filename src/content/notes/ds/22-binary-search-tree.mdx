@@ -1,0 +1,290 @@
+---
+series: ds
+order: 22
+title: "이진 탐색 트리"
+date: "2025-04-21"
+topic: "탐색 트리"
+---
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 히프 복기
+
+이진 탐색 트리로 들어가기 전에 히프의 특성을 복기해 보자.
+
+1. 최대 트리, 최소 트리는 트리의 루트 노드에 최대값, 최소값이 들어가는 특징이 있다.
+2. 최대 트리, 최소 트리이면서 완전 이진 트리(포화 이진 트리 포함)여야 히프가 된다.
+3. delete는 루트 노드를 반환하며, 남은 노드들의 승격을 위해 삽입 정렬처럼 자식과 비교하며 자리를 찾아 내려가는 과정이 시행된다.
+4. insert는 완전 이진 트리의 속성을 지키기 위해 새로운 레벨 및 기존 레벨에서 왼쪽부터 채워 나가야 한다. 그래서 추가 후 부모 노드와 비교하며 타고 올라간다. 이 또한 삽입 정렬과 같은 방식으로 구현할 수 있다.
+5. 키 값에 따른 우선순위를 가질 수 있으므로 우선순위 큐 구현에 도움이 된다.
+
+## 2. 이진 탐색 트리의 특성
+
+이름에 탐색이 들어간 만큼 자료의 검색이 주된 기능이다. 자료 검색을 위해 이진 트리에 몇 가지 제약 사항을 추가한 트리를 말한다. 히프와의 차이점이라면, 히프는 최대값·최소값을 찾는 것이 주 목적이고 이진 탐색 트리는 <strong>특정 key 값을 찾는 것에 특화</strong>된 트리이다. 사용자의 아이디나 전화번호, 사용자 정보를 찾는 경우를 예로 들 수 있다. 효율적인 탐색을 위해 기존 이진 트리에 어떤 제약을 거는지 알아보자.
+
+1. 트리의 모든 노드는 <strong>유일한 키</strong>를 가진다.
+2. 왼쪽 서브트리에 있는 모든 노드의 키는 루트의 키보다 작다.
+3. 오른쪽 서브트리에 있는 모든 노드의 키는 루트의 키보다 크다.
+4. 왼쪽 서브트리와 오른쪽 서브트리도 모두 이진 탐색 트리이다.
+
+<Fig n={1} src="/img/notes/ds/binary-search-tree/bst.png" caption="이진 탐색 트리 예시와 중위 순회 결과" max={620} />
+
+히프는 중복되는 키가 여러 개 있어도 상관이 없었지만, 이진 탐색 트리는 각 노드마다 고유한 키가 있어야 한다. 즉 중복이 허용되지 않는다.
+
+<FigRef n={1} />을 보면 모든 서브트리가 이진 탐색 트리이며 모든 제약을 따른다. 왼쪽 서브트리의 키 값이 가장 작고, 현재 노드가 중간, 오른쪽 서브트리의 키 값이 크기 때문에 <strong>중위 순회 방식으로 나열하면 키 값의 크기 순서대로 열거</strong>된다는 특징이 있다.
+
+또한 같은 레벨에서 왼쪽에 있는 노드는 오른쪽에 있는 노드보다 클 수 없으므로, 레벨별로 보아도 왼쪽에서 오른쪽으로 정렬되어 있다. 그렇다면 원본 트리의 가장 왼쪽 노드는 각 레벨의 최소, 가장 오른쪽 노드는 각 레벨의 최대가 된다. 이 예시에서는 레벨이 깊어질수록 최소값은 더 작아지고 최대값은 더 커지는 패턴도 보인다.
+
+이러한 패턴 때문에, 만약 이 트리의 루트 노드인 30을 delete해야 한다면 <strong>왼쪽 서브트리의 최대값</strong>(24)과 <strong>오른쪽 서브트리의 최소값</strong>(34)이 교환될 최적의 후보가 된다.
+
+각 서브트리의 최대·최소값을 찾으려면 왼쪽 서브트리에서는 오른쪽 자식이 없을 때까지, 오른쪽 서브트리에서는 왼쪽 자식이 없을 때까지 타고 내려가야 한다. 이렇게 찾은 노드는 자식이 많아야 1개라서 빼내기 쉽다. 두 후보 중 하나를 골라야 한다면 자식 노드가 있는 쪽보다 자식 노드가 없는 쪽을 우선으로 교환할 노드로 선정하면 시행 횟수를 줄일 수 있다.
+
+- Successor: 오른쪽 서브트리의 최소값
+- Predecessor: 왼쪽 서브트리의 최대값
+
+#### 시행착오
+
+처음에는 탐색을 통해 삭제할 노드와 그 부모 노드를 저장하고, 부모 노드부터 삭제할 노드의 자식 노드 중 왼쪽 노드를 우선적으로 Stack에 push하며 진행했다.
+
+이후 pop을 하며 각 노드들을 연결하여 부모 노드에게 연결할 생각이었지만, 자식 노드가 많을 경우 승격이 많이 이루어지고, 승격 과정에서 규칙이 깨지는 경우 등 여러 케이스에 대한 예외 처리가 많이 필요해서 막혔었다.
+
+다시 말해 <strong>삭제될 노드를 루트로 하는 서브트리로 나누고, 각 서브트리의 최소값·최대값과 교환</strong>할 생각을 하지 못했다. 이 부분이 가장 중요한 것 같다.
+
+삭제하려는 노드에게 자식이 없거나 1개만 있다면 처리가 간단했지만, 2개인 경우 이진 탐색 트리의 규칙을 위배시키지 않는 것이 까다로웠다. 해답은 이진 트리의 규칙을 이용하는 것이었다. 항상 규칙이 있다면 이를 이용하여 최적의 결과를 내도록 하자.
+
+## 3. InsertNode 구현
+
+`Node_in`의 key 값을 기존 노드들과 대소 비교하여 LChild, RChild 방향을 결정한다(<FigRef n={2} />).
+
+<Fig n={2} src="/img/notes/ds/binary-search-tree/insert.png" caption="키 23 삽입 시 탐색 경로" max={560} />
+
+이때 대소 관계를 체크하며 같은 key 값이 있다면 중복된 key 값으로 이진 탐색 트리의 정책에 위반되니 실패 처리를 한다. 이외의 경우에는 빈 자리가 나올 때까지 타고 간다.
+
+빈 자리에 새 노드를 연결해 줘야 하는데, 양방향 링크가 아니라서 부모 노드의 정보가 필요하다. 그래서 대소 관계에 따른 자식 링크가 비어 있는지 미리 체크하여 `break`한 다음, `pSearchNode`가 부모 노드인 상태로 만들어 준다. 그 다음 단일 방향 링크 구조이기 때문에 부모 노드의 Link에 맞게 연결해 주면 끝이다.
+
+<Editor file="SearchBinaryTree.cpp" fn="CSearchBinaryTree::InsertNode(...)">
+
+```cpp
+bool CSearchBinaryTree::InsertNode(const SBTNode &Node_in)
+{
+	if (!m_pHeadNode)
+		return false;
+	
+	SBTNode *pSearchNode = m_pHeadNode;
+
+	while (pSearchNode)
+	{
+		if (Node_in < *pSearchNode)
+		{
+			if (!pSearchNode->m_pLLink)
+				break;
+			else
+				pSearchNode = pSearchNode->m_pLLink;
+		}
+		else if (Node_in > *pSearchNode)
+		{
+			if (!pSearchNode->m_pRLink)
+				break;
+			else
+				pSearchNode = pSearchNode->m_pRLink;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	SBTNode *pInsertNode = new SBTNode;
+	*pInsertNode = Node_in;
+	pInsertNode->m_pLLink = nullptr;
+	pInsertNode->m_pRLink = nullptr;
+
+	if (*pSearchNode < *pInsertNode)
+	{
+		pSearchNode->m_pRLink = pInsertNode;
+	}
+	else
+	{
+		pSearchNode->m_pLLink = pInsertNode;
+	}
+
+	++m_iElementCount;
+	return true;
+}
+```
+
+</Editor>
+
+## 4. DeleteNode 구현
+
+Delete는 고려해야 할 경우의 수가 많다. 일단 InsertNode와 같이 탐색을 통해 삭제할 노드와 그 부모 노드의 정보를 가져온다.
+
+InsertNode는 노드 하나로 가능했다. 논리적으로 부모 노드만 찾으면 새 노드는 동적 할당하여 연결만 하면 되기 때문이다. 반면 DeleteNode는 <strong>삭제해야 할 노드와 삭제당하는 노드의 부모를 함께</strong> 가지고 있어야만 한다.
+
+#### 자식 노드가 0개인 경우
+
+제일 간단한 작업이다. 자식 노드가 없으므로 부모와의 Link를 nullptr 처리하고 삭제하면 된다. 여기서 한 가지 더 생각해야 하는 부분은 삭제하는 노드가 루트 노드인가이다. 부모 노드가 nullptr이라면 부모가 없는 노드, 즉 루트 노드이기 때문에 그렇게 처리하면 된다.
+
+<Editor file="SearchBinaryTree.cpp" fn="CSearchBinaryTree::DeleteNode(...)">
+
+```cpp
+void CSearchBinaryTree::DeleteNode(const int &iKey_in)
+{
+	if (!m_pHeadNode)
+		return;
+
+	SBTNode *pDeleteNode = m_pHeadNode;
+	SBTNode *pDeleteParentNode = nullptr;
+	SBTNode *pChild = nullptr;
+	SBTNode *pPreccesorNode = nullptr;
+	SBTNode *pSuccesorNode = nullptr;
+
+	while (pDeleteNode)
+	{
+		if (pDeleteNode->m_iKey == iKey_in)
+			break;
+
+		pDeleteParentNode = pDeleteNode;
+
+		if (pDeleteNode->m_iKey < iKey_in)
+		{
+			pDeleteNode = pDeleteNode->m_pRLink;
+		}
+		else if (pDeleteNode->m_iKey > iKey_in)
+		{
+			pDeleteNode = pDeleteNode->m_pLLink;
+		}
+	}
+	
+	if (!pDeleteNode)
+		return;
+
+	if (!pDeleteNode->m_pLLink && !pDeleteNode->m_pRLink)
+	{
+		if (pDeleteParentNode)
+		{
+			if (pDeleteParentNode->m_pLLink == pDeleteNode)
+				pDeleteParentNode->m_pLLink = nullptr;
+			else if (pDeleteParentNode->m_pRLink == pDeleteNode)
+				pDeleteParentNode->m_pRLink = nullptr;
+		}
+		else
+		{
+			m_pHeadNode->m_pLLink = nullptr;
+			m_pHeadNode->m_pRLink = nullptr;
+			m_pHeadNode = nullptr;
+		}
+	}
+	// ... 코드 중략
+}
+```
+
+</Editor>
+
+#### 자식 노드가 2개인 경우
+
+<Fig n={3} src="/img/notes/ds/binary-search-tree/delete.png" caption="자식이 1개인 노드와 2개인 노드의 삭제" max={740} />
+
+제일 머리 아픈 작업이다. 삭제해야 할 노드의 자식 노드가 2개일 때는 자식들의 자식도 생각해야 한다. 자식들이 단말 노드라면 상관없지만, 규모 있는 트리의 중간을 삭제할 경우 삭제하는 노드를 루트로 하는 서브트리의 승격이 이루어져야 한다. 위에서 설명했듯이 왼쪽 서브트리에서 오른쪽으로 갈수록 루트에 근사한 최대값, 오른쪽 서브트리에서 왼쪽 Link를 탈수록 최소값에 다다른다. 즉, 삭제되는 노드와 교체할 만한 합당한 노드를 찾아 교환이 이루어진다(<FigRef n={3} />의 (b)).
+
+코드에서 `pSuccesorNode`는 교체될 노드로 <strong>왼쪽 서브트리의 최대값</strong>(정의상으로는 Predecessor)을 찾아가고, `pPreccesorNode`는 그 직전 부모를 가리킨다. 교체될 노드가 루트로 승격되며 빠졌을 때, 교체될 노드의 자식과 그 부모가 연결되어야 한다. 그래서 while문으로 탐색한 뒤 Link를 이어 주는 부분이 나온다.
+
+왼쪽 서브트리의 최대값, 즉 Right Link를 끝까지 타고 내려왔으므로 교체될 노드에는 오른쪽 자식이 없다고 볼 수 있다. 그래서 `pPreccesorNode`의 `m_pRLink`에 교체될 노드의 `m_pLLink`를 연결해 준다.
+
+이후 삭제할 노드의 두 자식을 가리키던 포인터를 교체될 노드에게 복사해 준다. 또한 삭제될 노드를 가리키던 부모 노드의 Link를 교체될 노드와 연결해 준다. 늘 체크하는 한 가지 더, ParentNode가 nullptr이라는 것은 루트 노드라는 뜻이다. 그래서 이때는 승격된 노드를 루트 노드로 만들어 준다.
+
+<Editor file="SearchBinaryTree.cpp" fn="CSearchBinaryTree::DeleteNode(...)">
+
+```cpp
+void CSearchBinaryTree::DeleteNode(const int &iKey_in)
+{
+	// ... 코드 중략
+	else if (pDeleteNode->m_pLLink && pDeleteNode->m_pRLink)
+	{
+		pPreccesorNode = pDeleteNode;
+		pSuccesorNode = pDeleteNode->m_pLLink;
+
+		while (pSuccesorNode->m_pRLink)
+		{
+			pPreccesorNode = pSuccesorNode;
+			pSuccesorNode = pSuccesorNode->m_pRLink;
+		}
+
+		pPreccesorNode->m_pRLink = pSuccesorNode->m_pLLink;
+		pSuccesorNode->m_pLLink = pDeleteNode->m_pLLink;
+		pSuccesorNode->m_pRLink = pDeleteNode->m_pRLink;
+
+		if (pDeleteParentNode)
+		{
+			if (pDeleteParentNode->m_pLLink == pDeleteNode)
+			{
+				pDeleteParentNode->m_pLLink = pSuccesorNode;
+			}
+			else
+			{
+				pDeleteParentNode->m_pRLink = pSuccesorNode;
+			}
+		}
+		else
+		{
+			m_pHeadNode = pSuccesorNode;
+		}
+	}
+	// ... 코드 중략
+}
+```
+
+</Editor>
+
+#### 자식 노드가 1개인 경우
+
+자식 노드가 1개일 때는 부모 노드와 자식 노드를 연결해 주기만 하면 되기 때문에 간단하다(<FigRef n={3} />의 (a)).
+
+탐색을 통해 가져온 부모 노드가 존재한다면 중간 삭제이므로 삭제할 노드의 자식과 연결해 준다. 만약 ParentNode가 없다면 그 자식 노드가 루트 노드가 된다.
+
+<Editor file="SearchBinaryTree.cpp" fn="CSearchBinaryTree::DeleteNode(...)">
+
+```cpp
+void CSearchBinaryTree::DeleteNode(const int &iKey_in)
+{
+	// ... 코드 중략
+	else
+	{
+		if (pDeleteNode->m_pLLink)
+		{
+			pChild = pDeleteNode->m_pLLink;
+		}
+		else
+		{
+			pChild = pDeleteNode->m_pRLink;
+		}
+
+		if (pDeleteParentNode)
+		{
+			if (pDeleteParentNode->m_pLLink == pDeleteNode)
+			{
+				pDeleteParentNode->m_pLLink = pChild;
+			}
+			else
+			{
+				pDeleteParentNode->m_pRLink = pChild;
+			}
+		}
+		else
+		{
+			m_pHeadNode = pChild;
+		}
+	}
+	// ... 코드 중략
+}
+```
+
+</Editor>
+
+## 5. 정리
+
+- 이진 탐색 트리는 키가 유일하고, `왼쪽 < 루트 < 오른쪽` 규칙이 모든 서브트리에서 성립한다.
+- 중위 순회하면 키 값이 오름차순으로 나열된다.
+- 삽입은 빈 자리까지 내려가 부모의 링크에 연결한다.
+- 삭제는 자식 수(0, 1, 2개)에 따라 나뉘며, 자식이 2개일 때는 왼쪽 서브트리의 최대값(또는 오른쪽 서브트리의 최소값)으로 교체한다.

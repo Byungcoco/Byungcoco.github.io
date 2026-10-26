@@ -1,0 +1,231 @@
+---
+series: ds
+order: 26
+title: "B-트리 구현"
+date: "2025-05-04"
+topic: "탐색 트리"
+---
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 구현 전 정리
+
+구현하기 전에 다원 탐색 트리의 특성을 정리해 보자.
+
+- 하나의 노드에는 m개의 서브트리와 m-1개의 자료를 가질 수 있다.
+- 이진 탐색 트리와 유사하게 자료 Key 값 기준 왼쪽은 작은 것, 오른쪽은 큰 것이다.
+- 그래서 서브트리는 `Key(i) ≤ (i번째 서브트리 내의 모든 키 값) < Key(i+1)`에 해당하는 범위의 자료를 가진다.
+
+어찌 됐건 균형을 잡지 않으면 자료 쏠림 현상이 발생하고 높이가 무수히 커지며 불균형이 생긴다. 이를 해결하기 위해 B-트리에는 균형을 유지하기 위한 제약이 존재한다.
+
+- 자료의 추가는 Leaf(Terminal) 노드에서 이루어지게 한다.
+- 균형 유지를 위해 내부 노드의 서브트리 개수는 `⌈m/2⌉ ≤ X ≤ m`을 만족한다.
+- 서브트리가 없는 Leaf 노드의 자료 개수는 `⌈m/2⌉ - 1 ≤ X ≤ m - 1`을 만족해야 한다.
+- 위 제약을 따르면 모든 단말 노드는 같은 레벨에 존재하게 된다.
+
+그래서 자료를 추가할 때는
+
+- 자료의 개수가 m-1개를 넘어가면 <strong>분할</strong>을 한다.
+
+자료를 삭제할 때는
+
+- 형제 노드의 자료 개수가 `⌈m/2⌉`개 이상이라면 한 개를 줄여도 최소 개수 조건을 만족하기 때문에 <strong>빌려오는 로직</strong>을 수행한다.
+- 이때 형제 노드의 자료를 바로 가져오는 것이 아니라, <strong>부모 노드의 자료를 가져오고 그 빈자리를 형제 노드의 자료로 채운다</strong>.
+  - left borrow: 부모의 자료를 가져오고, 왼쪽 형제의 가장 우측 자료를 부모 자리로 올린다.
+  - right borrow: 부모의 자료를 가져오고, 오른쪽 형제의 가장 좌측 자료를 부모 자리로 올린다.
+- borrow 조건을 만족하지 못하면 <strong>merge</strong>를 진행한다.
+  - 우선 자료가 부족한 노드를 "오른쪽 서브트리"로 가지는 "왼쪽" 부모 자료를 체크한다.
+  - 그게 불가능하면 자료가 부족한 노드를 "왼쪽 서브트리"로 가지는 "오른쪽" 부모 자료를 체크한다.
+
+## 2. 노드 구조와 삽입
+
+노드는 자료 배열과 자식 포인터 배열을 가진다. 원래 자료는 m-1개면 되지만, 분할을 편하게 하려고 <strong>자료 배열을 m칸, 자식 배열을 m+1칸</strong>으로 잡았다. 마지막 자료 칸은 넘친 자료를 잠깐 받아 두는 여분 공간이다(<FigRef n={1} />). 코드에서 m은 `SUBTREEMAX`이다.
+
+<Fig n={1} src="/img/notes/ds/b-tree/node-layout.png" caption="노드의 자료·자식 배열과 분할" max={720} />
+
+삽입은 루트부터 내려가며 경로를 Stack에 쌓고, Stack의 마지막 노드(말단 노드)에 자료를 넣은 뒤 `SplitCheck`로 균형 유지 연산을 한다.
+
+<Editor file="MyBTree.cpp" fn="CMyBTree::InsertData(...)">
+
+```cpp
+bool CMyBTree::InsertData(const int& iKey_in, const char cValue_in)
+{
+	if (!m_pHeadNode)
+	{
+		m_pHeadNode = MakeNewNode(iKey_in, cValue_in);
+		return true;
+	}
+
+	// 1. 탐색
+	LinkedListStack MainStack;
+	BTNode* pSearchNode = m_pHeadNode;
+	while (pSearchNode)
+	{
+		int iCount(0);
+		for (; iCount < pSearchNode->m_iElementCount; ++iCount)
+		{
+			if (iKey_in < pSearchNode->m_DataArray[iCount].m_iKey)
+				break;
+			else if (iKey_in == pSearchNode->m_DataArray[iCount].m_iKey)
+			{
+				std::cout << "CMyBTree::InsertData(), 해당 키값의 자료가 이미 존재합니다.\n";
+				return false;
+			}
+		}
+		MainStack.Push({ pSearchNode, });
+		pSearchNode = pSearchNode->m_pChildNodeArray[iCount];
+	}
+
+	// 2. 자료 추가
+	// Stack에 마지막에 들어온 노드는 말단 노드
+	pSearchNode = MainStack.Peek()->_pData;
+	// 원래 Data는 m-1인데, 스플릿 편하게 할려고 m개 만큼 배정되어있음
+	// 즉, data배열의 (SUBTREEMAX - 1)번째 index는 곧 split을 위한 여분공간
+	// -0-1-2-3-B-
+	// 때문에 Node는 m+1, Data는 m
+	pSearchNode->m_DataArray[pSearchNode->m_iElementCount] = { iKey_in,cValue_in };
+	++pSearchNode->m_iElementCount;
+
+	// 3. 균형 유지 연산
+	SplitCheck(MainStack);
+	// 추가 후 균형 유지 연산
+	return false;
+}
+```
+
+</Editor>
+
+`SplitCheck`는 Stack을 pop하며 노드를 정렬하고, 자료가 m개로 꽉 찼다면 중간값을 기준으로 오른쪽 절반을 새 노드로 옮긴다. 중간값은 부모가 있으면 부모의 자료 배열에 추가하고, 부모가 없으면(루트였다면) 새 루트를 만든다. 부모에 추가된 자료는 다음 pop에서 부모가 정렬되며 제자리를 찾고, 부모도 넘치면 같은 과정이 반복된다.
+
+<Editor file="MyBTree.cpp" fn="CMyBTree::SplitCheck(...)">
+
+```cpp
+void CMyBTree::SplitCheck(LinkedListStack& Stack)
+{
+	if (Stack.isEmpty())
+		return;
+
+	ListStackNode* pPopNode = nullptr;
+	BTNode* pCheckedNode = nullptr;
+	while (!Stack.isEmpty())
+	{
+		pPopNode = Stack.Pop();
+		pCheckedNode = pPopNode->_pData;
+		Sort(pCheckedNode->m_DataArray, pCheckedNode->m_pChildNodeArray, pCheckedNode->m_iElementCount);
+		// 꽉참
+		if (pCheckedNode->m_iElementCount >= SUBTREEMAX)
+		{
+			// Split
+			// -1-2-3-4-5-
+			//			-3-(새노드)
+			//-1-2-(기존노드)		-4-5-(새노드)
+			int iStart(0);
+			int iEnd(pCheckedNode->m_iElementCount - 1);
+			int iCenter = GetCenterIndex(iStart, iEnd);
+
+			//RightNode 생성
+			BTNode* pRightNode = new BTNode;
+			for (int i = iCenter + 1, j = 0; i <= iEnd; ++i, ++j)
+			{
+				pRightNode->m_DataArray[j] = pCheckedNode->m_DataArray[i];
+				pRightNode->m_pChildNodeArray[j + 1] = pCheckedNode->m_pChildNodeArray[i + 1];
+				++pRightNode->m_iElementCount;
+				pCheckedNode->m_DataArray[i] = BTData();	// 복사 후 초기화
+				pCheckedNode->m_pChildNodeArray[i + 1] = nullptr;
+				--pCheckedNode->m_iElementCount;
+			}
+			pRightNode->m_pChildNodeArray[0] = pCheckedNode->m_pChildNodeArray[pCheckedNode->m_iElementCount];
+
+			BTNode* pParentNode = nullptr;
+			if (!Stack.isEmpty())
+			{
+				pParentNode = Stack.Peek()->_pData;
+			}
+			//HeadNode 생성
+			// 헤드노드인 경우 새 부모가 필요함
+			if (!pParentNode)
+			{
+				BTNode* pParentNode = MakeNewNode(pCheckedNode->m_DataArray[iCenter].m_iKey,
+												pCheckedNode->m_DataArray[iCenter].m_cValue);
+				pParentNode->m_pChildNodeArray[0] = pCheckedNode;
+				pParentNode->m_pChildNodeArray[1] = pRightNode;
+				m_pHeadNode = pParentNode;
+			}
+			// 부모가 있는 경우
+			else
+			{
+				pParentNode->m_DataArray[pParentNode->m_iElementCount] = pCheckedNode->m_DataArray[iCenter];
+				// 가장 오른쪽 노드
+				pParentNode->m_pChildNodeArray[pParentNode->m_iElementCount+1] = pRightNode;
+				++pParentNode->m_iElementCount;
+			}
+			// pSearchNode(LeftNode)[iCenter] 초기화
+			pCheckedNode->m_DataArray[iCenter] = BTData();
+			--pCheckedNode->m_iElementCount;
+		}
+
+		delete pPopNode;
+	}
+}
+```
+
+</Editor>
+
+## 3. 삭제와 빌리기
+
+삭제는 탐색 경로를 Stack에 쌓은 뒤, 내부 노드의 자료라면 왼쪽 서브트리의 최대값과 교체하고, 말단 노드라면 자료를 당겨 지운다. 그다음 Stack을 pop하며 자료 개수가 `⌈m/2⌉ - 1`보다 적은 노드에 대해 왼쪽 빌리기 → 오른쪽 빌리기 → 병합 순서로 균형 유지 연산을 한다.
+
+빌릴 수 있는지는 형제 노드의 자료 개수가 최소 개수보다 많은지로 판단한다.
+
+<Editor file="MyBTree.cpp" fn="CMyBTree::CanBorrow(...)">
+
+```cpp
+bool CMyBTree::CanBorrow(BTNode* pParentNode, const int& iIndex)
+{
+	if (pParentNode->m_pChildNodeArray[iIndex])
+	{
+		if (pParentNode->m_pChildNodeArray[iIndex]->m_iElementCount > Half_Rounding(SUBTREEMAX) - 1)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+```
+
+</Editor>
+
+삭제 과정은 경우의 수가 많아 필기가 힘들다. 나머지는 코드를 보자.
+
+## 4. B-트리의 변형
+
+B-트리의 변형인 B+ 트리와 B* 트리가 많이 사용된다.
+
+#### B+ 트리
+
+B-트리에서 순차적으로 접근하려면 중위 순회가 필요하다. 하지만 트리 구조 내부에서 오르락내리락하는 과정이 다소 복잡하다. 그래서 순차 접근에 대한 해결책으로 B+ 트리가 제시되었다.
+
+1. 모든 내부 노드는 키 값만 저장하고, 각 자료의 데이터는 <strong>오직 말단 노드에 저장</strong>된다. 그래서 말단 노드에 저장된 키와 동일한 키를 저장하는 내부 노드도 존재한다.
+2. 각 말단 노드에는 다음 형제 노드에 대한 포인터가 존재한다.
+
+<Fig n={2} src="/img/notes/ds/b-tree/bplus.png" caption="B+ 트리의 내부 키와 말단 연결" max={680} />
+
+이런 특성으로 키 값 비교를 통해 말단 노드에 빠르게 접근하고, 해당 데이터들을 순차적으로 뽑아내는 데 유리한 구조이다(<FigRef n={2} />). 말단에 모든 데이터가 있고, 말단끼리 링크로 이어져 있기 때문이다.
+
+#### B* 트리
+
+m이 5 이상인 B-트리가 주로 사용되는데, 이렇게 큰 B-트리를 운영하면 노드의 약 50%가 비어 있게 되는 메모리 낭비가 발생할 수 있다. 이 문제를 보완하기 위해 다음 특성을 가진다.
+
+1. 루트 노드가 아닌 노드는 최대 저장 공간의 2/3 이상의 자료가 저장되어야 한다.
+2. 자료가 넘치는 오버플로가 생기면 일단 형제 노드들로 재분배하고, 모든 형제 노드가 가득 찼을 때 분할한다.
+
+<Fig n={3} src="/img/notes/ds/b-tree/bstar.png" caption="같은 삽입에서 B-트리의 분할과 B* 트리의 재분배" max={830} />
+
+<FigRef n={3} />처럼 B-트리는 25를 추가하면 분할이 일어나지만, B* 트리는 형제 노드에게 자료를 "분배"한다. 이런 방식으로 메모리 공간을 알뜰하게 쓴다는 뜻이다.
+
+## 5. 정리
+
+- 자료 배열을 m칸으로 잡아 넘친 자료를 임시로 받고, 중간값을 올리는 방식으로 분할을 구현했다.
+- 삭제 후 부족한 노드는 왼쪽 빌리기 → 오른쪽 빌리기 → 병합 순서로 처리한다.
+- B+ 트리는 순차 접근, B* 트리는 공간 효율을 위한 변형이다.

@@ -1,0 +1,201 @@
+---
+series: ds
+order: 5
+title: "덱과 큐 시뮬레이션"
+date: "2025-04-14"
+topic: "선형 자료구조"
+---
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 덱의 개념
+
+덱은 두 개의 끝을 가지는 큐, Double Ended Queue를 줄인 말이다. 선형 자료의 양쪽 끝에서 삽입과 반환이 모두 가능한 자료구조이다(<FigRef n={1} />). 그래서 큐와 스택의 기능을 합친 자료구조로도 설명된다.
+
+<Fig n={1} src="/img/notes/ds/deque/ops.png" caption="덱의 네 연산과 스택 · 큐 연산의 대응" max={720} />
+
+스택의 Top은 선형으로 연결된 자료들의 제일 뒤를 의미하므로, 큐와 덱의 Rear와 개념적으로 같다.
+
+<div class="tbl">
+
+| 위치 | 연산 | 덱 | 스택 | 큐 |
+|---|---|---|---|---|
+| 앞(Front) | 추가 | `insertFront` | 없음 | 없음 |
+| 앞(Front) | 반환 | `deleteFront` | 없음 | Dequeue |
+| 뒤(Rear) | 추가 | `insertRear` | Push | Enqueue |
+| 뒤(Rear) | 반환 | `deleteRear` | Pop | 없음 |
+
+</div>
+
+그래서 Rear에서 이뤄지는 추가/반환은 스택의 Push, Pop과 같고, Front에서의 반환은 큐의 Dequeue와 같다. 여기에 큐와 스택에는 없던 <strong>InsertFront</strong> 연산이 추가된다.
+
+이런 특성으로 덱은 스택과 큐를 일반화한 포괄적인 자료구조로 설명된다. "A-Steal 스케줄링 알고리즘"처럼 덱의 포괄적인 기능이 요구되는 경우도 있다.
+
+## 2. 연결 리스트로 구현한 덱
+
+원형 연결 리스트를 헤드 포인터로 구현했었는데, 덱은 <strong>이중 연결 리스트</strong>이면서 Front와 Rear를 가리키는 포인터 2개를 들고 있다.
+
+#### InsertFront / InsertRear
+
+- 덱이 비어 있을 때 Insert하면, 큐와 마찬가지로 Rear이자 Front인 노드가 하나의 새 노드를 가리키게 되고, 새 노드의 LLink와 RLink는 모두 nullptr이다.
+- 비어 있지 않을 때는 새 노드의 RLink가 기존 Front 노드를, 기존 Front 노드의 LLink가 새 노드를 가리키게 한 뒤, 마지막으로 `_pFrontNode`를 새 노드로 갱신한다(<FigRef n={2} />).
+
+InsertRear도 방향만 바뀔 뿐 수행 로직은 같다.
+
+<Fig n={2} src="/img/notes/ds/deque/insertfront.png" caption="InsertFront — 링크 두 개를 잇고 Front를 갱신" max={720} />
+
+<Editor file="MyLinkedDeque.cpp" fn="MyLinkedDeque::InsertFront(...)">
+
+```cpp
+bool MyLinkedDeque::InsertFront(const DequeNode &Node_in)
+{
+	DequeNode *pNewNode = new DequeNode(Node_in);
+
+	if (IsEmpty())
+	{
+		_pRearNode = pNewNode;
+		_pFrontNode = pNewNode;
+		pNewNode->_pLLink = nullptr;
+		pNewNode->_pRLink = nullptr;
+	}
+	else
+	{
+		pNewNode->_pRLink = _pFrontNode;
+		pNewNode->_pLLink = nullptr;
+		_pFrontNode->_pLLink = pNewNode;
+		_pFrontNode = pNewNode;
+	}
+
+	IncreaseDataCount();
+	return true;
+}
+```
+
+</Editor>
+
+#### DeleteFront / DeleteRear
+
+- 일반적인 경우(노드가 2개 이상) Front 노드를 삭제할 때는, 다음 노드(`_pFrontNode->_pRLink`)의 LLink를 nullptr로 끊고 Front 노드를 삭제한 뒤 다음 노드로 `_pFrontNode`를 갱신한다.
+- 노드가 하나 남았을 때는 큐에서와 똑같이 Rear와 Front가 마지막 남은 노드를 가리키고 있으므로, <strong>둘 다 nullptr로 처리</strong>해야 한다.
+
+DeleteRear도 같은 로직으로 처리하고, Peek는 원소가 0개가 아니라면 단순히 반환한다.
+
+<Editor file="MyLinkedDeque.cpp" fn="MyLinkedDeque::DeleteFront()">
+
+```cpp
+DequeNode *MyLinkedDeque::DeleteFront()
+{
+	if (IsEmpty())
+		return nullptr;
+	if (_iElementCount == 1)
+	{
+		DequeNode *pReturnNode = new DequeNode(*_pFrontNode);
+		pReturnNode->_pLLink = nullptr;
+		pReturnNode->_pRLink = nullptr;
+
+		delete _pFrontNode;
+		_pFrontNode = nullptr;
+		_pRearNode = nullptr;
+		DecreaseDataCount();
+		return pReturnNode;
+	}
+	DequeNode *pReturnNode = new DequeNode(*_pFrontNode);
+	pReturnNode->_pRLink = nullptr;
+	pReturnNode->_pLLink = nullptr;
+
+	DequeNode *pDeleteNode = _pFrontNode;
+	DequeNode *pNextNode = _pFrontNode->_pRLink;
+	pNextNode->_pLLink = nullptr;
+
+	delete pDeleteNode;
+	_pFrontNode = pNextNode;
+	DecreaseDataCount();
+	return pReturnNode;
+}
+```
+
+</Editor>
+
+## 3. 큐의 응용: 시뮬레이션
+
+시뮬레이션은 현실 시스템에 대한 모델을 설계하고, 컴퓨터 기반의 실험으로 시스템의 현상을 예측하는 과정을 말한다. 예를 들어 고속도로에 톨게이트를 추가했을 때 자동차 평균 대기 시간이 얼마나 줄어드는지, 공항 활주로를 늘렸을 때 비행기 이착륙 대기 시간이 얼마나 줄어드는지 등을 시뮬레이션할 수 있다.
+
+실제 공항에서는 긴급 이착륙해야 하는 비행기가 생길 수 있다. 이렇게 우선순위가 높은 고객이나 제품을 먼저 처리해야 하는 경우를 반영하려면, 우선순위에 따라 처리 순서가 바뀌는 <strong>우선순위 큐</strong>가 필요하다.
+
+여기서는 우선순위 큐를 사용하지 않는 간단한 예로 은행원이 업무를 처리하는 모델을 살펴본다. 고객은 특정 확률 분포에 따라 은행에 도착하고, 먼저 도착한 다른 고객들의 업무가 끝날 때까지 대기한 뒤, 은행원의 서비스를 받고 떠난다.
+
+> 고객의 평균 대기 시간을 줄여서 만족도를 높이고 싶다. 은행원을 한 명 더 추가하면 고객의 평균 대기 시간이 얼마나 줄어들까?
+
+이 질문을 위 모델을 바탕으로 컴퓨터에서 실험하면, 은행원이 추가되었을 때의 평균 대기 시간을 미리 예측할 수 있다. 이런 시뮬레이션 결과는 현실에서 의사 결정을 내릴 때 중요한 판단 근거로 쓰인다.
+
+#### 시간 기반 처리
+
+시스템 시간을 일정하게 증가시키면서, 각 시간마다 발생하는 이벤트를 큐에 저장하고 처리하는 방식이다. 시간은 0부터 최대 10까지 1씩 증가하고, 0, 2, 4, 6, 8에 총 5명의 고객이 도착한다. 고객마다 고유한 서비스 시간(은행 업무 처리 시간)도 있다.
+
+그런데 은행원의 수는 한정되어 있으므로 고객이 도착했다고 바로 서비스를 받을 수는 없다. 앞선 고객의 서비스가 끝나야 한다. 따라서 도착 시각과 서비스 시간이 고객별로 주어지면, 대기열 상황에 따라 서비스 시작 시각이 결정된다.
+
+첫 번째 고객은 도착하자마자 서비스를 시작해 3에 끝난다. 두 번째 고객은 2에 도착하지만 1만큼 기다렸다가 3에 시작하고, 서비스 시간 2가 지나 5에 끝난다(<FigRef n={3} />).
+
+<Fig n={3} src="/img/notes/ds/deque/timeline.png" caption="은행원 1명일 때 고객별 대기와 서비스" max={740} />
+
+<div class="tbl">
+
+| 고객 | 도착 시각 (a) | 서비스 시간 (b) | 시작 시각 (c) | 종료 시각 (c + b) | 대기 시간 (c − a) |
+|---|---|---|---|---|---|
+| 1 | 0 | 3 | 0 | 3 | 0 |
+| 2 | 2 | 2 | 3 | 5 | 1 |
+| 3 | 4 | 1 | 5 | 6 | 1 |
+| 4 | 6 | 1 | 6 | 7 | 0 |
+| 5 | 8 | 3 | 8 | − | 0 |
+
+</div>
+
+눈여겨볼 점은 시스템 시간이 10까지이므로, 5번째 고객은 서비스가 끝나지 않은 상태에서 시뮬레이션이 종료된다는 것이다. 그래서 종료 시각을 계산할 수 없다.
+
+시스템에서 처리되는 고객은 도착 시각, 서비스 시간, 시작 시각, 종료 시각 등의 속성을 가지며, 이 중 도착 시각과 서비스 시간은 미리 주어졌다고 가정한다. 이미 기다리는 고객이 있으면 그 고객들이 먼저 처리되므로, 대기 큐에 어떤 고객이 얼마나 들어 있느냐에 따라 결과가 달라진다. 또한 시뮬레이션이 시작될 때 도착 시각이 정해진 고객들은 시간 순서대로 <strong>고객 도착 큐</strong>에 미리 모두 들어가 있다고 가정한다.
+
+<Fig n={4} src="/img/notes/ds/deque/flow.png" caption="도착 큐 → 대기 큐 → 서비스 → 완료" max={720} />
+
+시간마다 다음 세 단계를 처리한다(<FigRef n={4} />).
+
+1. <strong>고객 도착</strong>: 도착 큐에서 Peek로 Front 고객이 현재 시각에 도착했는지 판단한다. 도착 시각이 현재 시각과 같다면 도착 큐에서 제거하고 대기 큐에 추가한다.
+2. <strong>서비스 종료</strong>: 서비스를 받고 있는 고객의 서비스 시간이 끝났는지 점검한다. 끝났다면 Dequeue하며 메모리를 해제하는데, 해제 전에 도착 시각, 서비스 시간, 시작 시각, 종료 시각 정보를 시뮬레이션 결과 계산에 활용한다.
+3. <strong>서비스 시작</strong>: 서비스가 끝나 은행원이 비면 대기 큐의 Front 고객을 꺼내 서비스를 시작한다. 대기 큐의 고객은 자신보다 먼저 도착한 고객들의 서비스가 모두 끝난 다음에야 서비스를 받을 수 있다.
+
+이렇게 도착한 시각(대기 큐에 Enqueue)과 실제 서비스가 시작된 시각(대기 큐에서 Dequeue) 사이에 차이가 생기고, 이 시뮬레이션으로 고객 대기 큐에서 걸리는 시간을 예측할 수 있다. 직접 구현한 코드에서는 은행원을 2명으로 두고(서비스 중인 고객이 2명 미만이면 대기 고객을 꺼냄) 같은 과정을 돌렸다.
+
+<Editor file="SimBank.cpp" fn="SimBank::StartSimulation()">
+
+```cpp
+void SimBank::StartSimulation()
+{
+	// 도착시간에 맞춰서 Dequeue
+	// 도착시간에 맞춰서 Dequeue된거 Enqueue
+	// Service Queue에 peek이 존재하지않으면 서비스시간에 Dequeue
+	// 고객 서비스시간이 끝나면 Dequeue
+	SimQueueNode *pServiceEndCustomer = nullptr;
+	while (_iCurrentTime < _iTotalServiceTime)
+	{
+		if (_pArrivalQueue->Peek())
+		{
+			ProcessArrival();
+		}
+
+		if (_pServiceQueue->Peek())
+		{
+			ServiceEnd();	
+		}
+		
+		if (_pWaitQueue->Peek())
+		{
+			ServiceStart();
+		}
+		++_iCurrentTime;
+	}
+
+	PrintAfterServiceEnded();
+}
+```
+
+</Editor>

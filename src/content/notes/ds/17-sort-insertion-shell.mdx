@@ -1,0 +1,133 @@
+---
+series: ds
+order: 17
+title: "삽입 정렬과 셸 정렬"
+date: "2025-04-28"
+topic: "삽입 정렬"
+---
+import Fig from '../../../components/Fig.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 삽입 정렬 (Insertion Sort)
+
+삽입 정렬은 정렬할 자료의 위치를 찾아 삽입하는 정렬 방식이다. 앞쪽은 이미 정렬된 구간으로 두고, 다음 자료를 Key로 꺼내 정렬된 구간과 비교하며 타고 내려가 제자리에 끼운다.
+
+<Fig n={1} src="/img/notes/ds/sort-insertion-shell/insertion.png" caption="Key 10보다 큰 값을 한 칸씩 뒤로 밀고, 빈 자리에 10을 삽입한다" max={600} />
+
+<Editor file="InsertSort.h" fn="InsertSort::Sorting()">
+
+```cpp
+template<typename T>
+class InsertSort : public MySort<T>
+{
+public:
+	// ... 코드 중략
+
+	virtual void Sorting() final
+	{
+		T *pData = MySort<T>::GetData();
+		if (!pData)
+			return;
+		const unsigned int iSize = MySort<T>::GetSize();
+		if (iSize < 2)
+			return;
+		T key;
+
+		for (int iOuter = 0; iOuter < iSize - 1; ++iOuter)
+		{
+			key = pData[iOuter + 1];
+			int iInner(0);
+			for (iInner = iOuter+1; iInner > 0; --iInner)
+			{
+				if (key > pData[iInner - 1])
+					break;
+
+				pData[iInner] = pData[iInner - 1];
+			}
+			pData[iInner] = key;
+		}
+
+		MySort<T>::PrintMyArray();
+	}
+};
+```
+
+</Editor>
+
+삽입 정렬은 <strong>정렬 전 자료의 상태에 따라 효율성 차이가 무척 큰</strong> 정렬 알고리즘이다.
+
+- 최선: O(n)
+- 평균 및 최악: O(n²)
+
+<strong>기존 자료가 어느 정도 정렬되어 있을 때 효율적</strong>이다. 또한 <strong>정렬의 안정성도 유지</strong>된다.
+
+## 2. 셸 정렬 (Shell Sort)
+
+기존 자료를 일정한 간격에 의해 여러 개의 부분집합으로 나누고, 각 부분집합에 대해 삽입 정렬을 수행한다. 간격을 점점 줄여 가며 반복하고, 마지막에는 간격 1, 즉 일반 삽입 정렬로 마무리한다.
+
+<Fig n={2} src="/img/notes/ds/sort-insertion-shell/shell.png" caption="간격 4 → 2 → 1로 줄이며 같은 부분집합끼리 삽입 정렬한다" max={790} />
+
+얼핏 보면 일반 스왑을 하면 되는데 왜 삽입 정렬을 진행하는 것인가 싶지만, 셸 정렬은 부분집합의 수가 줄어들수록, 단계가 지날수록 자료가 점점 정렬된 상태가 되어 삽입 정렬의 효율이 증가한다. 기억해 두자.
+
+기존의 오해: 셸 정렬이 구간을 나눈 뒤 그 구간에서 일일이 삽입 정렬이 시행되는 줄 알고, Swap이 좀 더 효율적이지 않을까 싶었다. 그런데 구현을 해 보니 기존 삽입 정렬과 같은 방식이지만 Key 값 비교의 폭을 간격만큼 건너뛰며 시행하기 때문에 훨씬 값싸다. 이 부분 잘 기억해 두자.
+
+<Editor file="CMySort.cpp" fn="CMySort::ShellSort()">
+
+```cpp
+void CMySort::ShellSort()
+{
+	// 크기가 8이라면?
+	// 4 -> 2 -> 1
+	for (int iInterver = m_iSize / 2; iInterver >= 1; iInterver /= 2)
+	{
+		// 0~3 -> 0~1 -> 0
+		for (int i = 0; i < iInterver; ++i)
+		{
+			ShellInstertionSort(i, m_iSize - 1, iInterver);
+		}
+	}
+}
+```
+
+</Editor>
+
+<Editor file="CMySort.cpp" fn="CMySort::ShellInstertionSort(...)">
+
+```cpp
+void CMySort::ShellInstertionSort(const int &iStart, const int &iEnd, const int &iInterver)
+{
+	for (int iOuter = iStart + iInterver; iOuter <= iEnd; iOuter += iInterver)
+	{
+		int iKey = m_pArray[iOuter];
+		int iInner(0);
+		for (iInner = iOuter - iInterver; iInner >= iStart; iInner -= iInterver)
+		{
+			if (iKey > m_pArray[iInner])
+			{
+				break;
+			}
+
+			m_pArray[iInner + iInterver] = m_pArray[iInner];
+		}
+		m_pArray[iInner + iInterver] = iKey;
+
+		Print();
+	}
+}
+```
+
+</Editor>
+
+구현을 보면 가장 바깥에서 간격(`iInterver`)을 넣어 주고, 가장 안쪽 함수인 `ShellInstertionSort`에서 삽입 정렬이 시행된다. 기존 삽입 정렬 방식과 다른 점은 간격 값이 큰 경우에도 범위를 침범하지 않도록 하는 것이다.
+
+기존에는 +1, -1 구간의 삽입 정렬이라 가능했던 로직이, 여기에서는 만약 가장 안쪽에서 `iInner`가 2이고 간격이 4라면 `m_pArray[-2]`에 접근하게 된다. 이를 방지하기 위해 `iInner`는 `iOuter`에서 간격만큼 뺀 값부터 `iStart`까지만 내려가도록 하고, 마지막에 그 차이인 `iInterver`를 더한 자리에 Key를 넣는 식으로 해결했다.
+
+## 3. 정리
+
+일정한 간격으로 부분집합을 나누고 부분집합에 대한 삽입 정렬을 수행하는 정렬 방식으로, 기본 삽입 정렬의 특징인 "정렬 전 자료가 어느 정도 정렬되어 있으면 효율이 좋다"는 점을 활용한다. 마지막 간격 1이 되었을 때는 이미 부분집합 단위로 어느 정도 정렬된 상태이기 때문이다. 그래서 기존 삽입 정렬보다 우수한 효율성을 가진다.
+
+- 최선: O(n)
+- 평균: O(n<sup>1.25</sup>)
+- 최악: O(n²)
+
+부분집합 단위로 삽입 정렬을 시행하다 보니 <strong>정렬의 안정성은 유지되지 않는다.</strong>

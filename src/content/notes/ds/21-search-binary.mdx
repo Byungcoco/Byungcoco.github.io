@@ -1,0 +1,89 @@
+---
+series: ds
+order: 21
+title: "이진 검색"
+date: "2025-04-29"
+topic: "정렬된 배열 검색"
+---
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+
+## 1. 개념
+
+이진 검색은 미리 정렬된 자료를 대상으로 검색 범위를 <strong>반으로 줄이는 과정을 반복</strong>하여 검색 키를 찾는다. 자료 배열의 가운데에 있는 자료의 키 값과 비교하여, 찾으려는 자료가 배열의 왼쪽에 있는지 오른쪽에 있는지 판단한다. 이게 가능한 이유는 자료가 오름차순이나 내림차순으로 <strong>정렬되어 있기 때문</strong>이다.
+
+이러한 분할과 비교 연산을 반복하여 검색 대상이 되는 자료를 찾는다. 그래서 이진(Binary)이라는 이름이 붙었다.
+
+범위를 둘로 나누어 위치를 좁혀 가기 때문에 이분 검색이라 불리기도 한다. 위치를 예측해 접근한다는 점에서 보간 검색과 함께 언급되기도 하지만, 보간 검색은 키 값의 분포로 위치를 추정하고 이진 검색은 항상 가운데를 고른다는 차이가 있다.
+
+## 2. 검색 과정
+
+배열 `10, 20, 50, 60, 70, 80`에서 검색 키 60을 찾는 과정을 따라가 보자(<FigRef n={1} />).
+
+<Fig n={1} src="/img/notes/ds/search-binary/steps.png" caption="검색 키 60을 찾는 이진 검색의 세 단계" max={680} />
+
+처음에는 중간 위치가 크기의 반인 3이라고 생각했지만 그렇지 않다. 중간 위치는 `(시작 위치 + 마지막 위치) / 2`로 구하므로 `(0 + 5) / 2 = 2.5`에서 소수점을 버린 index 2, 즉 50이 중간 자료가 된다.
+
+50과 비교해 보니 60이 더 크므로 찾는 자료는 오른쪽에 있다. 검색 범위를 index 3~5로 잡고 다시 중앙을 찾기 위해 `(3 + 5) / 2`를 하면 index 4(70)가 나온다. 이렇게 검색 범위가 계속해서 좁혀진다.
+
+이번에는 70이 60보다 크므로 검색 범위는 왼쪽이 된다. 50보다 큰 쪽의 시작 `(2 + 1)`과 70보다 작은 쪽의 끝 `(4 - 1)`이 새 범위가 되어 중앙은 `(3 + 3) / 2 = 3`이고, 여기서 60을 찾는다.
+
+계속 줄여 나가다가 마지막 남은 자료까지 일치하지 않으면 실패로 종료된다. 매 단계마다 범위가 반으로 줄기 때문에 <strong>이진 검색의 시간 복잡도는 O(log n)</strong>이다.
+
+## 3. 구현
+
+반복문으로 구현했다. 시작 index가 끝 index를 넘어설 때까지 중앙 값과 비교하며 범위를 좁힌다.
+
+<Editor file="ArrayForSearch.cpp" fn="CArrayForSearch::BinarySearch(...)">
+
+```cpp
+int CArrayForSearch::BinarySearch(const int &iKeyValue_in)
+{
+	int iReturnIndex(FAIL_NUM);
+
+	if (!m_pArray)
+		return iReturnIndex;
+
+	if (iKeyValue_in < m_pArray[0] || iKeyValue_in > m_pArray[m_iSize - 1])
+		return iReturnIndex;
+
+	int iStrat(0);
+	int iEnd(m_iSize - 1);
+	int iCenter((iStrat + iEnd) / 2);
+
+	while (iStrat <= iEnd)
+	{
+		if (m_pArray[iCenter] == iKeyValue_in)
+		{
+			iReturnIndex = iCenter;
+			break;
+		}
+
+		if (m_pArray[iCenter] > iKeyValue_in)
+		{
+			iEnd = iCenter - 1;
+		}
+		else if (m_pArray[iCenter] < iKeyValue_in)
+		{
+			iStrat = iCenter + 1;
+		}
+
+		iCenter = (iStrat + iEnd) / 2;
+	}
+
+	return iReturnIndex;
+}
+```
+
+</Editor>
+
+찾았을 때 바로 `break`로 빠져나오는 첫 번째 `if`까지 `else if` 사슬로 묶었으면 조금 더 깔끔했을 것 같다.
+
+재귀로 구현하는 방법도 있지만, 반복문 구현이 충분히 간단해서 따로 재귀로 구현하지는 않았다.
+
+## 4. 정리
+
+- 이진 검색은 <strong>정렬된 자료</strong>에서만 쓸 수 있다.
+- 중간 위치는 `(start + end) / 2`이고, 비교 결과에 따라 `start = center + 1` 또는 `end = center - 1`로 범위를 줄인다.
+- 범위가 매번 반으로 줄기 때문에 시간 복잡도는 O(log n)이다.
