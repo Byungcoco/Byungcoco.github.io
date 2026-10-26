@@ -16,13 +16,13 @@ import Tab from '../../../components/Tab.astro';
 
 <Chips items={frontmatter.chips} />
 
-디퍼드 렌더링은 오브젝트를 그릴 때 색·노멀·깊이 같은 표면 정보만 여러 장의 텍스처(G-Buffer)에 기록해 두고, 조명은 화면 공간에서 픽셀마다 한 번만 계산합니다. 빛을 16비트 부동소수 버퍼(HDR)에 누적하면 1.0을 넘는 밝기를 그대로 보존했다가, 마지막에 톤매핑으로 화면 밝기에 맞출 수 있습니다.
+디퍼드 렌더링은 오브젝트를 그릴 때 색·노멀·깊이 같은 정보만 여러 장의 텍스처(G-Buffer)에 기록해 두고, 조명은 화면 공간에서 픽셀마다 한 번만 계산합니다.
 
-효과마다 필요한 중간 결과를 G-Buffer와 HDR 버퍼로 정리해 두어서, 외곽선·림·블룸 같은 연출을 패스 하나씩 붙여 넣을 수 있었습니다. 1.0을 넘는 발광도 잘리지 않고 블룸까지 전달됩니다.
+효과마다 필요한 중간 결과를 G-Buffer와 HDR 버퍼로 정리해 두어서, 외곽선·림 같은 연출을 패스 하나씩 붙여 넣을 수 있었습니다. 1.0을 넘는 발광도 잘리지 않고 블룸(Bloom)까지 전달됩니다.
 
 ## 2. 문제
 
-> 나루토 모작의 디퍼드 렌더링은 색·노멀·깊이 세 장을 그려 빛을 한 번 계산하는 구조였고, 색 버퍼가 8비트(LDR)라 밝은 빛이 1.0에서 잘렸습니다. 그림자·환경 차폐·블룸도 없었습니다. 최종 프로젝트는 툰 느낌의 3D 액션이라 캐릭터 외곽선과 림 라이트, 그림자, 스킬 이펙트의 번짐(블룸)이 필요했습니다. 이 효과들은 저마다 다른 중간 결과(깊이, 노멀, 오브젝트 구분, 빛의 세기)를 읽기 때문에, 어느 패스가 무엇을 만들고 무엇을 읽는지부터 정해야 했습니다.
+> 이전 프로젝트(나루토 모작)의 디퍼드 렌더링은 색·노멀·깊이 세 장을 그려 빛을 한 번 계산하는 구조였고, 그림자·환경 차폐·블룸도 없었습니다. 이 프로젝트는 툰 느낌의 3D 액션이라 캐릭터 외곽선과 림 라이트, 그림자, 스킬 이펙트의 번짐(블룸)이 필요했습니다. 이 효과들은 저마다 다른 중간 결과(깊이, 노멀, 오브젝트 구분, 빛의 세기)를 읽기 때문에, 어느 패스가 무엇을 만들고 무엇을 읽는지부터 정해야 했습니다.
 
 ## 3. 구조 요약
 
@@ -193,12 +193,9 @@ HRESULT CRender_Manager::Render()
 	m_pGameInstance->Setup_ViewProj_ToCBuffer();
 
 	{
-		{
-			// ... 코드 중략
-			m_pGameInstance->Setup_UIViewProj_ToCBuffer();
-			// ... 코드 중략
-		}
 		// ... 코드 중략
+		m_pGameInstance->Setup_UIViewProj_ToCBuffer();
+
 	}
 	// ... 코드 중략
 	if (FAILED(Render_Bloom()))
@@ -215,7 +212,9 @@ HRESULT CRender_Manager::Render()
 
 	if (FAILED(Render_BlendUI()))
 		return E_FAIL;
+
 	// ... 코드 중략
+	
 	return S_OK;
 }
 ```
@@ -333,17 +332,23 @@ PS_OUT_LIGHT PS_MAIN_DIRECTIONAL(PS_IN_POS_TEX input)
     // 기본 출력은 검정으로 시작한다.
     output.vShade = float4(0.0f, 0.0f, 0.0f, 1.0f);
     output.vSpecular = float4(0.0f, 0.0f, 0.0f, 1.0f);
-    // ... 코드 중략
-    // SSAO 결과를 읽는다.
+    
+	// ... 코드 중략
+    
+	// SSAO 결과를 읽는다.
     float fSSAO = g_RenderTargetAOTexture.Sample(LinearSampler, input.vUV).r;
 
     // Material AO와 SSAO를 곱해서 최종 AO를 만든다.
     float fOcc = saturate(fAO * fSSAO);
-    // ... 코드 중략
-    // Shadow
+    
+	// ... 코드 중략
+    
+	// Shadow
     float fDynamicShadow = SampleCascadeShadowPCF(vWorldPos.xyz, vNormal, fNdotL, fViewZ);
-    // ... 코드 중략
-    // toon 명암 값을 계산한다.
+    
+	// ... 코드 중략
+    
+	// toon 명암 값을 계산한다.
     float fToonDiffuse = ComputeToonDiffuse(vNormal, vLightDir);
 
     // 기존 PBR diffuse와 같은 의미로 1/PI를 유지한다.
@@ -365,7 +370,9 @@ PS_OUT_LIGHT PS_MAIN_DIRECTIONAL(PS_IN_POS_TEX input)
     // Specular는 예전 PBR 공식을 그대로 유지한다.
     float fSpecOcc = lerp(1.0f, fOcc, 0.2f);
     float3 vSpecular = (vSpecularBRDF * vRadiance) * (fNdotL * fSpecOcc * fFinalShadow);
+
     // ... 코드 중략
+
     // 최종 shade를 기록한다.
     output.vShade = float4(vShade, 1.0f);
 
@@ -464,7 +471,6 @@ CGameObject::CGameObject(const CGameObject& rhs)
     m_tObjectInfoDesc.iObjectID = m_iObjectID;
     m_Components.fill(nullptr);
 }
-// ... 코드 중략
 
 void CGameObject::Set_RenderInfoFlag(_uint iFlag, _bool bActive)
 {
@@ -488,7 +494,6 @@ uint UnpackID24(uint iPacked)
 {
     return iPacked & 0x00FFFFFF;
 }
-// ... 코드 중략
 
 uint PackObjectInfo(uint iID, uint iFlags)
 {
@@ -541,7 +546,6 @@ float SilhouetteEdge(float2 vUV)
     bool bSil = (bEdgeL || bEdgeR || bEdgeU || bEdgeD);
     return bSil ? 1.0f : 0.0f;
 }
-// ... 코드 중략
 
 PS_OUT_HDR PS_MAIN_OUTLINE(PS_IN_POS_TEX input)
 {
@@ -634,7 +638,9 @@ HRESULT CRender_Manager::Compute_ShadowCascade()
 			vCenter - vLightDir * 50.f,  // 뒤로 50m 물러남
 			vCenter,
 			Vec3::Up
+		
 		// ... 코드 중략
+		
 		//=================================
 		// Light Space AABB에서 Ortho Proj로
 		//=================================
@@ -653,9 +659,12 @@ HRESULT CRender_Manager::Compute_ShadowCascade()
 
 		Matrix matLightProj = XMMatrixOrthographicOffCenterLH(
 			vMin.x, vMax.x, vMin.y, vMax.y, vMin.z, vMax.z
+		
 		// ... 코드 중략
+		
 		m_tCascadeShadowDesc.matLightVP[i] = matLightView * matLightProj;
 	}
+	
 	// ... 코드 중략
 	return S_OK;
 }
@@ -780,6 +789,5 @@ float SampleCascadeShadowPCF(float3 vWorldPos, float3 vWorldNormal, float fNDotL
 
 남은 개선점입니다.
 
-- 캐스케이드 그림자의 투영 범위를 매 프레임 절두체에 맞춰 새로 잡으면서 텍셀 단위로 맞추지 않아, 카메라가 움직이면 경계가 떨립니다. 텍셀 단위 반올림과 구간 크기 고정이 필요합니다.
 - G-Buffer 6장 중 절반이 16비트 4채널이라 대역폭이 큽니다. 노멀을 2채널로 압축하거나 깊이를 깊이 버퍼에서 복원하면 줄일 수 있습니다.
 - 셰이더의 `Sample`/`Load`와 샘플러 종류가 패스마다 섞여 있으므로, G-Buffer 읽기 규칙을 함수 하나로 통일하는 편이 안전합니다.

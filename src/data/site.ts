@@ -1,7 +1,7 @@
 export const profile = {
   name: '강병준',
   title: '게임 클라이언트 프로그래머',
-  tagline: '궁금해지면 “왜?”를 따라 엔진 아래까지 파고듭니다.',
+  tagline: '가져다 쓰는 개발자가 아니라, 만들어 이해하는 개발자가 되겠습니다.',
   github: 'https://github.com/Byungcoco',
   email: 'dzzzing@naver.com',
   techDoc: '/docs/kang-byungjun-techdoc.pdf',
@@ -10,7 +10,7 @@ export const profile = {
 export const stack = [
   { group: '언어', items: ['C', 'C++', 'C#', 'HLSL', 'Lua'] },
   { group: '엔진 · API', items: ['DirectX 11', 'DirectX 9', 'Win32 API', 'Unity', 'Roblox Studio'] },
-  { group: '라이브러리', items: ['PhysX', 'FMOD', 'Dear ImGui', 'Assimp', 'nlohmann/json'] },
+  { group: '라이브러리', items: ['PhysX', 'FMOD', 'ImGui', 'Assimp', 'nlohmann/json'] },
   { group: '도구', items: ['Visual Studio', 'Nsight Systems', 'Git', 'MySQL', 'Notion'] },
 ];
 

@@ -31,7 +31,7 @@ import Tab from '../../../components/Tab.astro';
 
 ## 3. 구조 요약
 
-충돌 감지(물리)와 전투 규칙(판정)을 나눴습니다. 오브젝트는 충돌체에 공격 프리셋 번호를 달아 두기만 하고, 누가 가해자인지·얼마나 아픈지는 판정 시스템이 정해 피해자와 가해자에게 결과를 알려 줍니다.
+충돌 감지(물리)와 전투 규칙(판정)을 나눴습니다. 오브젝트는 충돌체에 공격 프리셋 번호를 달아 두기만 하고, 누가 가해자인지·데미지가 몇 인지는 판정 시스템이 정해 피해자와 가해자에게 결과를 알려 줍니다.
 
 <Fig n={1} white max={560} src="/img/reviews/duet/04-judgement/class.png" caption="판정 시스템 관련 클래스·구조체 관계도" />
 
@@ -65,38 +65,27 @@ _bool CBoss_Xibi::On_Hit(const HIT_DESC& hitDesc)
 	_bool result = Super::On_Hit(hitDesc);
 	if (result == true)
 	{
-		CMonsterControlContext *pControlContext = Get_Component<CMonsterControlContext>();
-		CStatCom_Boss* pComBoss = Get_Component<CStatCom_Boss>();
-		// 그로기 일때
-		if (pControlContext->IsGroggy() == true)
+		// ... 코드 중략
+		CActionState* pActionState = pMainPlayer->Get_Component<CActionState>();
+	
+		// Condemn
+		if (pActionState->Get_CurrentStateIndex() == ENUM_TO_UINT(CPlayer::State::CONDEMN))
 		{
-			// 플레이어 공격이라면
-			if (hitDesc.attackDesc.iAttackerLayer == EPhysicsFilterGroup::ATTACK)
+			pComBoss->Add_Health(-1247.f);
+			_float fHpRatio = pComBoss->Get_Rate(CMyStat::STAT_TYPE::HP);
+			if (fHpRatio <= g_XMEpsilon.f[0])
 			{
-				// 확정 static_cast<>
-				if (CMainPlayer* pMainPlayer = dynamic_cast<CMainPlayer*>(hitDesc.attackDesc.pAttacker))
-				{
-					CActionState* pActionState = pMainPlayer->Get_Component<CActionState>();
-					// Condemn
-					if (pActionState->Get_CurrentStateIndex() == ENUM_TO_UINT(CPlayer::State::CONDEMN))
-					{
-						pComBoss->Add_Health(-1247.f);
-						_float fHpRatio = pComBoss->Get_Rate(CMyStat::STAT_TYPE::HP);
-						if (fHpRatio <= g_XMEpsilon.f[0])
-						{
-							Change_State_ForDirecting(EStateForDirecting::Condemned_Die);
-							m_pGameInstance->Broadcast<BOSS_UI_OFF>();
-							m_pGameInstance->CrossFadeBGM(0, TO_HASH("TUTORIAL_BOSS_BGM"), 0.5f, 0.3f, 0.3f);
-							m_pGameInstance->Play_OneShot(0, TO_HASH("Xibi_Dead"), 0.3f);
-						}
-						else
-						{
-							Change_State_ForDirecting(EStateForDirecting::Condemned_Attacked);
-						}
-					}
-				}
+				Change_State_ForDirecting(EStateForDirecting::Condemned_Die);
+				m_pGameInstance->Broadcast<BOSS_UI_OFF>();
+				m_pGameInstance->CrossFadeBGM(0, TO_HASH("TUTORIAL_BOSS_BGM"), 0.5f, 0.3f, 0.3f);
+				m_pGameInstance->Play_OneShot(0, TO_HASH("Xibi_Dead"), 0.3f);
+			}
+			else
+			{
+				Change_State_ForDirecting(EStateForDirecting::Condemned_Attacked);
 			}
 		}
+
 		// ... 코드 중략
 	}
 	return result;
@@ -473,11 +462,8 @@ void CJudgementSystem::Compute_FinalDamage(const DTO::TAttackPreset_Data* pAttac
 
 ## 5. 피드백
 
-**판정 결과를 끝까지 쓰지 않은 곳이 한 군데 있습니다.** `On_Hit`은 맞았는지를 `bool`로 돌려주지만, `Process_Battle`은 그 값을 확인하지 않고 곧바로 `Try_Attack`을 부릅니다. 그래서 무적 상태의 대상을 때려도 가해자 쪽은 "명중"으로 처리되고, 보스가 맞히지 못한 공격으로 다음 패턴에 넘어갈 수 있습니다. 다만 판정을 한곳에 모아 둔 덕분에 고칠 곳은 이 호출 한 줄뿐입니다.
+**일부 오브젝트에서 판정 결과를 끝까지 쓰지 않은 곳이 한 군데 있습니다.** `On_Hit`은 맞았는지를 `bool`로 돌려주지만, `Process_Battle`은 그 값을 확인하지 않고 곧바로 `Try_Attack`을 부릅니다. 그래서 무적 상태의 대상을 때려도 가해자 쪽은 "명중"으로 처리되고, 보스가 맞히지 못한 공격으로 다음 패턴에 넘어갈 수 있습니다. 다만 판정을 한곳에 모아 둔 덕분에 고칠 곳은 이 호출 한 줄뿐입니다.
 
 남은 개선점입니다.
 
-- 양쪽이 모두 공격 레이어인 충돌은 규칙이 없어 버려집니다. 패링이나 공격 상쇄를 넣으려면 분류부터 다시 짜야 합니다.
-- 트리거·일반 충돌 처리 함수는 틀만 있고 비어 있어서, 공격 외의 충돌은 여전히 각 오브젝트가 처리합니다.
-- `m_bFlushing`은 값을 바꾸기만 하고 읽는 곳이 없습니다. 큐를 나눈 뒤로는 필요 없는 상태입니다.
-- 같은 공격이 같은 대상에 여러 번 닿는 중복은 판정 시스템이 아니라 충돌 정보를 넣는 쪽에서 막아야 합니다.
+- 같은 공격이 같은 대상에 여러 번 닿는 중복은 판정 시스템이 아니라 충돌 정보를 넣는 쪽(Physcs Collision Manager)에서 막도록 해야 합니다.
