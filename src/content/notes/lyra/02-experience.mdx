@@ -1,0 +1,68 @@
+---
+series: lyra
+order: 2
+title: "Experience"
+date: "2024-12-14"
+source: https://byungcoco.tistory.com/12
+---
+import Fig from '../../../components/Fig.astro';
+
+## 핵심포인트
+
+- <strong>Experience의 정의</strong> Lyra에서 정의한 새로운 GameMode 단위이며, 기존 GameMode전환 작업을 최적화하기 위함 하나의 GameMode를 사용하며 다양한 환경(FPS, MOBA, 로비 등)을 Experience단위로 전환
+- <strong>AssetManager의 Scan</strong>경로와 존재 여부만 관리하며 메모리를 절약하고, 실제 로딩은 필요 시 진행
+
+## 1. Experience란?
+
+언리얼에서 게임의 규칙, 플레이어 기본 환경 설정 등을 관리하는 핵심 클래스인 GameMode가 있으며, 특정 레벨과 연결되어 작동하고, 레벨 간 전환 시에 새로운 GameMode가 초기화 된다. 예를 들어 플레이어가 FPS를 플레이하다가 MOBA모드로 변경하기 위해선 레벨을 포함한 새로운 GameMode를 불러오며 전환할 수 있게 한다. 그런데, UE4에서 UE5로 넘어오며 기존 코딩방식과의 호환성을 위해 GameMode에 여러 기능을 도입하며 무거워졌고, 상위클래스 GameModeBase를 만들어 가볍게 사용 할 수 있도록 덜어내는 작업을 했다.
+하지만, Lyra에서는 이런 <strong>GameMode전환 자체가 무거운 작업이라 판단</strong>했고 모든 월드에서 동일한 GameMode를 사용하지만 보다 가벼운 <strong>Experience라는 새로운 단위의 개념을 만들어 전환을 하도록 설계</strong>했다.
+
+<Fig n={1} src="/img/notes/lyra/experience/01.png" caption="Lyra 디폴트맵 플레이 캡쳐" />
+
+Lyra의 맵 L_DefaultEditorOverview을 플레이 해보면 Lyra에 존재하는 포탈 단위의 Experience들을 볼 수 있다. 여기서 눈여겨 보아야 할 점은 게임의 모드뿐만아니라 "FRONT END" 즉, 메인로비 UI화면, 로그인화면 또한 Experience 단위로 광범위 하게 분류한 것을 볼 수 있다. 이번 포스팅에선 Experience를 정의하고 <strong>(▲그림1.)</strong>에 보이는 포탈단위의 Experience를 Load하는 과정까지 다뤄볼 예정이다.
+
+<Fig n={2} src="/img/notes/lyra/experience/02.png" caption="▲ 클래스 관계도 및 설명" />
+
+<Fig n={3} src="/img/notes/lyra/experience/03.png" caption="UserFacingExperienceDefinition" />
+
+UserFacingExperienceDefinition은 Map과 ExperienceDefinition을 들고있다. PrimaryDataAsset을 상속받고있는데, AssetManager가 직접적으로 처리하고 Load가능한 Asset들이 포함된다. 그리고 FPrimaryAssetId라는 구조체 타입은  PrimaryAssetType(Asset 그룹), PrimaryAssetName(브라우저에 노출되는 이름)으로 구성되어 있다. 다음 포스팅에서 PrimaryAssetData에 대해 자세히 다뤄보겠다.
+
+<Fig n={4} src="/img/notes/lyra/experience/04.png" caption="ExperienceDefinition" />
+
+ExperienceDefinition에선 GameFeaturesToEnable이라는 것이 존재한다. 해당 Property는 게임모드에 따른 GameFeature Plugin을 로딩하는것에 대한 연결고리이다. GameFeautre라는 언리얼에서 내세우는 플러그인이 있는데, Game의 규칙(점령전? 점령에 대한 규칙, 데스매치 등 승리에 관한 규칙)을 넘어서 더 세분화가 가능하게 되어있다. Lyra에서 활용하는 모듈화 방식의 핵심이라고 할 수 있다.
+
+<Fig n={5} src="/img/notes/lyra/experience/05.png" caption="PawnData" />
+
+PawnData에는 PawnClass, 카메라 모드, 입력 정보, Ability 등을 포함하고있다.
+
+## 2. AssetManager의 Scan
+
+<Fig n={6} src="/img/notes/lyra/experience/06.png" caption="UserFacingExperienceDefinition DataAsset" />
+
+에디터에서 UserFacingExperienceDefinition을 DataAsset 블루프린트로 만들어 Map을 설정해주려하는데 목록에 나오지 않는 장면이다. 왜냐하면 AssetManager에서 해당 PrimaryAssetData에 대하여 Scan대상으로 등록되어있지 않기때문이다.
+
+<strong>여기서 Scan이란? AssetManager라는 눈이 해당 Asset에 대하여 주시하고있는 상태</strong>라고 보면된다. 그렇다면 Scan과 Loading은 다른가라는 의문이 생기는데, 완전 다르다. Scan은 일전에 FSoftObjectPath(해당 Asset의 주소를 가르키는 구조체)와 비슷하게 해당 주소에 존재한다고만 알고있는 느낌이다. 그렇다면 Scan대상에 등록하면 어떻게 해야할까?
+
+<Fig n={7} src="/img/notes/lyra/experience/07.png" caption="AssetManager의 Scan대상 등록" />
+
+<Fig n={8} src="/img/notes/lyra/experience/08.png" caption="ExperienceDefinition Scan대상 등록" />
+
+<Fig n={9} src="/img/notes/lyra/experience/09.png" caption="UserFacingExperienceDefinition Data Asset 구성 완료" />
+
+AssetType과 BaseClass를 꼭 알맞게 지정해야하며, 폴더를 지정해주는 방법과 직접 해당 에셋을 지정해주는 방법이있다. 폴더를 지정해주게 되면 해당 폴더 내 AssetType과 BaseClass와 일치하는 Asset들을 긁어 온다. 블루프린트클래스로 생성한 ExperienceDefinition 또한 똑같이 진행해주면되는데, 블루프린트클래스이기때문에 <strong>(▲그림7.)</strong>과 같이 HasBlueprintClasses를 체크해주어야 한다. 이렇게 Scan대상에 등록하면 해당 경로에 맞춰 읽어들여 목록에 뜨게되고 <strong>(▲그림8.)</strong>과 같이 기본적인 구성을 완료할 수 있게 된다. 그럼 이제 해당 UserFacingExperienceDefinition을 <strong>(▲그림1.)</strong>과 같이 포탈단위로 로드하게 만들어보자.
+
+<Fig n={10} src="/img/notes/lyra/experience/10.png" caption="B_Experience3D 블루프린트 변수와 로직그래프" />
+
+Actor 블루프린트 클래스를 만들어 포탈을 소환하게 할건데, GetPrimaryAssetIdList라는 AssetManager의 함수가 보인다.
+
+함수 이름에서 알수있듯이 <strong>Scan대상으로 등록된 PrimaryAsset을 지정하면 해당 ID를 가져와 직접 조작이 가능하며, 아직까지 로드가 진행된것은 아니다.</strong>
+
+<Fig n={11} src="/img/notes/lyra/experience/11.png" caption="GetPrimaryAssetIdList에서 이어지는 로직그래프" />
+
+이전 포스팅 AssetManager에서 동기로드를 진행하며 비동기로드와의 차이점과 장단점을 간단하게 설명했었는데, 이와 같이 런타임에 진행되는 Asset 로드는 비동기로 이루어지는것이 권장되는것 같다. 왜? 동기로드는 해당 Asset이 다 로드 될때까지 로직을 기다리기때문에 끊기는 현상이 발생될 수 있으니까. 그렇게 List를 순회하며 UserFacingExperienceDefinition로 캐스팅하여 List에 저장한다. 추출된 List를 토대로 포탈 Actor를 Spawn해주면 Lyra와 동일하게 포탈 생성이 완료된다.
+
+<div class="note-box">
+
+Scan의 대상으로 등록만 해두면 AssetManager의 GetPrimaryAssetIdList와 같은 함수를 통해 편리하게 Asset조작이 가능하고 게임 규모가 커져 Experience가 많아졌다면 폴더구조를 변경해 갯수를 간편하게 조절하는것도 가능하다. 다시 한번 강조하지만 AssetManager가 해당 Asset이 로드되어 객체로 가지고있는것이 아닌, 가벼운 구조체 형식으로 들고있기때문에 메모리 부담도 훨씬 적다.
+
+</div>

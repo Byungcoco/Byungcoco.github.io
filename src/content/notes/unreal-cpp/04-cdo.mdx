@@ -1,0 +1,42 @@
+---
+series: unreal-cpp
+order: 4
+title: "CDO(Class Default Object)"
+date: "2024-12-18"
+source: https://byungcoco.tistory.com/26
+---
+import Fig from '../../../components/Fig.astro';
+
+## CDO란?
+
+언리얼 엔진에서 UObject 기반 클래스의 디폴트 상태를 표현하는 특이한 객체이다. 이는 [리플렉션 시스템](https://byungcoco.tistory.com/25)과 직렬화, 네트워킹, 블루프린트의 핵심 역할을 담당한다. 그리고 가비지 컬렉션 대상이 아니며 메모리에서 항상 유지된다. 역할을 총 정리하자면 아래와 같다
+
+- <strong>클래스의 기본상태 저장</strong> CDO는 UCLASS에 대해 하나씩 생성되며 클래스의 기본값을 저장, UCLASS에 선언된 UPROPERTY의 초기값을 CDO가 관리
+- <strong>객체 초기화</strong> 새로운 객체를 생성할 때, CDO를 복사하여 초기값으로 사용
+- <strong>리플렉션 데이터의 기준</strong> 리플렉션 시스템은 CDO를 기준으로 객체 상태를 비교하여 변경 사항을 감지 직렬화 및 네트워크 복제 과정에서, CDO와 다른 데이터만 저장하거나 전송하여 속도와 성능 향상에 이바지
+- <strong>블루프린트 및 에디터 통합</strong> 에디터에서 노출되는 디폴트값은 CDO기반으로 표시, 블루프린트 또한 동일!
+
+## 1. CDO의 생성과정
+
+CDO는 언리얼엔진이 내부적으로 클래스 로드 시점에 자동으로 생성한다
+
+- <strong>UHT에 의한 메타데이터 생성</strong> UHT가 UCLASS의 메타정보를 생성하여 generated.h에 저장
+- <strong>기본 생성자 호출</strong> CDO는 기본생성자를 호출하여 초기화 매개변수가 있는 생성자는 호출되지 않음, 있더라도 CDO는 기본생성자 기반 데이터이며 GENERATED_BODY()를 통해 자동 생성
+
+<Fig n={1} src="/img/notes/unreal-cpp/cdo/01.png" caption="하나의 언리얼 오브젝트에 생성되는 UClass, CDO" />
+
+이와 같은 특성으로 하나의 언리얼 오브젝트가 초기화 될 때에는 두개의 인스턴스가 생성된다.
+
+## 3. CDO와 일반 인스턴스의 차이
+
+<div class="tbl">
+
+|  | <strong>CDO</strong> | <strong>일반 인스턴스</strong> |
+|---|---|---|
+| <strong>생성 시점</strong> | 클래스 로드 시 자동 생성 | 명시적으로 NewObject 등으로 생성 |
+| <strong>역할</strong> | 클래스의 디폴트 상태저장, 초기화 기준으로 사용 | 개별 객체의 상태를 표현(Instance1, Instance2...) |
+| <strong>생성 방식</strong> | 기본 생성자를 호출하여 초기화 | 기본 또는 매개변수가 있는 생성자를 호출하여 초기화 |
+| <strong>리플렉션 연동</strong> | 리플렉션 데이터의 기준으로 사용 | 리플렉션 시스템을 통해 관리되지만, CDO와 비교하여 변경만 저장(효율성 극대화) |
+| <strong>에디터와 블루프린트</strong> | 디폴드 값 제공 및 표시 | 에디터나 블루프린트에서 별도로 수정 가능 |
+
+</div>

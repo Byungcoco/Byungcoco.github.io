@@ -1,0 +1,54 @@
+---
+import { getCollection } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import { noteSeries } from '../../data/notes';
+
+const all = (await getCollection('notes')).sort((a, b) => a.data.order - b.data.order);
+const groups = noteSeries.map((s) => ({ ...s, notes: all.filter((n) => n.data.series === s.key) }));
+---
+<Base title="학습 노트 · 강병준">
+<header class="top">
+  <div class="topin">
+    <a class="back" href="/#notes"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg><span>홈으로</span></a>
+    <h1>학습 노트</h1>
+  </div>
+</header>
+<main class="wrap">
+  <nav class="jump" aria-label="시리즈">
+    {groups.map((g) => <a href={`#${g.key}`}>{g.name} <span>{g.notes.length}</span></a>)}
+  </nav>
+  {groups.map((g) => (
+    <section id={g.key} class="series">
+      <h2>{g.name}</h2>
+      <p class="desc">{g.desc}</p>
+      <ol class="list">
+        {g.notes.map((n, i) => (
+          <li><a href={`/notes/${n.id}/`}><span class="no">{String(i + 1).padStart(2, '0')}</span><span class="t">{n.data.title}</span><span class="d">{n.data.date.replaceAll('-', '.')}</span></a></li>
+        ))}
+      </ol>
+    </section>
+  ))}
+</main>
+<style>
+  .top { position: sticky; top: 0; z-index: 5; background: rgba(10,22,40,0.88); backdrop-filter: blur(8px); border-bottom: 1px solid #1E3150; }
+  .topin { max-width: 960px; margin: 0 auto; padding: 12px 24px; box-sizing: border-box; display: flex; align-items: center; gap: 20px; }
+  .topin h1 { margin: 0; font-size: 22px; font-weight: 700; color: #E3EAF6; }
+  .back { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid #24385A; border-radius: 8px; font-size: 14px; font-weight: 600; color: #7FB2FF; text-decoration: none; box-sizing: border-box; }
+  .back:hover { border-color: #7FB2FF; background: rgba(127,178,255,0.08); }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 24px 96px; box-sizing: border-box; }
+  .jump { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 48px; }
+  .jump a { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border: 1px solid #24385A; border-radius: 999px; font-size: 14px; font-weight: 600; color: #C9D4E8; text-decoration: none; }
+  .jump a:hover { border-color: #7FB2FF; color: #7FB2FF; }
+  .jump span { font-size: 12px; color: #7C8BA8; }
+  .series { margin-bottom: 64px; scroll-margin-top: 90px; }
+  .series h2 { margin: 0 0 8px; font-size: 26px; font-weight: 700; color: #E3EAF6; letter-spacing: -0.02em; }
+  .desc { margin: 0 0 20px; font-size: 15px; }
+  .list { margin: 0; padding: 0; list-style: none; border-top: 1px solid #1E3150; }
+  .list a { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 14px 8px; border-bottom: 1px solid #1E3150; text-decoration: none; color: #C9D4E8; }
+  .list a:hover { background: rgba(127,178,255,0.06); color: #7FB2FF; }
+  .no { font-size: 12px; font-weight: 700; color: #7C8BA8; }
+  .t { font-size: 16px; font-weight: 600; }
+  .d { font-size: 13px; color: #7C8BA8; }
+  @media (max-width: 640px) { .list a { grid-template-columns: 28px minmax(0, 1fr); } .d { grid-column: 2; } }
+</style>
+</Base>

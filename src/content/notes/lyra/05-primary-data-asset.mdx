@@ -1,0 +1,58 @@
+---
+series: lyra
+order: 5
+title: "PrimaryDataAsset"
+date: "2025-01-08"
+source: https://byungcoco.tistory.com/29
+---
+import Fig from '../../../components/Fig.astro';
+
+> UPrimaryData 주석 해석본
+
+<div class="note-box">
+
+UPrimaryData은
+
+GetPrimaryAssetId()
+
+구현과
+
+AssetBundle에 대한 구현이 추가
+
+된 DataAsset이다.
+
+- GetPrimaryAssetId()는 AssetManager를 통해 Load/UnLoad 관련 메서드 호출로 활성화 가능
+
+GetPrimaryId()를 통해 아래의 두가지 패턴 구현이 가능하다.
+
+- UPrimaryDataAsset을 상속 받은 Native(C++) 클래스를 정의하면, 해당 클래스를 PrimaryAssetType으로서 사용 가능하다. (Ex. LyraExperienceDefinition)
+- UPrimaryDataAsset을 상속 받은 Blueprint는 아래의 두가지 방식에 따라 <strong>PrimaryAssetType이 정의</strong>된다. ParentClass를 거슬러 올라가며 <strong>가장 처음으로 만난 Native(C++) 클래스</strong> <strong>가장 부모인 BP클래스</strong>(UPrimaryDataAsset을 바로 상속받았을것으로 추정)
+- 위와 같은 동작 방식을 바꾸고 싶다면, GetPrimaryAssetId는 이미 virtual로 정의 되어있으니 <strong>override하여 재정의</strong> 하면 된다.
+
+</div>
+
+<Fig n={1} src="/img/notes/lyra/primary-data-asset/01.png" caption="LyraExperienceManagerComponent의 SetCurrentExperience 中" />
+
+GetDefault를 통해 [CDO(Class Default Object)](https://byungcoco.tistory.com/26) 를 가져온다. 이렇게 중요한 정보를 위험하게 컴포넌트 내 저장까지 하고있다.
+
+<Fig n={2} src="/img/notes/lyra/primary-data-asset/02.png" caption="LyraExperienceManagerComponent의 StartExperienceLoad 中" />
+
+현재 Expeirence의 PrimaryAssetId를 가져와 AssetList에 추가하는데,
+
+<Fig n={3} src="/img/notes/lyra/primary-data-asset/03.png" caption="UPrimaryDataAsset의 GetPrimaryAssetId 中" />
+
+GetPrimaryAssetId를 보면 내부적인 코드는 우선 생략하고, 해당 if문의 조건을 보면 CDO인지 묻는다. CDO가 아니라면 그냥 해당 클래스의 이름을 기반으로한 Id를 반환한다.
+
+<Fig n={4} src="/img/notes/lyra/primary-data-asset/04.png" caption="ExperienceLoad 포스팅에서 만들엇던 ExperienceDefinition BP" />
+
+즉 이전 포스팅에서 만들었던 UPrimaryAssetData를 상속받는 클래스로 만든 BP로 CDO를 전달하지않으면 타입이 B_BJDefaultExperience가 되고 Scan대상에 올라와있지않아 가져올수가 없게 되는것이다.
+
+<Fig n={5} src="/img/notes/lyra/primary-data-asset/05.png" caption="GetPrimaryAssetId()" />
+
+생략했던 내부 코드를 상세하게 보자면
+
+1. BestPrimaryAssetTypeClass는 이름 그대로 찾은것 중에 알맞는 타입의 클래스, SearchPrimaryAssetTypeClass는 해당 클래스의 부모클래스 부터 찾는것을 시작한다고 보면된다.
+2. 해당 클래스가 UprimaryDataAsset을 상속받은 C++ 클래스라면 Default를 리턴한다. 이는 PrimaryDataAsset을 상속받은 클래스를 상속 받는 구체적인 클래스가 필요하다는 뜻이다. UPrimaryDataAsset =&gt; NativeClassA =&gt; NativeClassA_Instaced(여기가 this여야 함) Class_Native: Native C++ 클래스 플래그, UHT에서 만든 UClass(UBJExperienceDefinition) Class_Instrincsic: UHT로 생성안된 Native C++ 클래스, 깡 C++클래스
+3. 첫번째 조건문에서 해당 클래스의 부모가 UPrimaryDataAsset의 StaticClass와 같다는것은 최상위 부모 클래스까지 왔다는것을 의미하므로 해당 클래스를 AssetTypeClass로 정하고, 그 다음 조건문도 Native인지, 맞다면 해당 클래스가 타입! 둘다 아니라면 부모클래스가 타입! 이 포스팅의 가장 윗부분에 정리해둔 Type반환에 대한 로직이다. BJExperienceDefinition을 예로들면 에디터에서 해당 클래스를 상속받아 BP를 만들었고 이 타입이 AssetManager에 스캔된다면 프로젝트 세팅에 명시했던 BJExperienceDefintion 타입을 올바르게 읽어 오게 되는 매커니즘이다.
+4. BestPrimaryAssetTypeClass를 잘 가져왔다면 FPrimaryAssetId를 생성하며 반환한다. 타입은 타입에 해당하는 클래스이름, 이름은 클래스 이름!
+5. CDO가 아닐경우에 바로 클래스의 이름을 Type, 에셋의 이름은 GetFName으로 받아낸다.

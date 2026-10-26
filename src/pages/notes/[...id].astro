@@ -1,0 +1,22 @@
+---
+import { getCollection, render } from 'astro:content';
+import Article from '../../layouts/Article.astro';
+import { noteSeries } from '../../data/notes';
+
+export async function getStaticPaths() {
+  const all = await getCollection('notes');
+  return all.map((entry) => ({ params: { id: entry.id }, props: { entry } }));
+}
+
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+const series = noteSeries.find((s) => s.key === entry.data.series)!;
+const siblings = (await getCollection('notes', (n) => n.data.series === entry.data.series))
+  .sort((a, b) => a.data.order - b.data.order);
+const idx = siblings.findIndex((n) => n.id === entry.id);
+const items = siblings.map((n) => ({ href: `/notes/${n.id}/`, title: n.data.title, topic: n.data.topic }));
+const meta = `${entry.data.date.replaceAll('-', '.')} 작성` + (entry.data.source ? ' · 원문 ' + entry.data.source.replace(/^https?:\/\//, '') : '');
+---
+<Article pageTitle={`${entry.data.title} · ${series.name} 학습 노트`} title={entry.data.title} crumb={`학습 노트 · ${series.name}`} backHref={`/notes/#${series.key}`} ddLabel={`${series.name} 노트`} siblings={items} idx={idx} headings={headings} meta={meta}>
+  <Content />
+</Article>

@@ -1,0 +1,39 @@
+---
+series: unreal-cpp
+order: 5
+title: "UObject"
+date: "2024-12-18"
+source: https://byungcoco.tistory.com/27
+---
+## 언리얼 오브젝트 시스템
+
+언리얼의 오브젝트 시스템은 UObject를 중심으로 구성된다. 모든 언리얼 오브젝트는 UObject를 기반으로 하며, 이를 통해 엔진에서 제공하는 다양한 편의 기능을 활용할 수 있다.
+
+<strong>UObject란?</strong>
+
+- 언리얼 엔진의 모든 오브젝트의 기본 클래스
+- 에디터와의 통합, 가비지 컬렉션(Garbage Collection), 직렬화(Serialization), 네트워크 리플리케이션(Network Replication) 등 다양한 기능을 제공
+- UCLASS 매크로로 태그 지정된 UObject 기반 클래스는 리플렉션 시스템에서 인식
+
+<strong>UObject 생성</strong>
+
+- UObject는 직접 new 연산자로 생성하지 않음 대신 <strong>NewObject</strong> 또는 <strong>CreateDefaultSubobject</strong>를 사용해 생성해야 하며, 이는 엔진의 가비지 컬렉션 시스템과 통합
+- 생성자는 기본 생성자만 지원하며, 가벼운 초기화 작업에만 사용
+
+<strong>UObject 제거</strong>
+
+- 더 이상 참조되지 않는 UObject는 가비지 컬렉터에 의해 자동으로 제거
+- <strong>명시적으로 제거하려면 MarkAsGarbage()를 호출</strong>하여 다음 가비지 컬렉션에서 삭제될 수 있도록 설정
+
+## UObject와 Actor의 차이
+
+<div class="tbl">
+
+|  | <strong>UObject</strong> | <strong>UObject → AActor</strong> |
+|---|---|---|
+| <strong>생성 방식</strong> | NewObject, CreateDefaultSubobject | World에 배치하거나 NewObject로 생성 |
+| <strong>가비지 컬렉션</strong> | 가능 | 가능 |
+| <strong>Tick 지원 여부</strong> | 기본적으로 지원하지 않음 | 기본 Tick 함수 지원 |
+| <strong>에디터 노출</strong> | 제한적 | 에디터 및 월드와 완전 통합 |
+
+</div>

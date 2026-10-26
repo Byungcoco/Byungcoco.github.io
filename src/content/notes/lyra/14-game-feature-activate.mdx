@@ -1,0 +1,34 @@
+---
+series: lyra
+order: 14
+title: "GameFeature / GameFeatureActivate"
+date: "2025-01-11"
+source: https://byungcoco.tistory.com/38
+---
+import Fig from '../../../components/Fig.astro';
+
+GameFeature단위의 새로운 UserFacingExperience를 생성해서 ShooterCore 플러그인을 통해 작업을 했었다. 그렇다면 앞서 말했던 GameFeature의 4단계를 확인했을때 Activate가 됬을까?
+
+<Fig n={1} src="/img/notes/lyra/game-feature-activate/01.png" caption="GameFeature &quot;ShooterCore&quot;" />
+
+확인해보니 여전히 존재는 하지만 로드 및 활성화가 진행되지 않은 상태이다. 그럼 어디에서 이 GameFeature를 로드하고 활성화하는 로직이 존재할까? ExperienceLoad를 담당하던 ExperienceManagerComponent에서 이 로직이 진행된다.
+
+이전 포스팅에서 해당 매니저의 OnExperienceLoadComplete() 함수에서 많은것들을 담당하지만 임시로 FullLoadCompleted()를 바로 호출하는 함수였었다. Lyra에서 많은 것들 중 GameFeature에 관한 로직이 이 함수에 추가될 것이다. 복습차원에 다시 설명하자면 StartExperienceLoad()에서는 Experience의 Asset을 로드하는 역할의 함수였고, OnExperienceLoadComplete()는 GameFeature를 로드하고 활성화 시켜주는 역할의 함수가 된다.
+
+<Fig n={2} src="/img/notes/lyra/game-feature-activate/02.png" caption="ExperienceManagerComponent 헤더파일에 추가 변수선언과, OnGameFeaturePluginLoadComplete" />
+
+<Fig n={3} src="/img/notes/lyra/game-feature-activate/03.png" caption="ExperienceManagerComponent의 OnExperienceLoadComplete()" />
+
+GameFeatureSubsystem이 등장하는데, 이 친구는 EngineSubsystem을 상속받는다! 기억해두자.
+
+1. 람다식을 통해 URL을 저장 FeaturePluginList를 전부 순회하며 GameFeatureSubsystem에 접근하여 해당하는 이름을 통해 URL을 반환해주는 정말 편리한 유틸함수 GetPluginURLByName()을 기억해두자! 아무튼 해당 URL을 저장!
+2. 해당 Experience의 GameFeaturesToEnable에 등록된 Plugin만 활성화할 Plugin 후보군으로 등록 GameFeaturesToEnable은 plugin을 로딩의 연결고리라고 생각!
+3. 람다식을 통해 추가된 URL의 개수를 파악하고 존재여부 확인 존재한다면 해당 플러그인을 순회하며 GameFeatureSubsystem의 또 다른 갓갓 유틸함수 LoadAndActivateGameFeaturePlugin()을 호출한다. 이름에서 알 수 있듯이 해당 플러그인을 로드와 동시에 활성화해주는 함수이다. 그리고 추가로 활성화가 완료되었을때 어떤 함수를 호출할지 Delegate등록을 제공한다.
+
+그리고 해당 Delegate에 OnGameFeaturePluginLoadComplete<strong>(▲그림2.)</strong>를 호출하도록 하였는데 단순히 Plugin이 모두 로딩되었다면 OnExperienceFullLoadCompleted를 호출하도록 하는 로직이다.
+
+<Fig n={4} src="/img/notes/lyra/game-feature-activate/04.png" caption="ShooterCore의 ExperienceDefinition" />
+
+<Fig n={5} src="/img/notes/lyra/game-feature-activate/05.png" caption="디버그 결과 및 GameFeature State 변경 확인" />
+
+ExperienceDefinition에 GamFeatureToEnable을 추가해주고, 디버그를 찍어보면 아주 잘된다!

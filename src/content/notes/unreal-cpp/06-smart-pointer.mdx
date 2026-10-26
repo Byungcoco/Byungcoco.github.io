@@ -1,0 +1,349 @@
+---
+series: unreal-cpp
+order: 6
+title: "스마트포인터"
+date: "2024-12-19"
+source: https://byungcoco.tistory.com/28
+---
+import Fig from '../../../components/Fig.astro';
+
+## 언리얼 스마트 포인터 라이브러리
+
+메모리 할당과 추적의 부담을 해소해주도록 설계된 C++11 스마트 포인터들의 커스텀 구현이다. 쉐어드 포인터, 위크포인터, 그리고 유니크 포인터가 포함되어 있다. 또한 "UObject"로 부터 파생된 언리얼 오브젝트와 호환되지 않는다. GC 시스템의 관리하에 있기 때문이다.
+
+- 다른 블로그의 스마트 포인터 예제를 참고해 재구성하는 과정에서 발생한 문제이다. 일반 C++ 클래스 내 멤버 변수로 스마트 포인터를 사용하면서, <strong>raw pointer를 동적 할당</strong>한 후 이를 TSharedPtr로 감싸 관리하는 상황이 등장한다. 이후에 <strong>TSharedPtr의 스코프가 종료되며 메모리가 해제</strong>되었음에도, <strong>해제된 메모리를 참조하는</strong> <strong>raw pointer</strong>를 통해 UE_LOG로 출력하는 위험한 코드 패턴이 발견된다. 이는 댕글링 포인터 유발과 동시에 때마다 예상치 못한 동작이 이루어질 수 있으므로 <strong>절대 지양해야할 패턴</strong>이다.
+
+## 1. 스마트 포인터 타입
+
+<div class="tbl">
+
+| <strong>Shared Pointers</strong> | 참조하는 오브젝트를 소유, 무기한으로 오브젝트의 소멸을 방지한다. 쉐어드 포인터는 null일 수 있으나 null이 될 수없음을 보장한다면 참조하는 오브젝트에 대하여 쉐어드 레퍼런스를 생성할 수 있다. |
+|---|---|
+| <strong>Shared Reference</strong> | 참조하는 오브젝트를 소유, null이 될 수없는 오브젝트를 참조해야 한다. 이러한 특성때문에 쉐어드포인트로 변환가능하며, 변환된 쉐어드포인터는 무조건 유효한 오브젝트를 참조한다는 점이 보장된다. |
+| <strong>Weak Pointers</strong> | 쉐어드 포인터와 비슷하지만 참조하는 오브젝트를 소유하지않는다. 그래서 생명 주기에 영향을 주지않아 언제든 null일수 있다. 그래서 참조하는 오브젝트에 쉐어드 포인터를 생성할 수 있고 일시적인 안전한접근을 보장한다. |
+| <strong>Unique Pointers</strong> | 참조하는 오브젝트를 명시적으로 혼자만 소유한다. 특정 자원에 대해서 하나의 유니크포인트만 존재하기 때문에 소유권을 이전할 수 있지만 공유는 할 수 없다. 따라서 복사도 불가능하고 해당 유니크 포인터가 Scope를 벗어나게 되면 오브젝트가 자동 소멸한다. - 유니크포인터가 참조하는 오브젝트에 쉐어드 포인터, 레퍼런스를 생성하면 위험하다! 유일성이 보장되기 때문에 소유권을 이전하지 않는 이상 유니크 포인터 소멸시 다른 스마트 포인터들이 가르킨다 한들, 오브젝트가 소멸되는것을 막을 수 없다. |
+
+</div>
+
+## 2. 퍼포먼스
+
+스마트 포인터는 특정 하이레벨 시스템이나 자원관리, 툴프로그램에 매우 적합하지만 C++ 기본 포인터보다 느리며, 오버헤드 우려때문에 렌더링과 로우 레벨 엔진 코드에서는 덜 유용하다.
+
+#### 퍼포먼스 이점
+
+- 모든 연산이 <strong>고정비(constant-time)</strong> 이다. 참조 카운팅, 소유권 이전, 해제 여부 확인등의 작업이 <strong>항상 일정한 시간 안에 처리</strong>된다는 뜻
+- 스마트 포인터들을 <strong>복사해도 메모리 할당이 이루어지지 않음</strong>
+- 멀티스레드 접근에 안전한 <strong>스레드 세이프버전을 제공</strong>(Lock없음)
+
+#### 문제점
+
+- 스마트 포인터 생성 및 복사는 C++ 기본 포인터의 <strong>생성 및 복사보다 더 많은 오버헤드</strong>가 발생
+- 참조 카운트를 유지하면 <strong>기본 연산에 주기가 추가</strong>
+- C++ 포인터보다 메모리 사용량이 더 높을 수 있음
+- 레퍼런스 컨트롤러에는 두번의 힙 할당량이 있지만, MakeShared를 사용하면 두번째 할당을 피할수 있음
+
+## 3. 스마트포인터 예제
+
+> <strong>일반 C++ 포인터 예제</strong>
+
+```cpp
+void UPrtGameInstance::Init()
+{
+	Super::Init();
+	UE_LOG(LogPrt, Warning, TEXT("UPrtGameInstance Init"));
+	UE_LOG(LogPrt, Warning, TEXT("===============Step 1==============="));
+
+	FHouse* HouseAddress = new FHouse();
+	UE_LOG(LogPrt, Warning, TEXT("My new house size: %d"), HouseAddress->Size);
+
+	if (HouseAddress)
+	{
+		delete HouseAddress;
+		UE_LOG(LogPrt, Warning, TEXT("After delete house size: %d"), HouseAddress->Size);
+		HouseAddress = nullptr;
+	}
+}
+```
+
+<Fig n={1} src="/img/notes/unreal-cpp/smart-pointer/01.png" caption="" />
+
+집이라는 공간을 동적할당하고, 포인터로 집크기 값을 참조했을때와 삭제하고 나서의 집크기를 참조했을 때를 출력으로 나타내었다. 이렇게 delete를 하고 쓰레기 값을 nullptr로 밀어주는 과정까지 동적할당의 해제 및 삭제의 역할이다. 하지만 종종 이러한 해제 및 삭제를 하지 않게되면 할당된 공간이 여전히 남아있고, 새로운 집을 다른 다른 곳에 지어가며 공간을 낭비하게 된다.
+
+스마트 포인터는 이러한 실수를 방지해주기 위해 "집"이라는 공간에서 떠난다는 신고만 하면 알아서 철거를 해주는 시스템이다. 일반 포인터와 다르게 스마트 포인터는 객체의 "소유권"을 증명하는 개념이다. 일반 C++에서는 집을 없애기 위해서 해당 주소(포인터)에 직접 접근하여 철거를 진행하지만, <strong>스마트 포인터는 "소유권" 여부에 따라 집이 자동으로 철거</strong>된다.
+
+#### 유니크 포인터
+
+유니크 포인터는 오브젝트를 혼자만 소유하게 되는데, 이를 집에 비유하자면 <strong>단독 명의</strong>라 할 수 있겠다. 이 집의 소유권을 주장할 수 있는 사람은 단 한명이고, 집은 그대로 두고 소유권 이전이 가능하다 라는 느낌이다. 소유권 이전은 C++에서 Move Semantic이라고 하는데, 언리얼에서는 <strong>MoveTemp</strong>라는 이름으로 API를 제공한다.
+
+```cpp
+void UPrtGameInstance::Init()
+{
+	Super::Init();
+	UE_LOG(LogPrt, Warning, TEXT("UPrtGameInstance Init"));
+	// ===============Step 1===============
+		UE_LOG(LogPrt, Warning, TEXT("===============Step 1==============="));
+
+	FHouse* HouseAddress = new FHouse();
+	UE_LOG(LogPrt, Warning, TEXT("My new house size: %d"), HouseAddress->Size);
+
+	if (HouseAddress)
+	{
+		delete HouseAddress;
+		UE_LOG(LogPrt, Warning, TEXT("After delete house size: %d"), HouseAddress->Size);
+		HouseAddress = nullptr;
+	}
+
+	// ===============Step 2 UniquePointer ===============
+	UE_LOG(LogPrt, Warning, TEXT("===============Step 2==============="));
+	HouseAddress = new FHouse();
+	HouseAddress->Size = 100;
+	UE_LOG(LogPrt, Warning, TEXT("Build again my new house size: %d"), HouseAddress->Size);
+	{
+		TUniquePtr<FHouse> MyHouseDeed = TUniquePtr<FHouse>(HouseAddress);
+
+		if (MyHouseDeed.IsValid())
+		{
+			UE_LOG(LogPrt, Warning, TEXT("This house is soley owned by me, my house size: %d"), MyHouseDeed->Size);
+		}
+
+		// 소유권 이전
+		TUniquePtr<FHouse> FriendsHouseDeed = MoveTemp(MyHouseDeed);
+
+		if (FriendsHouseDeed.IsValid())
+		{
+			UE_LOG(LogPrt, Warning, TEXT("Sold the house to my friend, friend house size: %d"), FriendsHouseDeed->Size);
+		}
+	}
+
+	UE_LOG(LogPrt, Warning, TEXT("The ownership was lost, so the house was demolished, house size: %d"), HouseAddress->Size);
+}
+```
+
+<Fig n={2} src="/img/notes/unreal-cpp/smart-pointer/02.png" caption="" />
+
+<Fig n={3} src="/img/notes/unreal-cpp/smart-pointer/03.png" caption="▲ 소유권 이전 후(MoveTemp) 변화" />
+
+#### 공유 포인터
+
+가장 많이 사용되는 공유포인터는 말 그대로 객체를 여러 곳에서 참조할 때 사용되는데, <strong>공동명의</strong>로 누구나 집을 소유하게 하고 싶으면 이 포인터를 사용하면 된다. <strong>내부적으로 레퍼런스 카운팅</strong>을 통해 관리되며 <strong>카운트가 0이되면 <strong>자</strong>동으로 객체를 소멸</strong>한다.
+
+```cpp
+void UPrtGameInstance::Init()
+{
+	Super::Init();
+	UE_LOG(LogPrt, Warning, TEXT("UPrtGameInstance Init"));
+	// ===============Step 3===============
+		UE_LOG(LogPrt, Warning, TEXT("===============Step 3==============="));
+
+	FHouse* HouseAddress = new FHouse();
+	HouseAddress->Size = 150;
+	UE_LOG(LogPrt, Warning, TEXT("My new house size: %d"), HouseAddress->Size);
+	{
+		// 참조포인터
+		TSharedPtr<FHouse> MyHouseDeed = MakeShareable(HouseAddress);
+		if (MyHouseDeed.IsValid())
+		{
+			UE_LOG(LogPrt, Warning, TEXT("The house can now be co-owned, house size: %d"), MyHouseDeed->Size);
+
+			if (MyHouseDeed.IsUnique())
+			{
+				UE_LOG(LogPrt, Warning, TEXT("Currently own it by myself, house size: %d"), MyHouseDeed->Size);
+			}
+		}
+
+		// 친구와 공동명의
+		TSharedPtr<FHouse> FriendsHouseDeed = MyHouseDeed;
+		if (!FriendsHouseDeed.IsUnique())
+		{
+			UE_LOG(LogPrt, Warning, TEXT("Started co-owning the house with my friend, house size: %d"), FriendsHouseDeed->Size);
+		}
+
+		// 소유권 포기
+		MyHouseDeed.Reset();
+		if (FriendsHouseDeed.IsUnique())
+		{
+			UE_LOG(LogPrt, Warning, TEXT("My friend now solely owns the house, house size: %d"), FriendsHouseDeed->Size);
+		}
+
+		UE_LOG(LogPrt, Warning, TEXT("The house is still there, house size: %d"), HouseAddress->Size);
+	}
+
+	UE_LOG(LogPrt, Warning, TEXT("The house was automatically demolished, house size: %d"), HouseAddress->Size);
+}
+```
+
+<Fig n={4} src="/img/notes/unreal-cpp/smart-pointer/04.png" caption="" />
+
+이와 같이 처음 소유권을 주장했던 MyHouseDeed가 Reset 되었음에도 FriendHouseDeed가 남아있어서 객체는 사라지지 않는다. 그리고 소유권을 주장하던 모든 포인터들이 소멸하게되면 자동으로 해제되는 모습까지 보여준다. 이렇게 편리한 공유포인터에도 문제점이있는데, 대표적으로 <strong>순환참조(Circular Reference) 문제</strong>가 있다.
+
+#### 공유 포인터의 순환참조 문제 발생
+
+```cpp
+class A;
+class B;
+
+class A
+{
+public:
+    TSharedPtr<B> B_SharedPtr;
+    ~A()
+    {
+        UE_LOG(LogPrt, Warning, TEXT("A Destroyed"));
+    }
+};
+
+class B
+{
+public:
+    TSharedPtr<A> A_SharedPtr;
+    ~B()
+    {
+        UE_LOG(LogPrt, Warning, TEXT("B Destroyed"));
+    }
+};
+
+void UPrtGameInstance::Init()
+{
+	Super::Init();
+	UE_LOG(LogPrt, Warning, TEXT("UPrtGameInstance Init"));
+	// ===============Step 4===============
+    UE_LOG(LogPrt, Warning, TEXT("===============Step 4==============="));
+    {
+        TSharedPtr<A> A_Instance = MakeShared<A>();
+        TSharedPtr<B> B_Instance = MakeShared<B>();
+
+        A_Instance->B_SharedPtr = B_Instance;
+        B_Instance->A_SharedPtr = A_Instance;
+        UE_LOG(LogPrt, Warning, TEXT("End of Scope"));
+    }
+
+    UE_LOG(LogPrt, Warning, TEXT("UPrtGameInstance Init End"));
+}
+```
+
+<Fig n={5} src="/img/notes/unreal-cpp/smart-pointer/05.png" caption="" />
+
+분명 소멸 Log가 떠야하는데, <strong>순환 참조가 발생하여 RefCount가 유지</strong>되고 메모리 해제가 이루어지지 않아 <strong>메모리 누수(Memory Leak)이 발생</strong>한다. 그래서 설계를 할 때 <strong>강한 참조가 단방향</strong>으로 이루어지도록 한 쪽을 WeakPtr로 참조해야한다. 그래서 Class A의 SharedPtr을 WeakPtr로 변경후 출력해보면
+
+<Fig n={6} src="/img/notes/unreal-cpp/smart-pointer/06.png" caption="" />
+
+소멸자 호출이 정상적으로 이루어진다.
+
+#### WaekPointer
+
+위의 예제에서 알 수 있듯이 가르키는 해당 객체에 대한 <strong>소유권이 없어 <strong>R</strong>efCount가 발생하지 않지만</strong> 필요할때 선언해서 사용가능하다. 이때 소유권을 보장못한다는 점을 유의해서 사용해야하는데 이는 <strong>"Pin()"이라는 함수로 "해당 객체를 안전하게 참조할 수 있는지 확인 후 접근"</strong>에 대한 유틸 함수를 제공한다.
+
+## 4. 침범형 접근자
+
+더보기
+
+<strong>이 부분은 필자도 공식문서를 보면서 이해는 가지만 어떤 상황에서 써야할지 정확히 모르겠다. 일단 최대한 이해한대로 예제를 만들어보았다.</strong>
+
+쉐어드 포인터는 비침범형으로 오브젝트가 스마트 포인터의 소유하에 있는지 알 수 없다. 어떠한 경우에서 이 오브젝트를 쉐어드 포인터 자체로 접근하려는 경우가 있을 수 있다. 이럴때는 쉐어드 포인터로 접근하고자 하는 오브젝트의 클래스가 TSharedFromThis에서 상속구조가 이루어 져야한다. 상속받은 TSharedFromThis에서 AsShared(), SharedThis()를 제공하며 TSharedRef&lt;=&gt;TSharedPtr 로 변환 가능하다. AsShared는 호출되는 오브젝트의 TSharedFromThis를 바로 상속받는 타입을 반환, SharedThis는 this에서 자신의 타입과 함께 TSharedRef나 포인터를 반환하게 된다.
+
+해당 예제는 TSharedFromThis를 활용하여 RegisterToRegistry()함수를 통해 자기 자신(This)을 안전하게 TSharedRef로 변환, FEventRegistry에 등록하는 방법을 보여준다.
+
+> 예제
+
+```cpp
+#include "PrtGameInstance.h"
+#include "Practice/PrtLogChannels.h"
+
+class FEventRegistry;
+
+/*
+* EventListener
+*/
+class FEventListener : public TSharedFromThis<FEventListener>
+{
+public:
+	virtual void OnEventTriggered()
+	{
+		UE_LOG(LogPrt, Warning, TEXT("Base Event Listner Triggered"));
+	}
+
+	virtual void RegisterToRegistry(FEventRegistry& Registry);
+};
+
+/*
+* EventRegistry
+*/
+class FEventRegistry
+{
+public:
+	void RegisterListner(TSharedRef<FEventListener> Listener)
+	{
+		Listeners.Add(Listener);
+	}
+
+	TArray<TSharedRef<FEventListener>> GetListeners()
+	{
+		return Listeners;
+	}
+
+	void TriggerEvent()
+	{
+		for (const auto& Listener : Listeners)
+		{
+			Listener->OnEventTriggered();
+		}
+	}
+
+private:
+	TArray<TSharedRef<FEventListener>> Listeners;
+};
+
+/*
+* EventListener::RegisterToRegistry
+*/
+void FEventListener::RegisterToRegistry(FEventRegistry& Registry)
+{
+	TSharedRef<FEventListener> ThisAsSharedRef = AsShared();
+	Registry.RegisterListner(ThisAsSharedRef);
+}
+
+/*
+* SpecificListener
+*/
+class FSpecificListener : public FEventListener
+{
+public:
+	virtual void OnEventTriggered() override
+	{
+		UE_LOG(LogPrt, Warning, TEXT("Specific Event Listner Triggered"));
+	}
+
+	virtual void RegisterToRegistry(FEventRegistry& Registry) override;
+};
+
+void FSpecificListener::RegisterToRegistry(FEventRegistry& Registry)
+{
+	TSharedRef<FEventListener> SharedThisRef = SharedThis(this);
+	Registry.RegisterListner(SharedThisRef);
+}
+```
+
+```csharp
+void UPrtGameInstance::Init()
+{
+	Super::Init();
+
+	UE_LOG(LogPrt, Warning, TEXT("UPrtGameInstance Init"));
+
+	FEventRegistry EventRegistry;
+
+	TSharedRef<FEventListener> BaseListener = MakeShared<FEventListener>();
+	TSharedRef<FSpecificListener> SpecificListener = MakeShared<FSpecificListener>();
+
+	BaseListener->RegisterToRegistry(EventRegistry);
+	SpecificListener->RegisterToRegistry(EventRegistry);
+
+	EventRegistry.TriggerEvent();
+}
+```
+
+> 출력
+
+*참고
+
+[https://kyoun.tistory.com/146](https://kyoun.tistory.com/146)

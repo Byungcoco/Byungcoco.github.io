@@ -1,0 +1,91 @@
+---
+series: lyra
+order: 22
+title: "WeaponAnimation"
+date: "2025-01-14"
+source: https://byungcoco.tistory.com/46
+---
+import Fig from '../../../components/Fig.astro';
+
+<Fig n={1} src="/img/notes/lyra/weapon-animation/01.png" caption="" />
+
+<Fig n={2} src="/img/notes/lyra/weapon-animation/02.png" caption="" />
+
+<Fig n={3} src="/img/notes/lyra/weapon-animation/03.png" caption="" />
+
+일전에 만들었던 WeaponInstanceBase 블루프린트로 가서 함수와 대단한 이름의 매크로를만들어주고
+
+<Fig n={4} src="/img/notes/lyra/weapon-animation/04.png" caption="" />
+
+Montage? 몽타주가 왜 있는걸까? 내가 권총을 장착했을때 권총 장착한거에 맞게 발동되는것들(순간적인 애니메이션)을 위해서 있다. 
+bEquipped가 있는이유는 장착했을때와 장착해제했을때 애니메이션 두개가있을건데 그런것을 구분하기위해 존재한다고 보면 된다.
+
+<Fig n={5} src="/img/notes/lyra/weapon-animation/05.png" caption="" />
+
+예전에 Cosmetic 진행 했을때 PawnComponent_CharacterPart에서 GetCombinedTags를 통해 태그를 필터링했었는데, 이부분을 사용하기위해 UFUNCTION을 해주자. 
+복습하자면 필터링된 태그를 들고와서 SelectionBodyStyle을 통해 Mesh Rule에 알맞은 BodyStyle 그러니까 SkeletalMesh를 반환했었다. 
+이 패턴과 동일한 AnimLayer를 들고오는걸 블루프린터를 통해 구현할것이다.
+
+<Fig n={6} src="/img/notes/lyra/weapon-animation/06.png" caption="DetermineCosmeticTags 블루프린트 로직" />
+
+DetermineCosmeticTags의 로직을 다음과같이 만들어주자. 이제 Tag를 가져왔으니 맞는 AnimLayer를 받아오면 된다.
+
+<Fig n={7} src="/img/notes/lyra/weapon-animation/07.png" caption="" />
+
+CosmeticAnimationTypes으로가서 이렇게 만들어주면된다. 일전에 Cosmetic 작업했을때 SelectBestBodyStyle, 그러니까 MeshRule을 순회하며 Tag에 맞는 Skeletal Mesh를 반환했던것과 똑같다.
+
+<Fig n={8} src="/img/notes/lyra/weapon-animation/08.png" caption="" />
+
+<Fig n={9} src="/img/notes/lyra/weapon-animation/09.png" caption="" />
+
+블루프린트 사용할때 편리한 함수이다.
+GetTypedPawn의 경우 현재 Equipment를 장착할 Pawn을 가져와주는것이다. 
+C++정의에는 APawn*을 반환하지만, BP에서는 PawnType에 따라 OutputType이 결정되도록 Redirect해주는 DeterminesOutputType키워드를 사용했다. 
+그러니까 우리가 원하는 타입으로 형변환 해서 가져올수있는 블루프린트에서 가져올 수 있는 방식이다.
+
+<Fig n={10} src="/img/notes/lyra/weapon-animation/10.png" caption="" />
+
+<Fig n={11} src="/img/notes/lyra/weapon-animation/11.png" caption="" />
+
+bEquipped에 따라서 WeaponInsatnce에 정의된 AnimLayerSelectionSet을 들고오고 거기에 Tag를 전달해 Tag에 매칭 되는 AnimLayer를 들고온다.
+
+<Fig n={12} src="/img/notes/lyra/weapon-animation/12.png" caption="ActivateAnimLayerAndPlayPairedAnim 매크로의 로직" />
+
+DetermineCosmeticTags에서 캐싱된 Tags를 PickBestAnimLayer를 통해 매칭되는 AnimLayer를 들고온다. 
+근데 여기서 우리가 만들었던 GetTypedPawn에서 Mesh를 들고와 LinkAnimClassLayers라는게 있다. 말그대로 Link걸듯이 입력된 AnimLayer로 연결해준다고 보면된다. 
+이제 무기장착이 완료됬고 애니메이션이 정상적으로 변경되었으니 PlayMontage를 통해 실행을 해주는 것이다.
+
+<Fig n={13} src="/img/notes/lyra/weapon-animation/13.png" caption="" />
+
+설레는 마음으로 플레이 해보았지만? 여전히 되지 않는 모습이다.
+
+<Fig n={14} src="/img/notes/lyra/weapon-animation/14.png" caption="" />
+
+Layer를 못불러오는걸까? 브레이크포인트를 걸어 확인해봤지만 잘 할당해서 들고오는 모습이다.
+
+<Fig n={15} src="/img/notes/lyra/weapon-animation/15.png" caption="" />
+
+ShooterMannequin에 AnimClass가 없어서 그랬던것! ABP_Mannequin_Base를 넣어주자
+
+<Fig n={16} src="/img/notes/lyra/weapon-animation/16.png" caption="" />
+
+근데 이상한게 장착 무기 애니메이션은 잘 진행되지만? 캐릭터 마네킹은 딱딱히 굳어있는 모습이다... 
+생각해보니 일전에 B_Manny는 Mesh를 넣어 Character ChildActor에 따로 붙여줬던 기억이 있다. 그리고 B_Manny는 Mesh만 존재할뿐 AnimLayer가 없다. 실제로 설정 할 수도 없다. 하나의 형태뿐이기 때문에 
+근데 왜 권총은 잘될까? 이전에 포스팅했던 글에서 강조했던것 처럼 캐릭터에 붙는 장비류들은 캐릭터 Mesh에 직접 붙여야 AnimLayer가 작동한다고 했었다. 그리고 권총이 잘된다는걸 생각해보면 Character에 Mesh가 있었다! 
+Invisible로 투명하게 뼈대만 존재하는 Mesh를 붙여준 기억이 있을것이다. 그럼 어떻게 B_Manny를 매핑시킬까...?
+
+<Fig n={17} src="/img/notes/lyra/weapon-animation/17.png" caption="" />
+
+일단, Lyra에서 B_Mannequin_CopyPose를 Migrate하자! 그리고 이것을 B_Manny의 Animation에 적용해준다. 그럼 도대체 CopyPose가 무엇이냐? 위에 text에 적힌대로 부모의 mesh component를 가져온다.
+
+<Fig n={18} src="/img/notes/lyra/weapon-animation/18.png" caption="" />
+
+아주 잘된다...! 
+
+그럼 마지막으로 애니메이션이 어떻게 발생되는가???를 정리해보자.
+
+EquipmentManager에서 EquipItem을 통해 List에서 AddEntry를 하면 스폰이되고 Instance를 리턴해줬다. 그 Instance에 OnEquipped를 호출하게 되는데? 
+우리는 OnEquipped를 바로 Blueprint K2_OnEquipped로 연결해줬었다. OnEquipped Event가 발동되면 모든 현재 Mesh에 맞는 TagContainer를 들고오고 Tag에 매칭되는 Layer를 선택해오고(아직은 Tag를 추가해서 작업하지 않아서 Deafult 반환) GetTypedPawn(BlueprintCallable로 만들었던, DeterminesOutputType을 PawnType으로 지정해서 캐스팅된 Pawn을 반환)을 통해 우리의 Character Mesh에 접근해서 LinkAnimClassLayer를 호출하고 PlayMontage를 한다. 
+추가적으로 B_Manny는 형태뿐인 Mesh인데 CopyPose를 통해 부모의 AnimLayer를 복사해오면서 매핑시켜 작동된다. 
+
+너무나 복잡하지만 나만의 모듈을 만들기위해 잘 복습하자!!

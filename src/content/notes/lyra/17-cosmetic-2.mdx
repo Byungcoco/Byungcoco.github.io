@@ -1,0 +1,59 @@
+---
+series: lyra
+order: 17
+title: "Cosmetic(2)"
+date: "2025-01-11"
+source: https://byungcoco.tistory.com/41
+---
+import Fig from '../../../components/Fig.astro';
+
+<Fig n={1} src="/img/notes/lyra/cosmetic-2/01.png" caption="ShooterCore의 Character마네킹" />
+
+CP의 경우 AddComponent Action Config를 통해 모든 Controller에 B_PickRandomCharacter를 부착시켰다 
+근데 PP경우 B_HeroDefault를 상속받은 캐릭터에게 직접 부착을 한다. 왜그런걸까? 컨트롤러 같은 경우에는 Mesh에 대한 가벼운 meta(TSubclassOf)데이터를 들고있다. 반면 PP는 인스턴스된 무거운 Mesh를 가지고있고, 프로젝트가 확장될때를 고려해 최적화를 한것이다. 즉, 카테고리별로 B_Hero_ShooterMannequin과 같이 애초에 분리해서 해당하는 Cosmetics를 직접 부착하는 형식인것이다. (B_Creature_Pig에 B_CreatureComponents를 직접 부착한다던지..)
+
+## 1. 장착 구현
+
+액터에 붙였을때 액터에 맞는 Mesh를 들고올거고 그것을 Tag를 이용해서 구분한다. 그래서 Actor와 Tag가 한세트로 만들어져있는 Actor클래스 TaggedActor를 생성해준다. Lyra에선 해당 클래스내에 GameplayTag를 설정하고 관련 로직이있지만, 본강의에서는 중요한 부분이 아니기때문에 형태만 갖추고 진행한다.
+
+<Fig n={2} src="/img/notes/lyra/cosmetic-2/02.png" caption="B_Manny" />
+
+TaggedActor를 상속받는 블루프린트에 SkeletalMeshComponent를 추가해주고 MannyMesh를 MeshAsset에 등록해준다. 즉 TaggedActor는 MeshAsset을 들고있고, PP의 DefaultMesh가 장착되고 TaggedActor에 등록된 MeshAsset이 소환된다.
+
+<Fig n={3} src="/img/notes/lyra/cosmetic-2/03.png" caption="UBJCntrollerComponent_CharacterParts의 AddCharacterParts()와 AddCharacterPartInternal()" />
+
+장착의 시작점은 CP AddCharacterPart와 AddCharacterPartInternal함수를 정의해주는데 둘이 생긴게 유사하다. 
+실질적으로 로직을 가지고있는 함수는 Internal인데 AddCharacterPart는 단순히 Internal만 호출해준다. 
+Lyra를 분석하다가 왜 이런 짓을하지? 라고 생각을 한다면 대부분 데디케이트서버와 관련되있다고 보자. 
+실제 Lyra에서는 자세한 코드와 과정이 많지만 Parts를 장착하는데에 중점을 두고 있기때문에 생략하겠다. 
+CharacterParts는 CharacterPart에 대한 메타데이터와 Handle을 들고있는 Entry이다.
+
+> AddDefaulted_GetRef
+
+<Fig n={4} src="/img/notes/lyra/cosmetic-2/04.png" caption="AddDefaulted_GetRef()" />
+
+.AddDefaulted_GetRef()는 내부적으로 크기를 할당한후 할당한 영역의 포인터를 넘겨준다. 로직에 따르면 NewEntry를 만든 후에 CharacterParts에 넘겨줘야하는데, 당연하게도 이 과정은 복사연산이 일어난다. 즉, array의 맨끝에 공간을 할당하고 그 주소값을 넘겨 해당 주소값에 데이터를 넣는 작업을 가능하여 복사연산이 일어나지않게 한다.
+
+<Fig n={5} src="/img/notes/lyra/cosmetic-2/05.png" caption="UBJPawnComponent_CharacterParts의 GetPawnCustomizer()" />
+
+앞서 PC를 상속받는 B_MannequinPawnCosmetics를 B_Hero_ShooterMannequin에 직접 추가해주는 작업을 했었다. 
+위 로직은 B_MannequinPawnCosmetics가 반환되기를 기대하고 있다.
+
+돌아와서 PawnCustomizer의 AddCharacterPart에 메타데이터 참조를 넘겨주며 호출하고있다. 동시에 Handle도 리턴받는다. 즉 고유 Handle을 리턴한다는것은 PP에서 실제 인스턴스화를 진행한다는것이고
+
+<Fig n={6} src="/img/notes/lyra/cosmetic-2/06.png" caption="UBJPawnComponent_CharacterParts의 AddCharacterPart()" />
+
+앞서 List에서 실질적인 Part인스턴스를 관리한다고했는데 List의 AddEntry로 바로 넘기는것을 볼수있다.
+
+<Fig n={7} src="/img/notes/lyra/cosmetic-2/07.png" caption="FBJCharacterPartList의 AddEntry()" />
+
+HasAuthority에 대한 설명은 [https://velog.io/@seok9403/%EC%96%B8%EB%A6%AC%EC%96%BC-%EB%A9%80%ED%8B%B0%ED%94%8C%EB%A0%88%EC%9D%B4-%EC%9D%B4%ED%95%B4%ED%95%98%EA%B8%B0](https://velog.io/@seok9403/%EC%96%B8%EB%A6%AC%EC%96%BC-%EB%A9%80%ED%8B%B0%ED%94%8C%EB%A0%88%EC%9D%B4-%EC%9D%B4%ED%95%B4%ED%95%98%EA%B8%B0)
+if(SpawnActorForEntry(NewEntry))전 부분은 AppliedEntry에 메타데이터와 Handle값 부여를 해준거고 그 이후부터 실제로 메타데이터를 전달받아 스폰이 진행된다. BroadcastChaged는 주석에 달린 설명을보고 조금있다가 구현하며 분석을 이어가겠다.
+
+<Fig n={8} src="/img/notes/lyra/cosmetic-2/08.png" caption="FBJCharacterList의 SpawnActorForEntry()" />
+
+이어서 SpawnActorForEntry는 Cosmetics System의 핵심이라고 보면되는데, 로직을 보자면 먼저 PartClass 메타데이터를 확인하고 없으면 할수있는게 없어 바로 nullptr을 뱉는다. SceneComponent를 통해 SocketName의 SpawnTransform을 얻어오는데, 나는 Root에 통째로 캐릭터 단위(B_Manny)를 붙일거기때문에 따로 사용하지않는다. 앞서 항상 반복해서 얘기했듯이 Actor와 Actor의 결합에 있어선 ChildActorComponent를 활용해아하므로 동적으로 할당해 가져온다. SocketName은 입력하지않으면 Root가 Default이기때문에 Pawn의 Root에 PartComponent를 Attatch한다. 
+Pawn의 ChildActorComponen에 SetChildActorClass를 실행하며 메타데이터를 넘겨주고있는데, 이 로직에서 Spawn이 따로 없는 이유이기도하다. 해당 함수를 실행하게 되면 메타데이터 클래스를 세팅하게되고 이어서 RegisterComponent();를 하면 주석에 적힌대로 RenderWorld에 변경내용을 전달하여 동시에 스폰을 진행한다. 
+추가로 언리얼에는 RnederWorld라는 월드와 데이터를 관리하는 월드가 따로있다. 멀티스레드 환경과 GPO렌더를 효율적으로 관리하기위해 나누어 놓았다. 바로 이어서 방금 스폰된 Actor를 GetChildActor를 통해 반환받아 로직이 이어진다. 주석을 참고하면 Tick의 순서를 잡아주는데,
+
+이때까지의 과정이 ComponentToAttachTo에 PartComponent를 붙이고 스폰하는 과정이였는데, 로직상 자식의 Component의 Tick이 부모 Component의 Tick보다 먼저 실행되선 안된다는걸 명시하고있다. SpawnedActor의 자식 Component들은 ComponentToAttachTo보다 Tick이 먼저 실행되어서는 안된다라고 AddTickPrerequisiteComponent함수를 통해 명시했다.

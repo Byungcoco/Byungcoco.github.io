@@ -1,0 +1,108 @@
+---
+series: lyra
+order: 8
+title: "PawnExtension(2)"
+date: "2025-01-10"
+source: https://byungcoco.tistory.com/32
+---
+import Fig from '../../../components/Fig.astro';
+
+## 핵심포인트
+
+- <strong>BindOnActorInitStateChanged()</strong> 인터페이스에서 제공하는 유틸함수로, 매개변수 FeatureName과 GameplayTag를 통해 해당 컴포넌트의 상태 변경이 감지되면 오버라이딩한 OnActorInitStateChanged()가 호출되는 함수이다. PawnExtensionComponent는 FeatureComponent들을 FeatureComponent들은 PawnExtensionComponent를 관찰하도록 설계하여 상태 업데이트가 동일하게 이루어지도록 제어한다.
+- <strong>OnPosses, Character의 SetupPlayerInputComponent()</strong> PawnExtensionComponent와 HeroComponent 둘다 Spawned=&gt;DataAvailable 상태로 넘어가는 과정에 PlayerController와 PlayerState를 체크하는데, 이는 최초 실행시점인 컴포넌트들의 BeginPlay()에서 이루어지고 이 시점에서는 아직 OnPosses가 진행되지 않아 상태업데이트가 막힌다. 그래서 Lyra에서는 PlayerController와 PlayerState의 존재가 확실히 보장받는 시점인 Character의 SetupPlayerInputComponent()를 활용하여 상태업데이트를 재차 진행한다.
+
+PawnExtension에 대해 틀을 만들어보며 파악해보았다면 관찰받는 대상인 HeroComponent를 분석해보며 어떤 차이점이 있는지 보자.
+
+<Fig n={1} src="/img/notes/lyra/pawn-extension-2/01.png" caption="HeroComponent의 헤더파일" />
+
+똑같이 FeatureName을 설정해주고 상태업데이트에 필요한 함수들을 오버라이딩해준다. PawnExtensionComponent와 달리 HandleChangeInitState를 오버라이딩해줬는데, 당연하게도 직접 데이터를 핸들링 해야하므로 각 상태에 따라 어떤 데이터를 초기화할지 설정한다.
+
+<Fig n={2} src="/img/notes/lyra/pawn-extension-2/02.png" caption="HeroComponent의 BeginPlay()" />
+
+HeroComponent의 BeginPlay를 보면 FeatureName을 PawnExtensionComponent의 FeatureName을 넣음으로써 서로 관찰하는 상태를 만든다.
+
+<Fig n={3} src="/img/notes/lyra/pawn-extension-2/03.png" caption="HeroComponent의 CheckDefaultInitialization()" />
+
+PawnExtensionComponent와 달리 자신의 상태만 변경한다. BeginPlay()외 PawnExtensionComponent의 CheckDefaultInitializationForImplementers()에 의해 호출된다.
+
+<Fig n={4} src="/img/notes/lyra/pawn-extension-2/04.png" caption="PawnExtensionComponent의 PawnData 캐싱" />
+
+더 진행하기 앞서 PawnExtensionComponent에서는 Experience의 PawnData를 캐싱해두고있는다. 왜냐하면 관찰받을 대상의 HeroComponent에서는 입력,카메라 등 캐릭터의 입력정보에 대한 데이터가 필요하기 때문이다. 그렇다면 누군가 캐싱을 진행해줘야하는데 추후에 분석이 이어지며 흐름에 맞게 등장할 예정이다.
+
+<Fig n={5} src="/img/notes/lyra/pawn-extension-2/05.png" caption="PawnExtensionComponent의 CanChangeInitState()" />
+
+<Fig n={6} src="/img/notes/lyra/pawn-extension-2/06.png" caption="GFCM의 HaveAllFeaturesReachedInitState()" />
+
+이제 본격적으로 PawnExtensionComponent는 상태 변경을 위해서 어떠한 조건들을 내세우고 있는지 보자. <strong>(▲그림5.)</strong>매개변수로 GFCM과 CurrentState, DesiredState가 있다. 이 함수가 호출되면 내부적으로 현재상태(CurrentState)에서 다음상태(DesiredState)로 넘어갈 준비가 되었는지 체크하는 함수이다.
+
+- InitState.Spawned Owner인 Pawn이 스폰이 진행되고 컴포넌트 부착이 진행되기때문에 오너가 존재한다면 해당 상태는 true를 반환한다.
+- InitState.Spawned =&gt; InitState.DataAvailable 이름에서 알 수 있듯이 해당 단계로 넘어가기 위해선 PawnData가 준비되어 있어야하고 해당 데이터 기반으로 초기화가 진행될 컨트롤러 또한 준비가 되어있어야함을 의미한다.
+- InitState.DataAvailable =&gt; InitState.DataInitialized <strong>(▲그림6.)</strong>GFCM의 HaveAllFeaturesReachedInitState()를 통해 PawnExtensionComponent가 Initialized 단계로 넘어가기 위해 관찰받는 컴포넌트들의 상태가 DataAvailable한 상태인지 일괄적으로 확인하는 함수이다. 당연하게도 단 하나의 컴포넌트라도 준비가 안되어있다면 false를 반환하게 된다. (내부적으로 인스턴스 고유 키를 통해 데이터를 가져와 FeatureComponent들의 State가 매개변수인 RequiredState와 일치하는지 순회하며 검사하는 로직이다.)
+- InitState.DataInitialized =&gt; InitState.GameplayReady Lyra에서도 동일하게 PawnExtension이 DataInitialized가 된다면 GameplayReady상태라고 보장하는 것 같다.
+- 마지막으로 위와 같이 선형적인 상태변경 요청이 아니라면 false를 반환한다.
+
+<Fig n={7} src="/img/notes/lyra/pawn-extension-2/07.png" caption="HeroComponent의 CanChangeInitState()" />
+
+<Fig n={8} src="/img/notes/lyra/pawn-extension-2/08.png" caption="GFCM의 HasFeatureReachedInitState()" />
+
+그렇다면 HeroComponent에서는 어떠한 조건들을 내세울까? PawnExtension과 동일한 로직은 제외하고 차이점이 있는부분만 확인해보겠다.
+
+- InitState.Spawned =&gt; InitState.DataAvailable 플레이어 스테이트의 존재여부에 따라 업데이트를 진행한다.
+- InitState.DataAvailable =&gt; InitState.DataInitialized PawnExtensionComponent와 다르게 <strong>(▲그림8.)</strong>GFCM의 HasFeatureReachedInitState()를 호출하는데, 살펴보면 매개변수로 입력받은 FeatrueName의 컴포넌트 상태가 내가 변경될 DataInitialized라면 넘어가겠다가 된다.
+
+<div class="note-box">
+
+PawnExtensionComponent와 HeroComponent의 CanChangeInitState를 보고 로직을 다시 한번 정리하자면 InitState.DataAvailable =&gt; InitState.DataInitialized는 구간에서 PawnExtensionComponent는 관찰받는 FeatureComponent들이
+
+DataAvailable 상태가 모두 완료되어야만 다음 상태로 넘어간다. 반면 FeatureComponent들은
+
+DataAvailable 상태가 됬더라도 관찰자인 PawnExtensionComponent가 DataInitialized 상태가 되어야만 넘어가는데, 넘어가지 않는 다는것은 자신 이외의 컴포넌트들이 아직
+
+DataAvailable이 되지 않았음을 의미하고 모두 완료될때까지 기다린다는 의미이다.
+
+</div>
+
+이렇게 진행된다면 누군가는 FeatureComponent들이나 PawnExtensionComponent의 상태가 변경가능함을, CanChangeInitState()여부를 물으며 상태변경이 이루어져야 한다는데, 이전 포스팅에서 잠깐 짚고넘어간 PawnExtensionComponent는 FeatureComponent들을 모두 관찰할것을, FeatureComponent는 PawnExtensionComponent를 주시할것을 BeginPlay()에서 BindOnActorInitStateChanged()로 선언 했었다.
+
+내부적으로 Delegate를 설정해서 주시하기로 선언한 해당 컴포넌트들의 상태가 변경이 감지되면 OnActorInitStateChaged()를 호출하게끔 설계되어있다. PawnExtensionComponent의 경우 Feature들의 상태 변화에 따라 OnActorInitStateChanged()가 호출되게 했었다.
+
+<Fig n={9} src="/img/notes/lyra/pawn-extension-2/09.png" caption="PawnExtensionComponent의 OnActorInitStateChanged()" />
+
+첫번째 조건문에서 알 수 있듯이 자신을 제외한 모든 FeatureComponent에 해당하는 조건이며 해당 FeatureState가 Available인경우에 로직을 실행한다.
+
+<Fig n={10} src="/img/notes/lyra/pawn-extension-2/10.png" caption="HeroComponent의 OnActorInitStateChanged()" />
+
+HeroComponent는 당연하게도 해당 Params의 FeatureName이 PawnExtensionComponent인 경우에만 로직을 실행하도록 조건을 걸어두었다. 또한 대장 컴포넌트가 먼저 Initialized상태가 됬다는것은 모든 FeatureComponent 상태가 DataAvailable임을 보장받으니 상태변경을 시도한다.
+
+정리하자면 위에서 설명한 PawnExtensionComponent 기준 DataAvailable에서 DataInitialized상태로 넘어가는 경우에 모든 FeatureComponent들을 준비시키는 로직이라고 보면된다.
+
+이어서 (▲그림4.)에서 ExtensionComponent가 PawnData를 캐싱하고있고 이를 DataAvailable상태로 넘어가기 위한 조건중 하나로 체크됬엇다. 그렇다면 누군가는 캐싱을 해주어야하는데 그 부분이 GameModeBase에서 이루어지게 된다.
+
+<Fig n={11} src="/img/notes/lyra/pawn-extension-2/11.png" caption="GameModeBase의 SpawnDefaultPawnAtTransform_Implementation()" />
+
+함수의 이름이 긴데, 접미어로 _Implementation가 붙은 함수는 Native BlueprintEvent이며 C++과 블루프린트에서 모두 구현이 가능하고 C++의 구현이 우선적으로 실행된다고 학습했었다. 이전에 Exeperience를 학습하며 GameModeBase에서 PlayerSpawn에 관한 로직이 이루어지는데 Experience라는 새로운 단위를 장착하고 이를 업데이트하는 과정에서 Player에게 안전하게 데이터가 전송이 이루어지도록 보장하기위해 PlayerSpawn을 다음 프레임으로 미뤘던 로직이 있었다. 그 로직의 일부를 담당하는, 함수이름 그대로 Default Pawn을 매개변수로 입력받은 위치에 스폰한다. 이미 구현되어있는 로직을 한번 래핑해서 사용하는데, 흐름상 Pawn이 스폰이 됫다는것은 Component부착이 이루어졌음을 의미하고 이를 통해 컴포넌트 유틸함수 FindComponentByClass를 통해 해당 ExtensionComponent를 반환한다.
+
+<Fig n={12} src="/img/notes/lyra/pawn-extension-2/12.png" caption="PawnExtensionComponent의 SetPawnData()" />
+
+그리고 굳이 GameModeBase에서 PawnData캐싱이 이루어지는 이유는 Experience 학습때 설명했었지만 PawnData를 반환하는 함수가 한곳에서 이루어져야만 추후에 문제가 생겼을때, 유지보수에서 유리하기때문이라고 했었다.
+
+정리하자면 GameModeBase단에서 Spawn을 마무리하는 과정의 함수를 래핑해서 해당 Pawn의 PawnExtensionComponent에 PawnData를 캐싱해주는 로직이다.
+
+그런데 여기서 약간의 문제가 있다. <strong>(▲그림5.)</strong>과 <strong>(▲그림7.)</strong>에서 각 컴포넌트들이 CanChangeInitState의 조건들 중에 Spawned=&gt;DataAvailable로 넘어가는 과정중 각각 Controller와 PlayerState를 체크하는데, 해당 부분에서 최초 BeginPlay()가 호출되어 상태를 갱신할 때 두 컴포넌트 모두 막힌다.이유는 각 컴포넌트들의 BeginPlay()는 캐릭터에 Posses가 진행되기전에 실행되는 로직으로 설계되어있다. 그리고 내부적으로 Posses가 진행이 되어야만 Controller가 장착이 이루어지고 바로 PlayerState도 업데이트가 진행되기 때문이다.그렇다는 뜻은 Posses가 이루어진 직후, Posses가 이루어졌다고 보장받는 시점이 필요한데 그 부분이 Character의 함수 SetupPlayerInputComponent(), 일반적으로 PlayerController에 입력정보를 세팅해줬던 함수가 바로 그 시점이다. 입력정보를 세팅해준다는 뜻은 Posses가 이루어졌으며 PlayerController의 존재가 보장받고 PlayerState의 업데이트도 이루어졌으니까!
+
+앞선 포스팅에서 Character에서 PawnExtensionComponent의 우선적인 장착이 보장되어야 하므로 생성자에서 생성과 동시에 캐싱을 진행했었다. 이를 이용하여 CheckDefaultInitialization()을 호출해준다.
+
+<Fig n={13} src="/img/notes/lyra/pawn-extension-2/13.png" caption="" />
+
+<Fig n={14} src="/img/notes/lyra/pawn-extension-2/14.png" caption="" />
+
+1. CheckDefaultInitializationForImplementers() 이전 포스팅에서 설명했듯이 호출자 PawnExtensionComponent를 제외한 관찰하기로 등록했던 FeatrueComponent들의 상태 업데이트를 진행한다. 이 호출 시점은 PlayerState의 정보에 접근이 가능하니 HeroComponent의 상태가 DataAvailable로 변경되고 PawnExtension이 DataInitialized로 넘어가지 못해 더 이상 상태 업데이트를 못한다. 이 후에 FeatureComponent들의 상태가 업데이트 될때마다 호출되는 함수<strong>(▲그림9.)</strong>가 호출되며 업데이트를 진행한다.
+2. ContinueInitStateChain() 을 통해서 PawnExtensionComponent는 최대 업데이트 가능한 구간까지, PlayerController가 존재함을 보장 받으니 DataAvailable로 진입하고 이어서 HeroComponent가 DataAvailable상태이니 DataInitialized까지 업데이트를 진행한다
+3. HeroComponent의 OnActorInitStateChanged 호출 같은 방식으로 PawnExtensionComponent의 상태가 업데이트 될때, DataInitialized가 됬을 때 <strong>(▲그림10.)</strong>을 호출하도록 등록해두었으니 바로 HeroComponent의 CheckDefaultInitialization<strong>(▲그림3.)</strong>이 호출되어 DataInitialized상태로 업데이트 된다.
+
+그렇게 결과적으로 DataInitialized상태에서 게임플레이 어빌리티가 생성되고, 플레이어 입력에 바인딩 된다. 그런 다음HeroComponent와 ExtensionComponent는 GameplayReady 상태로 업데이트 된다.
+
+<Fig n={15} src="/img/notes/lyra/pawn-extension-2/15.png" caption="HeroComponent의 HandleChangeInitState()" />
+
+마지막으로 PawnExtensionComponent는 컴포넌트들의 데이터 준비상태를 확인하고 상태업데이트를 제어하는 컴포넌트로서 실질적인 데이터 업데이트 여부는 각자의 FeatureComponent들에게 달려있다. 이를 실행하는 함수가 HandleChangeInitState였다. 첫번째 조건문에서 알수있듯이 DataAvailable=&gt;DataInitialized로 넘어가는 단에서 실행하는 함수로 AbilitySystem, Camera, Input에 관한 정보들을 업데이트 해준다.

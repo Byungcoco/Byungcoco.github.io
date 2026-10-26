@@ -1,0 +1,67 @@
+---
+series: lyra
+order: 20
+title: "Async_ExperienceReady"
+date: "2025-01-12"
+source: https://byungcoco.tistory.com/44
+---
+import Fig from '../../../components/Fig.astro';
+
+Inventory에다가 아이템을 넣어서 QuickBar로 넘기고 EquipmentManager로 넘기게되는데, Blueprint에서 작업하는 양이 되게많다. Blueprint에 용이한 클래스를 만들어보자
+
+<Fig n={1} src="/img/notes/lyra/async-experience-ready/01.png" caption="BlueprintAsyncActionBase를 상속받는 UAsyncAction_ExperienceReady" />
+
+<Fig n={2} src="/img/notes/lyra/async-experience-ready/02.png" caption="UAsyncAction_ExperienceReady.h" />
+
+블루프린트에서 Delegate를 바인딩하기위해선 DYNAMIC키워드가 포함되어야한다. 블루프린트를 사용할때 현재시점에서 Experience가 로딩 되었는지, 완료가되었는지 알수가 없기때문에 그것을 확인하기위한 Action이라고 보면된다.
+
+<Fig n={3} src="/img/notes/lyra/async-experience-ready/03.png" caption="UAsyncAction_ExperienceReady의 Activate()" />
+
+캐싱한 월드가 있고, GameState가 준비 되어있으면 바로 Step2로 넘어간다. 아니라면 GameStateSetEvent로 Step1을 바인딩 시켜둔다. 
+혹시나 World가 없다면 Destory를 하는데 직접적으로 하지않고, 내부적으로 GameInstance에서 레퍼런스 대상으로 제거시킨다. UAsyncAction 캐싱 위치가 GameInstance임을 알수있다. 
+유일하게 캐싱된 위치이다보니 GameInstance상에 존재하지 않다면 GC에 의해 삭제된다.
+
+<Fig n={4} src="/img/notes/lyra/async-experience-ready/04.png" caption="UAsyncAction_ExperienceReady의 Step1_HandleGameStateSet" />
+
+Step1으로 가게되면 바인딩 되었던 GameStateSetEvent를 초기화하고 Step2로 넘긴다.
+
+<Fig n={5} src="/img/notes/lyra/async-experience-ready/05.png" caption="UAsyncAction_ExperienceReady의 Step2_ListenToExperienceLoading()" />
+
+Step2의 목표는 Experience가 Load가 됬는지 확인하는 것이다.
+
+<strong>1.</strong>
+
+이단계에서는 GameState가 반드시 존재한다고 보장되기때문에 ExperienceManager를 가져올수 있다.
+
+<strong>2.</strong>
+
+로딩이 완료 됬음에도 불구하고 현재 프레임이아닌 다음프레임에 Step4로 넘어가는 이유는 뭘까?
+AsyncAction을 만든 이유 부터 생각해보면 내부적으로 Inventory아이템을 장착할때 쓰는데, 당연하게도 ExperienceLoad가 완료된 시점에 사용되어야하기때문이다. ExperienceLoad가 완료된 후에 PawnData에 의해서 Character가 생성이 된다. 아이템이 장착이 되어야 하는 순간이 ExperienceManager, Inventory, Equipment 등 모든게 다 부착이 되는 순간이면 되는데, 그 시점이 Character에 PossessedBy이다. 
+Character PossessedBy시점에서는 Controller가 Character 부착이되는 그순간이니까 필요한 모든 요소가 다 있을것이라 유추된다. 그 시점에서 아이템 장착을 실행해보았는데, 놀랍게도 아이템 장착이 올바르게 이루어지지 않는다. 분명 로직상 이루어져야하는게 맞는데? 가만히 생각해보면 Mesh를 선정할때 Cosmetic에 의해 이루어지는데, Mesh가 제대로 로드 되지않는 오류를 겪었었다.
+
+<Fig n={6} src="/img/notes/lyra/async-experience-ready/06.png" caption="BJControllerComponent_CharacterParts의 BeginPlay()" />
+
+그래서 ControllerComponent에서 BeginPlay를 통해 Pawn이 변경되면 OnPossessedPawnChanged Delegate에 CharacterPart를 추가하는 로직을 만들어 해결했었다. 
+그리고 아이템의 가장 큰 특징은 AnimLayer가 있어야만 장착이 이루어진다. 그리고 AnimLayer가 설정이 되려면 Mesh가 있어야한다. 
+즉, OnPossessedPawnChanged가 먼저 진행되고, 아이템관련 로직이 진행되어야한다. 이부분에서 문제가 발생했던것이다.
+
+<Fig n={7} src="/img/notes/lyra/async-experience-ready/07.png" caption="" />
+
+<Fig n={8} src="/img/notes/lyra/async-experience-ready/08.png" caption="AController의 Possess" />
+
+Posses함수를 보면 내부적으로 OnPosses가 호출되고 OnPosses내부에서 PossessedBy가 호출된다. 
+그다음에서야 마지막에 OnPossessedPawnChanged Delegate를 Broadcast해준다. 그런데, OnPosses나 PossessedBy 시점에서 Item을 장착시켜버리게 되면 순서가 꼬이게 되는것이다. 결론적으로 OnPossessedPawnChanged시점에 Mesh장착이 이루어지는데, OnPosses나 PossessedBy 시점에서 Inventory관련 장착이 시작되니 Mesh가 Item보다 빨라질수가 없는것이다. 
+Experience가 준비되었다 하더라도, 다음과같은 준비되지 않은 상태가 있을 수 있으니 다음 프레임에 처리하도록 SetTimerForNextTick 이벤트에 다음 Step을 등록해주는것이다.
+
+<strong>3.</strong>
+
+만약 안됬다면 우리가 만들었던 Delegate, Experience Load가 완료된 시점에 발생하는 Delegate에 Step3를 바인딩해둔다.
+
+<Fig n={9} src="/img/notes/lyra/async-experience-ready/09.png" caption="UAsyncAction_ExperienceReady의 Step3, Step4" />
+
+Step3에서는 현재 따로 ExperienceDefinition에 대해 처리할 로직이 없기때문에 넘어간다. Lyra에도 아무것도 안해두었다. 
+Step4에서는 OnReady 브로드캐스트해주고 소멸시켜준다.
+
+<Fig n={10} src="/img/notes/lyra/async-experience-ready/10.png" caption="UAsyncAction_ExperienceReady의 WaitForExperienceReady()" />
+
+WorldContext를 받아서 WorldContext에 맞는 World를 받아온다음에 캐싱하고, 등록을한다. 근데 AsyncAction_ExperienceReady를 동적으로 만들어서 넘겨주고있다. 그 말은 Action을 사용하기 위해서는 WaitForExperienceReady를 Blueprint에서 호출해주고 나온 값(Action)을 이용해서 Delegate를 등록하면 된다.

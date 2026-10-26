@@ -1,0 +1,71 @@
+---
+series: lyra
+order: 13
+title: "GameFeature / Portal UserFacingExperience Load"
+date: "2025-01-11"
+source: https://byungcoco.tistory.com/37
+---
+import Fig from '../../../components/Fig.astro';
+
+Lyra에서는 Experience의 단위를 통해서 Mode를 구분하는데, GameFeatrue System으로 한번 더 래핑해서 사용한다. 언리얼에서 추구하는 모듈화의 끝판! 핵심 기술중 하나인 GameFeatureSystem을 활용해 새로운 Experience를 만들어 보도록 하겠다.
+
+<Fig n={1} src="/img/notes/lyra/user-facing-experience/01.png" caption="GameFeature 생성" />
+
+<Fig n={2} src="/img/notes/lyra/user-facing-experience/02.png" caption="VS내 폴더구조" />
+
+폴더구조를 살펴보면 GameFeatures 내 ShooterCore 폴더가 생성되었는데, GameFeature 특성상 해당 폴더 내에 존재해야만 GameFeature로 인식이 된다. 폴더 정리한답시고 폴더 밖으로 빼버리면 플러그인 동작이 이루어 지지않는다!
+
+이렇게 생성이 완료되었으면 에디터를 켜서 Plugin폴더를 확인해보면 "ShooterCore Content"라는 폴더가 생겼고, 이 폴더 내에 GameFeatureData를 생성해주겠다.
+
+<Fig n={3} src="/img/notes/lyra/user-facing-experience/03.png" caption="GameFeatureData &quot;ShooterCore&quot;" />
+
+<Fig n={4} src="/img/notes/lyra/user-facing-experience/04.png" caption="ShooterCore Details" />
+
+GameFeatureData를 상속받는 ShooterCore란 DataAsset을 생성해주었다. 열어보면 <strong>(▲그림4.)</strong>와 같이 4가지의 상태가 존재한다.
+
+- Installed: 존재는 하지만 사용하지 않는것, 에디터의 플러그인 창에서 체크해제 상태
+- Registered: 여전히 사용하지 않지만 일단 사용하기 전에 내부적으로 캐싱되어 있는 상태
+- Loaded: 메모리에 로드되는 상태
+- Active: 본격적인 실행상태
+
+<Fig n={5} src="/img/notes/lyra/user-facing-experience/05.png" caption="ShooterCore Details2" />
+
+그리고 바로 아래에 Actions라는게 존재한다. 하나의 행동, 규칙을 정한다는 의미로 받아들이면 되는데, 추후에 추가할 AddComponents와 AbilitySystem을 학습하며 GameplayCue에 대한 규칙을 해당 Action을 통해 정의한다. 이 외에 이 "GameFeature가 활성화 되면 월드에 존재하는 캐릭터들에게 날 수 있는 규칙을 부여해줘!"의 단위가 Action이라고 할 수 있다. 더 나아가 런타임 도중에 "특정 이벤트가 발동되고 새로운 몬스터들이 소환된다! 일정 시간이 지나면 이벤트가 종료"와 같이 런타임 단계에 해당 GameFeature를 키거나 끔으로써 플레이어들에게 다양한 플레이경험을 보여줄 수 있다.
+
+두번째로 AssetManager가 존재하는데, 이게 존재하는 이유는 GameFeature단위에서 사용될 특정 Asset들만 Scan해서 사용할 수 있도록 지원해준다. 사용방법은 기존에 프로젝트 세팅을 통해서 PrimaryAssetType과 BaseClass 그리고 경로나 파일을 지정해서 스캔이 이루어지게 하는 방법과 똑같이 사용하면 된다!
+
+<Fig n={6} src="/img/notes/lyra/user-facing-experience/06.png" caption="ShooterCore의 UserFacingExperience만드는 과정" />
+
+Default UserFacingExperience를 만들었던것 처럼 ShooterCore 또한 AssetManager에 해당 Map과 ExperienceDefinition이 스캔 되도록 GameFeature단위의 AssetManager에 정의해준다. 후에 ShooterCore UserFacingExperience에 Scan대상에 올라온 Map과 ExperienceDefinition을 추가해준다.
+
+<Fig n={7} src="/img/notes/lyra/user-facing-experience/07.png" caption="ShooterCore전용 PawnData 생성 및 설정, ExperienceDefinition에 추가" />
+
+(▲그림7.)과 같이 ShooterCore전용 PawnData를 생성해주고 카메라와 전용 InputConfig를 설정해준다. 그리고 Shootercore ExperienceDefinition에 해당 PawnData를 Default로 추가해준다. 이러한 과정은 모두 Default맵을 만들때 이루어졌던 것들!
+
+<Fig n={8} src="/img/notes/lyra/user-facing-experience/08.png" caption="디폴트맵에서 PIE" />
+
+아주 잘생성된다! 하지만 ShooterCore에 해당되는 포탈에 BeginOverlap 이벤트를 발동시키게되면 해당 맵을 잘 로드하게 된다.
+
+<div class="note-box">
+
+그런데 한가지 문제가 있는데,
+
+<strong>(▲그림7.)</strong>
+
+에서  ShooterCore의 PawnData를 설정해주는 부분에서 Pawn Class를 지정해준 적이 없다. 정확히 말해 None인 상태이다. 그런데 Default맵에서 사용하던 Pawn이 그대로 로드 되어서 움직일 수 있는데, Map은 잘 로드되었지만 Experience가 로드되지 않았음을 유추 해볼 수 있다.
+
+</div>
+
+그렇다면 ExperienceId를 가져오는 부분이 GameModeBase에서 정확히 이루어지지 않음을 알 수 있다. 그래서 로딩될 Experience에 대해 PrimaryAssetId를 생성해서 OnMatchAssignmentGiven으로 넘겨주는 역할을 했던 함수, HandleMatchAssignmentIfNotExpectinOne()을 살펴보면,
+
+<Fig n={9} src="/img/notes/lyra/user-facing-experience/09.png" caption="BJGameModeBase의 HandleMatchAssignmentIfNotExpectinOne()" />
+
+이전 방식에서 ExperienceId를 불러오는 부분이 없으니 Default를 불러오도록 하드코딩 해뒀었다. 그래서 추가적인 Experience를 불러올 수 있도록 표시된 로직을 추가해준다.
+
+1. UGameplayStatics::HasOption(OptionString, TEXT("Experience")) 이전 포스팅에서 ExtraArg로 넘겼었던 Map과 Experience 정보가 OptionString에 저장되어있고 해당 HasOption을 통해 Experience에 해당하는 키워드의 존재여부를 확인할 수 있다.
+2. UGameplayStatics::ParseOption(OptionString, TEXT("Experience")) 1번 함수와 다르게, ParseOption으로써 ?Experience=AAAAAA?로 저장되어있었다면 AAAAAA 에 해당되는 string을 반환받는다.
+3. 그렇게 생성된 ExperienceFromOptions를 PrimaryAssetName, BJExperienceDefinition을 Type으로 하는 ExperienceId를 생성해서 로드를 진행하게끔 데이터를 업데이트해준다. 아래 하드코딩된 Default와 비교해서 결과를 정리하자면 Type은 "BJExperienceDefinition" Name은 "B_BJShooterGame_ControlPoints"<strong>(▲그림6.)참고</strong>, 가 되는것이다.
+
+<Fig n={10} src="/img/notes/lyra/user-facing-experience/10.png" caption="ShooterCore에 진입했을때 PIE 스크린샷" />
+
+<strong>(▲그림10.)</strong>과 같이 ShooterCore의 PawnData에 PawnClass가 지정되어있지 않은 상태로 ExperienceId가 잘 로드됨을 알수 있다. 추가적으로 Character자체를 스폰할 수 없으니 PIE환경의 World 인스펙터창을 확인해보아도 Character가 소환되지 않음을 알 수 있다.

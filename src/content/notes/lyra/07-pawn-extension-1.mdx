@@ -1,0 +1,83 @@
+---
+series: lyra
+order: 7
+title: "PawnExtension(1)"
+date: "2025-01-10"
+source: https://byungcoco.tistory.com/31
+---
+import Fig from '../../../components/Fig.astro';
+
+## 핵심포인트
+
+- PawnExtensionComponent 액터에 부착되는 컴포넌트들의 상태를 초기화하는 컴포넌트
+- HeroComponent 카메라, 입력 등 플레이어가 제어하는 시스템의 초기화를 처리하는 컴포넌트
+- 컴포넌트 부착시 Native Cpp vs Blueprint NativeCpp에서 부착하는것이 Blueprint보다 부착시점이 빠르다는것을 보장받게 설계되어 있다.
+- IGameFrameworkInitStateInterface 각 컴포넌트들의 상태를 관리할 수 있도록 가상함수들을 제공하며, 핵심적으로 GameFrameworkComponentManager에서 이를 관리할 수 있게 데이터를 추가하는데 해당 클래스의 인스턴스 고유 Key값을 통해 이를 구분하고 관리한다.
+
+이전 포스팅에서 액터에 붙는 각 컴포넌트의 초기화 순서를 GFCM에서 설정할 수 있도록 제공하고, 이를 GameplayTag를 통해 커스텀하여 이루어진다고 알아보았다. 그럼 이를 어떻게 사용하는걸까?
+
+PawnExtensionComponent의 역할은 액터에 부착될 컴포넌트들의 초기화 전반을 조정하는 대장 컴포넌트느낌이다. InitState로 상태가 부여되는 컴포넌트들 간의 생성, 상태를 관리하고 제어하는 역할이라고 보면된다. Lyra에서는 HeroComponent를 붙이며 예시를 보여주는데 컴포넌트의 특성을 살려 액터에 종속적이지 않고 확장성을 굉장히 고려했다. 하지만 결국에는 PawnExtensionComponent와 종속성이 생기지 않을까 라는 의문이 생길 수 있지만 어떻게 해결하는지에 대한 과정도 알아볼것이다.
+
+HeroComponent는 "카메라, 입력 등 플레이어가 제어하는 시스템의 초기화를 처리하는 컴포넌트" 이다. 일반적으로 ACharacter 자체에 입력을 설정하는데 종속성을 줄이고자 해당 컴포넌트가 초기화하도록 설계했다.
+
+<Fig n={1} src="/img/notes/lyra/pawn-extension-1/01.png" caption="PawnExtensionComponent와 HeroComponent 헤더파일" />
+
+다음과 같이 해당 인터페이스(IGameFrameworkInitStateInterface)를 상속받아야 UGameFrameworkComponentManager에서 제공하는 InitState 기능을 편리하게 사용할 수 있다.
+
+<Fig n={2} src="/img/notes/lyra/pawn-extension-1/02.png" caption="HeroComponent, PawnExtensionComponent, Character.cpp 일부분" />
+
+(▲그림1.)을 보면 알 수 있듯이 신기하게도 모두 틱을 비활성화한다. 주기적으로 상태를 검사하지않는 다는것이고, Delegate를 활용해서 효율적으로 상태를 업데이트 한다는 의도이다.
+
+<Fig n={3} src="/img/notes/lyra/pawn-extension-1/03.png" caption="ABJCharacter cpp와 헤더파일" />
+
+그렇다면 흐름상 PawnExtensionComponent는 관리자니까 무조건 첫번째로 생성된다는 것을 보장받아야하고, 이후에 관리받을 컴포넌트들이 생성되야한다. Lyra에서는 그러한 로직을 만들기위해서 우선 Character에 직접 부착해서 캐싱해주고, HeroComponent는 블루프린트에서 직접 추가해준다.
+
+이런 패턴을 보면 알 수 있듯이 Native Cpp에서 부착하는것이 우선권을 보장 받는다. 그렇다면 이후에 관리받을 컴포넌트들은 블루프린트에 추가해줌으로써 PawnExtensionComponent 이후에 부착된다. Lyra는 UE의 설계방식을 파악해서 간단한 방법으로 이를 해결했다.
+
+<Fig n={4} src="/img/notes/lyra/pawn-extension-1/04.png" caption="블루프린트에서 HeroComponent 직접추가" />
+
+언리얼에서 제공받는 클래스를 상속받다보면 어떤것은 블루프린트에 노출되는데, HeroComponent의 상위 클래스에서는 설정이 되어있지않다. 이런 부분은 UCLASS의 메타키워드(meta = (BlueprintSpawnableComponent))를 통해 설정이 가능하다!
+
+<Fig n={5} src="/img/notes/lyra/pawn-extension-1/05.png" caption="PawnExtensionComponent.cpp와 .h 일부분" />
+
+그리고 PawnExtensionComponent 오버라이딩 함수들을 확인해보면, OnRegister단에서 올바른 Actor에 등록되었는지 확인을 한다. OnRegister는 엔진 내부적으로 Pawn이 생성되고 Component를 부착하는 단계이다. 즉 이시점에서 Pawn이 없다는것은 흐름상 말이 안되기때문에 체크를 해준다. RegisterInitStateFeature()는 상속받은 인터페이스의 유틸함수이다. InitState을 사용하기위해!
+
+<Fig n={6} src="/img/notes/lyra/pawn-extension-1/06.png" caption="IGameFrameworkInitStateInterface의 RegisterInitStateFeature()" />
+
+1. PhysicsComponent, AudioComponent 등을 기능의 단위로 Actor에 Feature를 할당하는것으로 생각 PawnComponent를 Feature단위, 컴포넌트의 고유 이름이라 생각!
+2. Actor에 ThisObject를 FeatureName으로 할당하는 로직, 내부적으로 GFCM의 ActorFeatureMap에 의해 관리
+
+ThisObject는 해당 함수를 호출한 PawnExtensionComponent라 할수있겠다.
+
+<Fig n={7} src="/img/notes/lyra/pawn-extension-1/07.png" caption="GFCM의 RegisterFeatureImplementer()" />
+
+1. FindOrAddActorData를 살펴보면 ActorFeatureMap에서 Actor의 FObjectKey값을 통해 액터의 FeatureData를 가져오는데, 여기서 FObjectKey는 해당 ActorClass가 아닌 Actor객체단위로 관리되고 있다. 즉, CDO가 아닌 해당 클래스를 기반으로 생성된 인스턴스들의 고유메모리값을 의미하며 해당 컴포넌트의 소유주를 Key로 사용하고있다. 그렇게 찾아낸 FActorFeatureData의 주요데이터는 추가된 Feature(Component 단위) TArray&lt; FActorFeatureState &gt;와 이를 관리할 Delegate를 들고있다.
+2. FActorFeatureData내 FActorFeatureState를 가져와 컴포넌트들을 순회하며 매개변수 FeatureName과 동일한 데이터가 있는지 확인후 없다면 직접 추가하고 데이터를 추가해주는 로직이다.
+
+정리하자면 RegisterInitStateFeature()는 동일한 클래스이지만 이를 기반으로 생성된 인스턴스 고유 키를 통해 구분되어 해당 Map에 등록이 이루어지는 방식이다. 당연하게도 실제 게임에서는 해당 클래스로 여러개의 캐릭터가 생성될테고 상태에 따라서 컴포넌트 탈부착이 이루어지는데 이러한 데이터 관리를 GFCM에 등록하고 관리한다는 얘기다. 이렇게 등록이 이루어져야만 InitState 기능을 활용할 수 있게 되는것이다.
+
+<Fig n={8} src="/img/notes/lyra/pawn-extension-1/08.png" caption="반환될 FeatureName 선언(static)" />
+
+<strong>(▲그림5.)</strong>의 1번에서 GetFeatrueName을 통해 올바르게 FeatureName을 반환할 수 있도록 오버라이딩 해야한다. static으로 선언해서 구현부인 cpp에 정의를 해준다.
+
+<Fig n={9} src="/img/notes/lyra/pawn-extension-1/09.png" caption="PawnExtensionComponent의 BeginPlay(), EndPlay()" />
+
+<strong>(▲그림4.)</strong>에 이어서 함수를 구현해보자면 EndPlay()시점에 추가해줬던 Feature 데이터를 제거한다.
+
+BeginPlay()에서 여러 인터페이스 함수들이 보이는데
+
+- BindActorInitStateChanged() 첫번째 매개변수는 FeatureName인데 이곳에 None을 넣으면 Actor에 등록된 Feature Component의 상태를 관리하겠다는 의미가 된다. 만약 특정 컴포넌트만 관리하게된다면 해당 컴포넌트에 static으로 선언한 FeatureName을 매개변수로 입력하면된다. 두번째 매개변수로 FGameplayTag()를 받는데, 예상 가듯이 해당 태그의 상태에 해당되는 컴포넌트들만 관찰하겠다는 의미가된다. 빈 GameplayTag를 넣으면 모든 상태변화에 대해서 관찰을 하겠다는 의미가 된다.
+- TryToChangeInitState() 매개변수로 넣어준 GameplayTag 상태로 변환 시도하겠다는 뜻이고, 내부적으로 CanChangeInitState로 상태변환 가능성 유무 판단 =&gt; HandleChangeInitState로 내부 상태 변경 =&gt; Bind된 Delegate를 조건에 맞게 호출해준다.
+- CheckDefaultInitialization() 이 함수는 직접 오버라이딩해서 정의하는데 현재 상태에 대해 강제 업데이트를 진행한다.
+
+<Fig n={10} src="/img/notes/lyra/pawn-extension-1/10.png" caption="PawnExtensionComponent의 헤더파일 일부분" />
+
+<strong>(▲그림9.)</strong>와 같이 가상함수들을 오버라이딩 한다. 이 함수들은 위 글에서 TryToChangeInitState()의 내부 로직에 사용되는 함수들과 CheckDefaultInitialization()이다.
+
+<Fig n={11} src="/img/notes/lyra/pawn-extension-1/11.png" caption="PawnEctensionComponent의 CheckDefaultInitialization()" />
+
+1. PawnExtensionComponent는 FeatureComponent들의 초기화를 관찰하는 컴포넌트이다. 따라서 Actor에 바인딩된 Component들에 대해 상태들을 ForceUpdate를 하는 느낌의 함수가 있는데, 이를 인터페이스에서 제공한다. 내부적으로 살펴보면 이 함수를 호출하는 FeatureComponent를 제외하고 등록된 모든 컴포넌트를 순회하며 CheckDefaultInitialization을 호출한다.
+2. 처음에 설정했던 GameplayTag 상태를 선형적으로 유지하도록 직접 static 배열로 선언해서 넘겨줘야한다.
+3. 내부적으로 반복문을 통해서 CanChangeInitState, HandleChangeInitState, OnActorInitStateChanged 등을 호출하며 업데이트 가능한 구간까지 델리게이트 호출을 해주며 실패할때까지 업데이트 가능한 상태까지 반복한다.
+
+PawnExtensionComponent는 자신을 제외한 등록된 FeatureComponent들에 대하여 상태업데이트를 진행 하고 마지막에 자신의 상태도 같이 업데이트한다.

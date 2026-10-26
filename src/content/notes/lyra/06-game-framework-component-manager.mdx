@@ -1,0 +1,51 @@
+---
+series: lyra
+order: 6
+title: "게임프레임워크컴포넌트 매니저, InitState"
+date: "2025-01-09"
+source: https://byungcoco.tistory.com/30
+---
+import Fig from '../../../components/Fig.astro';
+
+## 핵심포인트
+
+- <strong>GameplayTag를 에디터와 C++에서 사용하는방법</strong> 에디터에서 사용하기 위해선 굉장히 이른 시점에 GameplayTag 초기화가 이루어져야 하며 이를 AssetManager 초기화 함수를 오버라이딩해서 사용한다.
+- <strong>GameFrameworkComponentManager와 InitState</strong> GameFeature 플러그인과 함께 사용하도록 설계된 Modular Gameplay 플러그인의 GameInstnaceSubsystem이다. Lyra에서는 이 매니저의 기능인 스테이트 초기화를 통해 액터에 붙을 컴포넌트들의 상태관리를 진행한다.
+
+## 1. 언리얼 에디터와 C++에 GameplayTag를 함께 사용하는 방법
+
+<Fig n={1} src="/img/notes/lyra/game-framework-component-manager/01.png" caption="BJGameplayTags.h" />
+
+(▲그림1.)의 헤더파일을 보면 native C++ Struct로 이루어져있으며 싱글톤으로 사용하겠다 라고 표현되어있다. InitState_ 가 붙은 태그들과 태그를 추가하는 유틸 함수들이 포함되어있다. 태그의 이름을 보면 유추할 수 있듯이 Actor사이에 공유되는 태그로 초기화 과정 단계를 의미한다.
+
+<Fig n={2} src="/img/notes/lyra/game-framework-component-manager/02.png" caption="BJGameplayTags.cpp" />
+
+먼저 요약하자면 헤더파일에 정의된 GameplayTag들을 에디터에서도 사용가능하게 UGameplayTagsManager의 AddNativeGameplayTag를 통해 추가해주는 로직이다. AddTag 함수의 매개변수들을 확인해보면 알 수 있듯이 먼저 어떤 명칭의 Tag를 할것인지, 코멘트를 매게변수로 받고있다. AddAllTags함수 내에서 호출하는것을 보면, 두번째 매게변수로 IniState.Spawned로 변수를 넣어주고있는데, 이는 언리얼의 태그방식이다. 만약 태그가 A.B.C라면 A의 B의 C 태그 라고 볼수있다. 즉, 에디터에 추가를해줌과 동시에 해당 반환값을 C++내에서 사용할 OutTag에 넣어줌으로써 C++에서도 사용할 수 있게 된것이다.
+
+그렇다면 싱글톤으로 생성된 객체 FGameplayTags를 통해 InitializeNativeTags를 해줘야 태그가 생성이 이루어지는데, Lyra에서는 AssetManager에서 이루어지도록 해두었다.
+
+<Fig n={3} src="/img/notes/lyra/game-framework-component-manager/03.png" caption="AssetManager의 StartInitialLoading" />
+
+AssetManager의 StartInitialLoading의 가상함수를 override해서 초기화를 진행해주는데, AssetManager의 특성과 함수이름에서 알 수 있듯이 굉장히 이른 시점에 이루어지는것을 유추해볼 수 있다. 아무래도 에디터와 C++에서 사용해야하니 에디터가 켜지기전의 시점을 사용한것 같다.
+
+## 2. 게임프레임워크컴포넌트 매니저
+
+<Fig n={4} src="/img/notes/lyra/game-framework-component-manager/04.png" caption="UBJGameInstance의 Init()" />
+
+[게임프레임워크컴포넌트 매니저](https://dev.epicgames.com/documentation/ko-kr/unreal-engine/game-framework-component-manager-in-unreal-engine?application_version=5.5)
+
+이렇게 추가된 GameplayTags를 GameInstance의 초기화 시점에 UGameFrameworkComponentManager(이하 GFCM)를 통해 RegisterInitState함수를 호출하여 태그를 선형적으로 연결해주는 듯한 로직이 보인다.
+
+GFCM의 이름에서 알 수 있듯 컴포넌트 매니저임을 유추할 수 있다. 컴포넌트의 장점은 FindComponentByClass를 통해 해당 컴포넌트를 바로 가져올 수 있는 편의성을 제공한다. 또한, A라는 액터 객체에 a,b,c 컴포넌트를 등록하고 그러한 과정을 자동으로 이루어지게 하고, 또 다른 A2객체로 생성 되었을 때도 동일한 컴포넌트들을 자동으로 부착시켜주는 편의기능을 GFCM에서 제공해준다.
+
+그리고 중요한 점은 액터에 부착되는 여러개 컴포넌트의 초기화 상태 순서를 보장 받을 수 없다는 단점을 GameplayTag를 부여하여 관리하게 커스텀 할 수 있도록 RegisterInitState라는 함수를 제공한다.
+
+<Fig n={5} src="/img/notes/lyra/game-framework-component-manager/05.png" caption="Lyra에서 InitState 활용 설명" />
+
+4단계의 상태로 나눠 액터의 각 컴포넌트들을 상태 순서를 관리하는 패턴을 보여준다. 예를 들어 Component2가 먼저 3번째 단계의 상태에 있다면 더이상 다음 상태로 넘어가지않고 나머지 1,3 컴포넌트가 해당 상태에 오기까지 기다리고 다음 상태로 넘어간다.
+
+<div class="note-box">
+
+ExperienceManagerComponent에서 사용했듯이 GameState에 UGameStateComponent를 상속받는 객체를 부착시켜 활용하였다. 이 다음 포스팅부터 나올 HeroComponent, PawnExtensionComponent는 UPawnComponent를 상속받아 생성되며 UGameStateComponent , UPawnComponent 모두 UGameFrameworkComponent를 상속받는다.
+
+</div>

@@ -18,4 +18,17 @@ const reviews = defineCollection({
   }),
 });
 
-export const collections = { reviews };
+// 학습 노트 한 편 = src/content/notes/<시리즈>/<번호>-<이름>.mdx
+const notes = defineCollection({
+  loader: glob({ pattern: '**/*.mdx', base: './src/content/notes' }),
+  schema: z.object({
+    series: z.enum(['lyra', 'unreal-cpp', 'ds']),
+    order: z.number(),
+    title: z.string(),
+    date: z.string(), // 처음 작성한 날짜 YYYY-MM-DD
+    topic: z.string().optional(),
+    source: z.string().optional(), // 원문 링크(티스토리 등)
+  }),
+});
+
+export const collections = { reviews, notes };

@@ -1,0 +1,196 @@
+---
+series: lyra
+order: 24
+title: "Ability System(2)"
+date: "2025-01-17"
+source: https://byungcoco.tistory.com/48
+---
+import Fig from '../../../components/Fig.astro';
+
+Input에 대한 Ability 발동까지 진행했으니 에디터에서 확인해보자
+
+InputAction IA_Weapon_Fire 하나 만들어주고, InputConfig에 AbilityInputActions에 넣어주고 태그도 해주자!
+이어서 MappingContext에도 추가해서 키를 지정해주고, GA로 돌아가 수정해주자.
+
+<Fig n={1} src="/img/notes/lyra/ability-system-2/01.png" caption="IA_Weapon_Fire의 이벤트" />
+
+이전에 말했던 Activate노드를 활성화 시킨다고했었는데, 이 EventActivateAbility가 그 부분이다!
+
+<Fig n={2} src="/img/notes/lyra/ability-system-2/02.png" caption="BJGameplayAbility_RangedWeapon::StartRangedWeaponTargeting()" />
+
+Active가 발동이되고 StartRangedWeaponTargeting를 호출함으로써 발사와 관련 이펙트들이 이제 시작된다. 지금 시작하는 부분은 라일라의 독창적인 시스템이 아니다. 총에 대한 피격의 구현에 대한 내용이다. 
+라이라에서는 샷건 기관총 등 여러 구현을 해두었지만 권총을 미리 구현해두고 추가로 구현하는걸 포스팅하겠다. 
+PerformLocalTargeting에서는 총알에 대한 궤적을 계산해서 피격자를 넘긴다. 그래서 FoundHits가 0보다 크다는것은 한명이상은 맞았다는 의미가 된다. 
+FGameAbilityTargetDataHandle은 무엇이냐? Server/Client간 Ability의 공유 데이터이지만, 현재 싱글플레이로 시작하고있기때문에 Ability의 데이터로 생각하면된다. 
+Cartridge의 경우 탄약을 의미하는데, Lyra에서는 샷건도 있기때문에 FMath:Rand()로 CartRidgeID를 만들어서 맞은애의 정보와 탄약ID를 TargetData로 저장한다. 
+즉, 이 함수는 StartRangedWeaponTargeting는 맞은 애들을 조사해서 CartRidgeID를 부여하고 Data를 저장해서 Callback으로 넘겨주는 과정을 담고있다.
+
+<Fig n={3} src="/img/notes/lyra/ability-system-2/03.png" caption="BJGameplayAbility_RagnedWeapon의 PerformLocalTargeting()" />
+
+맞은애들에대한 정보를 가져오는 PerformLocalTargeting을 분석해보자. WeaponInstance Data를 가져와서 존재한다면 InputData(WeaponData, 탄피효과에 대한 Boolean)을 입력해준다.
+
+<Fig n={4} src="/img/notes/lyra/ability-system-2/04.png" caption="BJGameplayAbility_RangedWeapon의 GetWeaponInstance()" />
+
+<Fig n={5} src="/img/notes/lyra/ability-system-2/05.png" caption="BJGameplayAbility_FromEquipment의 GetAssociatedEquipment()" />
+
+WeaponInstance의 경우 GetAssociatedEquipment라는 함수를 호출하는걸로 넘기는데... UBJGameplayAbility_RangedWeapon의 부모인 FromEquipment에 존재한다. 
+CurrentActorInfo의 AbilitySystemComponent와 CurrentSpecHandle을 활용하여 GameplayAbilitySpec을 가져온다. 
+1. CurrentSpecHandle은 SetCurrentActorInfo() 호출할 때, handle 값을 받아서 저장됨 
+2. CurrentSpecHandle과 CurrentActorInfo는 같이 진행됨 
+3. FindAbilitySpecFromHandle은 GiveAbility로 허용된 ActivatableAbilities를 순회하며 GameplayAbilitySpec을 찾아낸다. 
+여기서 GameAbility인 FromEquipment로 상속구조를 시작한 이유가 나온다. EquipmentInsatnce에서 AddEntry를 통해 인스턴스화할때, Spec을 만들었다.(AbilitySet을 System에 넘겨 등록하고 Handle을 받아오는 과정) 그리고 그 과정에서 Ability를 가지고있는 Instance를 SourceObject로 저장해두었다. 그래서 FromEquipment는 EquipmentInstance로부터 GiveAbility를 진행했으므로, SourceObject에 Instance가 저장되어있다!
+
+<Fig n={6} src="/img/notes/lyra/ability-system-2/06.png" caption="FRangedWeaponFiringInput" />
+
+FRangedWeaponFiringInput의 경우 Weapon에 대한 많은 정보를 들고있다. 시작지점, 끝나는지점, 방향, instance 등
+
+<Fig n={7} src="/img/notes/lyra/ability-system-2/07.png" caption="" />
+
+AbilityTargetingSource라는 Enum class가 존재하는데 이것도 GameplayAbility_RangedWeapon의 헤더파일에 정의되어있다. 어느 기준으로 타게팅을 설정할것인지에 대한 옵션들이다. 
+Lyra에서는 다양한 옵션(폰의 정면기준, 무기 정면기준 등)들이 있는데, 나는 카메라 기준으로 진행할 예정이다. 왜냐하면 앞으로 살을 붙일 프로젝트는 TPS기준으로 제작될 예정이고, 
+1인칭이면 모르겠지만 TPS는 3인칭으로 진행되기때문에 카메라는 3인칭으로 진행되는데 무기가 쏘는 계산 방식이 무기나 캐릭터 기준으로 진행되면 카메라시점 기준으로 진행하는 플레이 방식과 전혀 맞지 않게된다. 피격판정이 이상해진다는 뜻이다. 
+따라서, GetTargetingTransform은 카메라 기준, 3인칭을 기준으로 타겟팅 계산을 진행하는 함수이다.
+
+<Fig n={8} src="/img/notes/lyra/ability-system-2/08.png" caption="BJGameplayAbility_RangedWeapon의 GetTargetingTransform()" />
+
+원래 GetTargetingTransform에서는 무기 종류에 따라서 여러 로직이 들어있다. PC를 들고와 GetPlayerViewPoint를 호출하면 카메라의 Location과 Rotaion을 가져올수있다. 
+카메라의 Rotaion을 Normalize해서 방향에대한 값을 CamLocation을 더해서 판정하기위한 카메라 기준 방향을 만들어준다. 그리고 WeaponLocation은 GetWeaponTargetingSourceLocation을 통해 가져온다.
+
+<Fig n={9} src="/img/notes/lyra/ability-system-2/09.png" caption="BJGameplayAbility_RangedWeapon의 GetWeawponTargetingSourceLocation()" />
+
+GetWeaponTargetingSourceLocation은 다음과같이 아직 미구현인것같다. Pawn의 Location을 반환하고있다.
+
+<Fig n={10} src="/img/notes/lyra/ability-system-2/10.png" caption="총알 나가는 방향을 도출해내는 과정" />
+
+카메라의 방향과 weapon의 끝 방향을 방향과 내적을 이용해서 FinalcamLocation을 구한다음에 그대로 쏘는 수학 공식이다.
+
+<Fig n={11} src="/img/notes/lyra/ability-system-2/11.png" caption="BJRangedWeaponInstance" />
+
+PerformLocalTargeting으로 돌아가서 TargetTransform을 구했고, ForawrdVector로 앞방향을 구하고, 시작, 끝을 지정한다음에 최종적인 방향을 구했으니 본격적으로 피격판정을 담당하는 TraceBulletsInCartridge로 넘긴다.
+
+<Fig n={12} src="/img/notes/lyra/ability-system-2/12.png" caption="BJGameplayAbility_RangedWeawpon의 TarceBulletsInCartridge()" />
+
+다음 함수는 샷건같은 경우의 수를 고려하여 따로빼두었는데, 산탄으로 여러발 나가기때문에 여러발 나가는것마다 피격판정을 해야함으로 AllImptacs에 대해 반복문으로 피격판정을 진행한다. 최종적으로 DoSingleBulletTrace에서 피격판정을 할것이다. 
+OutHits가 없어도 적어도 하나는 존재하도록 EndTrace를 넣어 추가해준다.(추후에 벽에 맞으면 이펙트 추가하기 위해서)
+
+<Fig n={13} src="/img/notes/lyra/ability-system-2/13.png" caption="BJGameplayAbility_RangedWeapon의 DoSingleBulletTrace()" />
+
+FindFirstPawnHitResult는 Pawn에대한 충돌을 체크한다. 피격 판정이 굉장히 무겁다. 그래서 SweepRadius없이 한번 Trace를 진행한다(0일때 라인트레이스). FindFirstPawnHitResult를 여러번 Trace진행을 막기위해, OutHits를 확인해서 APawn충돌 정보가 있으면 더이상 Trace하지 않는다. 두번째에서 의도를 확인할 수 있듯이 SweepRadius가 0보다 크면 충돌 가능성이 있으므로 한번더 Trace를 진행한다. 두번째때 SphereTrace로 진행한 결과인 SweepHits를 검색해서 Pawn이 있는가를 FindFirstPawnHitResult로 검색을 하고 있다면 SweepHits를 FirstPawnIdx까지 순회하며 bBlockingHit과 기존 OutHits에 없을 경우를 확인한다. OutHits에 폰이있는데 한번 더들어오면 안되니까! 
+OutHits에 있다면 SweepHits를 OutHits르 업데이트 하지 않는다(이미 충돌정보가 있으니 early-out용)
+
+<Fig n={14} src="/img/notes/lyra/ability-system-2/14.png" caption="FindFirstPawnHitResult()" />
+
+FindFirstPawnHitResult는 클래스 함수가아니며 구현부를 살펴보면 HitResult를 전부 순회하며 Pawn이 있으면 idx 반환 그리고, Pawn이 없다면 한단계 AttachParent에 Actor가 Pawn인지를 확인한다. 보통 복수개 단계로 AttachParent를 하지 않으니까 AttachParent 대상이 APawn이라고 생각할 수도 있기 때문이다. 헬멧이나 장갑등 Attach에 맞는 경우를 상상해보면 이해가 빠르다. 근데 이런경우라면 Weapon인 총을 맞춰도 Pawn이 맞았다고 판별할텐데, Lyra에서는 이부분에 대한 고려를 하지 않은것 같다.
+
+<Fig n={15} src="/img/notes/lyra/ability-system-2/15.png" caption="BJGameplayAbility_RangedWeapon의 WeaponTrace()" />
+
+Complex Geometry로 Trace를 진행하며 AvatarActor 오브젝트와는 충돌을 무시한다. 그리고 한번 더 AddAdditionalTraceIgnoreActors에 Param을 건내주며 AttachParent에 부착된 Aactor를 찾아 IgnoredActors에 추가해주는 작업이다. 피격판정에서 플레이어인 "나"는 완전히 빼기 위해서! 그리고 DtermineTraceChannel을 통해 Channel을 들고오며 SweepRadius의 크기에따라 충돌판정을 진행한다. 그 후에 HitResults 중에 같은 Object의 충돌판정 정보를 제거해서 OutHitResults에 추가해주며 OutHitResults중 가장 마지막에 맞은것을 Hit로 저장한다. 왜냐하면 가장 마지막으로 맞은 것을 기준으로 이펙트를 보여주기 때문! 충돌판정이 아무도 없다면? 벽에 맞았을경우를 대비해 StartTrace와 EndTrace는 캐싱해준다.
+
+<Fig n={16} src="/img/notes/lyra/ability-system-2/16.png" caption="BJGameplayAbility_RangedWeapon의 AddAdditionalTraceIgnoreActors()" />
+
+AddAdditionalTraceIgnoreActors의 경우 AttachedActor, 붙어있는 모~~든 Actor를 들고와서 TraceParams Ignored에 추가해준다. 근데 의문이 드는점은 FindFirstPawnHitResult에서는 HitResult를 얻어올때 Attach에서 한번만 타고올라가서 Pawn인지를 체크했는데 막상 충돌판정할때는 모든 Attach를 Ignored로 해주는게 이상하긴하다...
+
+<Fig n={17} src="/img/notes/lyra/ability-system-2/17.png" caption="" />
+
+<Fig n={18} src="/img/notes/lyra/ability-system-2/18.png" caption="BJGameplayAbility_RangedWeapon의 DetermineTraceChannel()" />
+
+Collision 체크를 하기위해서는 항상 그에맞는 ChannelCollision등록이 완료되어여야한다. DtermineTraceChannel에서는 우리가 만든 헤더파일에 등록된 채널을 반환한다.
+
+<Fig n={19} src="/img/notes/lyra/ability-system-2/19.png" caption="BJGameplayAbilityTargetData_SingleTargetHit.h" />
+
+<Fig n={20} src="/img/notes/lyra/ability-system-2/20.png" caption="BJGameplayAbility_RangedWeapon의 OnTragetDataReadyCallback()" />
+
+<Fig n={21} src="/img/notes/lyra/ability-system-2/21.png" caption="BJGameplayAbility_RangedWeapon의 OnRagneWeaponTargetDataReady()" />
+
+ASC에서 SpecHandle을 들고오고 Data를 오른값참조로 가져온후에 CommitAbility를 하는데, 원래는 데미지 판정을 위해 우리가 설정한 GameEffect를 상대방에게 처리하는건데 아직 미구현이니 가볍게 보고 넘어가자. 후에 구현할듯! 
+그리고 여기서 GameplayCueNotify로 이펙트효과를 처리할 예정이다. 당장에 구현할건아니니 일단 선언만 해두고 추후에 BP를 통해 구현할 것이다.
+
+<Fig n={22} src="/img/notes/lyra/ability-system-2/22.png" caption="IA_Weapon_Fire의 블루프린트 로직" />
+
+자 이제 드디어 에디터로 들어가서 BP로직을 만들어보자. Then0의 경우 피격판정에 대한 로직이고 이후에 총쏘는 애니메이션에대한 작업을 이어가야한다. 변수 3개 선언해주고 
+PlayMontageAndWait은 AbilitySystem에서 자체적으로 구현된 전용 몽타주 플레이다. OnCompleted,OnInterrupted, OnCancelled 모두 EndAbility와 연결해준다. Ability가 발동되고 EndAbility가 호출이 안되면 그 능력을 재사용할수가 없다? 
+능력이 끝났으면 EndAbility를 호출해줘야한다 반드시! 
+
+피격판정이 끝나고 몽타주가 플레이되는데 정상적이든 취소되든 어떻게든 EndAbility가 호출이되는데 총을 쏘고있는데 계속 발동이 되면 안되니 FireComplete를 통해 Delay가 지난후에야 EndAbility가 된다.(무한난사방지)
+
+<Fig n={23} src="/img/notes/lyra/ability-system-2/23.png" caption="" />
+
+잘보면 정말 WeaponLocation이 아닌 PawnLocation기준으로 설정되었다!
+
+<Fig n={24} src="/img/notes/lyra/ability-system-2/24.png" caption="" />
+
+lyra의 몽타주를 migrate하고 플레이하면 다음과 같은 오류다. 미구현상태라 로직에서 Error를 내뱉는거라 만들어주도록하자!
+
+<Fig n={25} src="/img/notes/lyra/ability-system-2/25.png" caption="" />
+
+<Fig n={26} src="/img/notes/lyra/ability-system-2/26.png" caption="BJEquipmentManagerComponent의 GetEquipmentInstanceOfType()" />
+
+결정된 EquimentInstanceType을 넣게되면 형변환이 가능한 모든 InsatnceType을 Results에 추가해서 반환하는 방식이다. 내자 장착한 모든 InstanceType 중에서 내가 원하는 InsatnceType만 가져오기 위한 블루프린트함수이다. 나의 경우 RangedWeaponInstance가 될것같다.
+
+<Fig n={27} src="/img/notes/lyra/ability-system-2/27.png" caption="" />
+
+추가로 EquipmentInstance에 다음과같이 추가하면된다. 보이는 그대로 소환된 모든 액터를 반환하는 함수!
+
+<Fig n={28} src="/img/notes/lyra/ability-system-2/28.png" caption="" />
+
+로 내가만든 함수들로 교체해주면 된다. 플레이해서 테스트 중 런타임 에러가뜨는데, FollowerAnimInatnce가 없다는 오류다! 
+FollowerAnimInsatnce? 어디서 얻어오는건지 한번 확인해보니
+
+<Fig n={29} src="/img/notes/lyra/ability-system-2/29.png" caption="" />
+
+SkeletalMeshComponent에서 AnimInsatnce를 얻어오고있다. SkeletalMesh의 주인은 WeaponInsatnce를 가지고있는 SpawendActor이고 우리가 만든 B_Pistol을 의미하게되는데, 당연하게도 우리는 무기의 AnimInstance는 설정해주지 않았다. 
+Weapon에도 Animation이 있나? 했지만 아마 탄피나 총의 움직임에도 Animation이 있고 설정해두었을거라 생각이되어 Lyra를 통해 찾아서 추가하였다!
+
+에러는 안뜨는데, 한가지 문제가있다. 공격모션과 이동모션이 겹쳐셔 총을 쏘는 애니메이션이 위화감이 든다? 이부분을 해결하기위해서 ABOP_Mannequin_Base를 살펴보자.
+
+<Fig n={30} src="/img/notes/lyra/ability-system-2/30.png" caption="" />
+
+BluepirntThreadSafeUpdateAnimation이라는 함수가 있는데, 로직을 살펴보면 굉잫이 많은 Data를 Update해주고있다. 그중에서 우리가 눈여겨봐야할건 UpdateCharacterStateDate 이부분이다. 
+이부분을 또 타고들어가서 확인해보면 여러 시퀀스가 있는데 그중에 눈에 들어오는게있다.
+
+<Fig n={31} src="/img/notes/lyra/ability-system-2/31.png" caption="" />
+
+Gameplay Tag is Firing이 있는데 이부분이 제대로 업데이트 되지않아 Montage가 이상해지는것이였다. 로직을보면 계속 false상태이다. 실제로 재생해서 확인해봐도 true가 되는 지점이 없다. 
+이 부분을 해결하려면 어떻게해야할까? Boolean으로 다 처리해야할까? Lyra의 AnimInstance에는 Boolean이 따로 정의되어있지않다. 보통 애니메이션이 많아지고 State마다 boolean으로 다처리하게 되면 너무나 많은 Boolean이 선언될 수 밖에 없다. 
+Lyra는 이부분을 해결하기위해 어떤 방식을 선택했는지 구현하면서 알아보자.
+
+<Fig n={32} src="/img/notes/lyra/ability-system-2/32.png" caption="▲그림. UBJAnimInstance.h" />
+
+AnimInsatnce에 FGameplayTagBlueprintPropertyMap? 변수를 선언해주고, 두 함수를 선언해주자. NativeInitializeAnimation는 애니메이션이 최초로 초기화되는 시점에 발동되는 함수이다. 
+FGameplayTagBlueprintPropertyMap를 봐서 알듯이 PropertyMap? 변수를 Map으로 관리해주는 것? 어떤식으로 관리해줄까?
+
+AnimInsatnce안에다가 Boolean값(GameplayTagIsFiring)이 있었는데 GameplayTag와 Boolean값을 매칭을 시켜준다. 그래서 GameplayTag가 활성화 되어있으면 Boolean값이 자동으로 활성화된다. 다시말해 GameplayTag만 매핑시키면 내부적으로 Boolean으로 관리해준다는것이다. 추가적으로 Tag와 Boolean이 매칭되어있기때문에 AnimationInsatnce도 손쉽게 바꿀수 있다는게 된다.
+
+<Fig n={33} src="/img/notes/lyra/ability-system-2/33.png" caption="▲그림. UBJAnimInstance의 NativeInitializeAnimation()" />
+
+NativeInitializeAnimation에서는 Instance의 OwningActor를 구해서 ASC를 넘겨주고있다. 그리고 GameplayTagPropertyMap에 Insatnce와 ASC를 넘겨주는데,
+
+<Fig n={34} src="/img/notes/lyra/ability-system-2/34.png" caption="▲그림." />
+
+ASC내부에서 관리하는 GameplayTag와 AnimInstance의 멤버 Property와 Delegate를 연결하여, 값 변화에 대한 반영을 진행한다. CachedOwner와 CachedASC는 우리가 넘겨준 Instance와 ASC이다.
+
+<Fig n={35} src="/img/notes/lyra/ability-system-2/35.png" caption="" />
+
+아무튼, NativeInitializeAnimation이 최초로 초기화되는 시점이여서 ASC가 등록이 안된 상태에서 먼저 호출되는 경우도있다. 순서를 바로잡기위해서 ASC에 다음과 같은 함수를 만들어준다. 
+InitAbilityActorInfo라고, 예전에 PlayerState에서 OnwerActor와 AvatarActor를 넘겨 ASC의 초기화작업을 했고 PlayerState에서는 Pawn의 정보가 아직없으니, Pawn이 확실히 로드됬다고 보장받는 시점, PawnExtensionComponent의 관리하에 HeroComponent가 InitState_DataInitialized State로 넘어가는 시점에서 한번더 InitAbilityActorInfo을 해줬던 기억이있을것이다. 
+이부분을 이용해서 InitAbilityActorInfo를 오버라이드해서 호출될때마다 변경된 AnimInstance에 접근하고, 우리가 만든 InitializeWithAbilitySystem을 호출해서 초기화해주자! 가 되는것이다. 
+이렇게 하면 올바르게 ASC를 확정적으로 넘겨주게되고 GameplayTag와 Boolean의 매칭이 진행되어 Delegate가 생성되는데 어떻게 이 부분을 사용할까?
+
+<Fig n={36} src="/img/notes/lyra/ability-system-2/36.png" caption="" />
+
+에디터의 ABP_Mannequin_Base로 돌아가 Class의 프로퍼티를 살펴보게되면 추가한 GameplayTagPropertyMap이 보인다.
+
+<Fig n={37} src="/img/notes/lyra/ability-system-2/37.png" caption="" />
+
+이렇게 GameplayTag를 Event.Movement.WeaponFire를 추가해서 일치하게 세팅해주면된다. 그렇다면 ASC에 Event.Movement.WeaponFire가 ASC에 등록이되고 사용되면 GameplayTag_IsFiring이 True로 된다는말이다!
+
+<Fig n={38} src="/img/notes/lyra/ability-system-2/38.png" caption="" />
+
+그럼 이부분을 언제 적용 시켜줄까? 내가 공격을 했을때 저 게임태그가 있길바라고 공격이 끝났을때 게임태그가 없어져야한다.
+
+<Fig n={39} src="/img/notes/lyra/ability-system-2/39.png" caption="" />
+
+만들었던 GameAbility, GA_Weapon_Fire_Pistol로 돌아가서 Tags에 ActivationOwnedTags에 추가해주면 된다. 그렇게 되면 이 GA가 활성화 될때마다 ActivationOwnedTag가 부여되고, EndAbility가 되면 ActivationOwnedTags는 자동으로 사라진다. 
+Tag목록만봐도 상황에따라서 정말 많은 Tag를 부여할수있다는걸 알수있다. GAS를 UE5에서 왜밀고있는지 하면 할수록 느낀다! 
+저기에서 SourceRequiredTags는 해당 태그가 있어야만 해당 GA가 발동되게도 걸수있다! 이말은 콤보시스템에도 연계할수있다는것이다. 콤보1Require가 있어야만 다음 콤보가 가능하다던가 
+실행해보니 총발사하는 Animation이 이동 Animation에 의해 방해받지않고 제대로 들고 쏜다!

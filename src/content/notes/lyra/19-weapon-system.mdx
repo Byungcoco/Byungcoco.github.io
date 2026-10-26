@@ -1,0 +1,156 @@
+---
+series: lyra
+order: 19
+title: "Weapon System"
+date: "2025-01-12"
+source: https://byungcoco.tistory.com/43
+---
+import Fig from '../../../components/Fig.astro';
+
+애니메이션 작업을 하기위한 Animation Instance 작업
+
+<Fig n={1} src="/img/notes/lyra/weapon-system/01.png" caption="BJAnimInstance.h" />
+
+애니메이션 대부분의 로직이 블루프린트에서 이루어지기때문에 코드의 양은 적다. 
+이어서 AnimInstance를 만들었다보니 라일라에서 AnimationInstance를 가지고올텐데 Migrate를 하게 되면 문제가 뭐냐면
+
+<Fig n={2} src="/img/notes/lyra/weapon-system/02.png" caption="Migrate시 상속클래스 문제" />
+
+Lyra에 정의 되어있는 AnimationInstance의 ParentClass는 ULyraAnimInstance클래스이기때문에 정상적으로 들고오기 힘들다. 
+그럼 내 AnimInstance의 이름을 UAnimInstance로 바꾸던가 일일히 내것의 이름으로 바꾸던가 해야되는데 둘다 쉽지않다. 
+
+이럴때 쓰는방법이있다! Conifg폴더에 DeafultEngine.ini로 가서 다음과 같이 CoreRedirects를 사용해주면 된다.
+
+<Fig n={3} src="/img/notes/lyra/weapon-system/03.png" caption="DefaultEngin.ini" />
+
+직관적으로 OldName을 NewName의 경로로 바꾸어주게되는데 파일의 경로 상관없이 작성하는것이니 이점 유의하면 될것같다. 
+
+다음과 같이 잘 Mirgrate됬다. 애니메이션도 잘 들고왔으니, 이제 내가 장착할 무기에 따라 Animation이 바뀌게되는데 이 부분을 구현해보도록 하겠다.
+
+<Fig n={4} src="/img/notes/lyra/weapon-system/04.png" caption="UObject를 상속받는 EquipmentInstance" />
+
+EquipmentInstance를 만들어주고 EquipmentInstance를 상속받는 WeaponInstance를 Weapons폴더에 만들어주고 WeaponInstance를 상속받는 RangedWeaponInsatnce를 만들어준다.
+
+<Fig n={5} src="/img/notes/lyra/weapon-system/05.png" caption="BJWeaponInstance.h" />
+
+WeaponInstance먼저 구현할텐데, 그전에 만들었던 AnimBodyStyleSelectionSet과 비슷한 네이밍이 보인다.
+
+<Fig n={6} src="/img/notes/lyra/weapon-system/06.png" caption="WeaponInstance.h" />
+
+그렇다! 또나온 Set과 Entry Mesh장착할때 사용했던 구조체타입과 동일하게 LayerRule이 있고 DefaultLayer를 들고있다. 
+LayerRule은 GameTag와 비교해서 내게 맞는 Layer를 들고오게 로직이 설계될거같은 예상이다.
+
+<Fig n={7} src="/img/notes/lyra/weapon-system/07.png" caption="WeaponInstnace.h" />
+
+Entry도 동일한 모양! 
+
+다시 WeaponInstance코드로 돌아가서 Equipment와 Unequipment마다 Set이 있는걸보면 장착과 장착해제할때 애니메이션을 구분해서 관리하는것 같다. 
+LayerSelect Set과 Entry를 생각해보면 내가 장착하고 장착해제하는 무기에따라서 애니메이션 Layer를 설정할거고 그거에 따라 바뀐다라고 보면될것같다.
+
+<Fig n={8} src="/img/notes/lyra/weapon-system/08.png" caption="" />
+
+에디터로 돌아가 Actor B_Weapon을 Content의 Weapons폴더에 만들어주고, RootComponent를 SkeletalMesh로 바꿔주자 
+저번에 Mesh를 들고올때 Tag를 매치해서 들고오거나 없으면 RootComponent의 Mesh를 바로 들고오는 로직을 기억하는데 아마 그 부분과 비슷한 로직을 위해 설정하는 작업인것같다. 
+그리고 B_Weapon을 상속받는 블루프린트 클래스를 ShooterCore Plugin의 Weapons폴더에 B_Pistol로 만들어주자! 그리고 Lyra에서 ABP_Pistol관련 애니메이션과 SK_Pistol Mesh를 들고와 Mesh 장착해준다.
+
+<Fig n={9} src="/img/notes/lyra/weapon-system/09.png" caption="상속구조" />
+
+RangedWeaponInsatnce를 상속받는 블루프린트클래스 B_WeaponInstanceBase를 만들어주고 또 상속받아서 Pistol까지 만들어주자. 
+블루프린터를 열어서 ABP_PistolAnimLayer를 EquipmentAnimSet에 설정해주자! 
+
+이렇게하면 대충 구조는 만들어졌고 AnimLayer장착 로직을 구현할텐데 그걸위해 Inventory, QuickBar, Equipment Frame을 짚고 함께 만들어 주도록 하겠다. 
+Cometic과 같이 Inventory, QuickBar, Equipment Frame이 세구조가 함께 어루어져 굉장히 복잡할 수 있는데 
+이해만 한다면 추후에 개인 프로젝트 만들때 굉장히 도움이 많이 될것으로 기대된다.
+
+<Fig n={10} src="/img/notes/lyra/weapon-system/10.png" caption="UObject를 상속받는 InventoryItemInstance" />
+
+<Fig n={11} src="/img/notes/lyra/weapon-system/11.png" caption="UObject를 상속받는 InventoryItemDefinition" />
+
+<Fig n={12} src="/img/notes/lyra/weapon-system/12.png" caption="ActorComponent를 상속받는 InventoryManagerComponent" />
+
+<Fig n={13} src="/img/notes/lyra/weapon-system/13.png" caption="BJInventoryItemDefinition.h" />
+
+<Fig n={14} src="/img/notes/lyra/weapon-system/14.png" caption="BJInventoryFragment_EquippableItem.h" />
+
+InventoryItemFragment를 상속받아 EquippableItem Fragment를 만들어준다.
+InventoryItemDefinition.h에서 InventoryItemFragment를 추가로 만들었는데, Inventory에 대한 Fragment가 도대체 무엇일까?
+Lyra의 inventory는 모듈화가 굉장히 잘되어있고 item의 경우 참신하게 되어있다고 한다. Fragment가 가장 대표적인 예시라고 할 수 있는데, Lyra에서는 EquippableItem은 EquipmentItemDefinition을 가지고 있으며, 장착가능한 아이템을 의미하고, Setstats는 아이템에대한 정보를 가지고 있다. 예를들어, 라이플에 대한 SetStats로 총알(Ammo)에 대한 장착 최대치와 현재 남은 잔탄 수를 예시로 들 수 있다. 
+개발이 이루어지며 아이템에 대한 종류와 정보가 많아지는데, 최상위클래스를 어떻게 둘것인지 상속구조를 어떻게 할것인지 등등 굉장히 많은 고민이 생길 수 있다. 방식이 굉장히 많아 개발자 나름이겠지만 아이템의 종류가 많아지게되면 아무리 상속을 한다한들 굉장히 복잡해진다. 더 문제는 기획에 따라 아이템 특성도 뒤죽박죽이 되기마련인데, 상속구조를 HP물약처럼 사용의 특성과 장착의 특성을 가진 장비들로 이루어졌다 했을때 1회용 권총(발로란트 스파이크돌격모드 황금권총)와 같은 특수한 아이템이 나오면 
+상속을 파줘야하나? 클래스를 따로 만들어줘야되나? 등 굉장히 복잡한 문제에 직면하게된다.  
+Lyra에서는 이러한 문제를 Fragment단위로 해결했다. Fragment가 직역하자면 파편,조각인데 이를 컴포넌트의 개념으로 이해하면 좋을것같다. 특성 시스템을 Fragment단위로 만들어 Definition에 부착하고 아이템을 정의한다. 아까말 했던 1회용 권총은 물약의 소비 시스템과, 공격무기 시스템을 결합해서 만들어 각 Fragment단위의 시스템들을 이리저리 조합해서 새로운 개념의 아이템을 손쉽게 만들어 낼 수 있다는 큰 장점이있다.
+
+<Fig n={15} src="/img/notes/lyra/weapon-system/15.png" caption="UBJInventoryItemDefinition.h" />
+
+ItemDefinition에 블루프린트를 이용해서 Fragment를 추가할건데, 약간의 문제가있다. 
+Fragment를 추가하더라도 Editor상에서만 적용이되고 CDO에도 반영이 안되어 에디터에 저장이 제대로 되지 않는다. 
+이전부터 TObjectPtr을 통해 에디터상에서 만들어진 BluePrint들을 가르켰는데, 지금은 에디터 그 자체에서 바로 가르키게 만들거다. 
+그럼 Fragment를 블루프린트로 하나씩 매 생성해서 부착시켜 관리해야하는데 이 부분이 너무 불편하다. 
+그래서 ItemFragment클래스의 UCLASS 키워드를 살펴보면 DefaultToInstanced, EditInlineNew라는게 있다. 
+이 키워드를 같이쓰면 에디터상에서 추가를 하게 되면 그값 자체가 저장이되어, Fragment를 에디터상에서 추가했지만 CDO에서도 바로바로 사용이 가능하게 된다. 조금 있다가 더 구현해나가며 이부분에 대해 자세히 설명할거고 다음으로 넘어가겟다.
+
+<Fig n={16} src="/img/notes/lyra/weapon-system/16.png" caption="BJInventoryItemInstance.h" />
+
+Definition은 메타데이터를 들고있고, Instance는 그 메타데이터를 이용해서 생성해서 관리한다. 이러한 패턴은 Cosmetic에서도 자주 봤었다. CharacterPart-&gt;AppliedCharacterPart
+
+<Fig n={17} src="/img/notes/lyra/weapon-system/17.png" caption="BJInventoryManagerComponent.h" />
+
+자주본게아니라 그냥 아예 똑같다 List, Entry에... 
+한가지 차이점이 있다면 Cosmetic에서는 PlayerController의 Component로서 관리되어 왔고, 내부적으로도 Controller를 얻어오는 과정을 간단한 로직으로 구현해서 편리하게 설계해두었다. 
+근데 똑같은 매커니즘인 Inventory또한 PlayerController의 Component로서 관리될텐데, Lyra에서는 UActorComponent로 해두었다. 사실, 왜 그런지는 이유는 모르겠지만 일단 따라가봐야겠다. 
+각설하고, InventoryManager에서는 InventoryList 즉, Entry의 배열을 들고있다는거고 그말은 즉슨 Instance들을 관리한다는 것이다. 왠지모르게 Cosmetic을 복습하는 느낌이 든다.
+
+<Fig n={18} src="/img/notes/lyra/weapon-system/18.png" caption="UObject를 상속받는 EquipmentDefinition" />
+
+<Fig n={19} src="/img/notes/lyra/weapon-system/19.png" caption="PawnComponent를 상속받는 EquipmentManagerComponent" />
+
+EquipmentManagerComponent는 신기하게또 PawnComponent를 상속받는다?
+
+<Fig n={20} src="/img/notes/lyra/weapon-system/20.png" caption="PlayerController를 상속받는 QuickBarComponent" />
+
+앞서 만들었던 구조와 비슷한데, 여기서 Instance는 앞서 만들었던 것들과는 의미가 다르다. 
+지금까지 만들었던 Instance는 Definition이 파일들을 소유하게되면서 클래스를 생성해서 관리하는 형태였는데 
+EquipmentInstnace는 아이템이 소환되고나서 관리방식을 결정하게 되는 느낌이다. 장착에 대해서 어떻게 관리할건지.. 
+위에서 EquipmentInstance를 상속받아 만든 WeaponInstance만봐도 애니메이션을 가질수있도록 만들었다.
+
+<Fig n={21} src="/img/notes/lyra/weapon-system/21.png" caption="EquipmentDefinition.h" />
+
+FBJEquipmentActorToSpawn의 ActorToSpawn만 봐도, 무기 장비류들이 Actor로 이루어진다는걸 알수있다.
+ActorsToSpawn이 Array인 이유는 다수의 Actor(장비들)을 소환해서 장착해야하는 경우를 생각해서 설계했다고 보면된다. 
+Cosmetic같은 경우에는 웬만해선 Root에 붙어 별사용없이 넘어갔는데, 이 Equipment에서는 아시다시피 Socket이 중요하다!
+
+<Fig n={22} src="/img/notes/lyra/weapon-system/22.png" caption="EquipmentDefinition의 생성자" />
+
+그리고 생성자단계에서 InstanceType이 없는경우를 대비해 기본값을 넣어준다.
+
+<Fig n={23} src="/img/notes/lyra/weapon-system/23.png" caption="BJEquipmentInstance.h" />
+
+Definition단에서 ActorsToSpawn을 통해 어떤 Actor가 Spawn되는지, 메타데이터를 들고있었고 소환되고나면 Instance에서는 SpawnedActors로 들고있는다. 
+장착된 Item이 변경된다면 경우에 따라선 Item들을 파기해야하니까! 그리고 누구에 의해서 활성화 되었는지 Instigator로 들고있다. 이부분은 나중에 QuickBarComponent를 구현하며 설명할것이다.
+
+<Fig n={24} src="/img/notes/lyra/weapon-system/24.png" caption="EquipmentManagerComponent.h" />
+
+Entry는 Definition과 Definition에 의해 생성된 Instance를 들고있고, List에선 생성된 객체들을 들고있을것이다. Cosmetic과 앞서 나온 패턴과 동일하니 자세한 설명은 생략하겠다.
+
+<Fig n={25} src="/img/notes/lyra/weapon-system/25.png" caption="BJQuickBarComponent.h" />
+
+해당 Component는 ControllerComponent로서, Playercontroller에 의한 조작계 중 하나로 생각해도 된다. 
+HUD(Slate)와 Inventory/Equipment(Gameplay)의 다리 역할하는 Component로 생각하자 
+추후에 HUD 및 SlateWidget을 다루면서 자세히 다시 보게될 예정이다. 
+
+기본적인 프레임이 만들어졌으니 엔진에선 어떻게 구성되는지 알아보자.
+
+<Fig n={26} src="/img/notes/lyra/weapon-system/26.png" caption="GameFeature &quot;ShooterCore&quot;" />
+
+ShooterCore(GameFeatureData)에 AddComponents Action을 추가해주고, PlayerController에 InventoryManagerComponent를, Character에 EquipmentManager를 부착해준다. 
+InventoryManager같은경우에는 Controller, EquipmentManager는 Pawn에 붙였는데, 인벤토리에서는 메타데이터만 들고있고 실질적으로 적용할때는 Pawn에 Attach 해야하기 때문이다.
+
+<Fig n={27} src="/img/notes/lyra/weapon-system/27.png" caption="ActionSet DataAsset" />
+
+QuickBarComponent같은 경우에는 Character-&gt;Cosmetics 폴더에 블루프린트로 만들어주고, ShooterGame의 Experiences폴더에서 DataAsset을 만들고 ActionSet을 상속받아 AddComponent Action을 넣어준다. 
+이 방식은 일전에 ExperienceDefinition에서 여러개의 액션을 한 카테고리로 묶어서 관리할수있었고 SharedInput이라는 ActionSet에 MappingContext를 설정을 했던것과 똑같다. 
+그렇다면 왜 QuickBarComponent는 ExperienceDefinition단에서 설정할까? 왜냐하면 ShooterCore라는 GameFeature라는건 제일 큰 단위인데, TPS형식의 게임에선 Equipment와 Inventory 시스템이 확정적으로 포함된다는 얘기이고, 
+QuickBar같은 경우는 게임모드 즉 Experience가 RPG나 여러 다른 모드에서 공용으로 사용되지 않을 수도 있어서 ActionSet단위로 따로 빼두어 관리하는것이다.
+
+<Fig n={28} src="/img/notes/lyra/weapon-system/28.png" caption="WeaponSystem 로직도 (*인프런[UE5 Lyra 클론코딩] 참고자료.)" />
+
+로직도를보면 굉장하다 Cosmetic로직도를 처음봤을때는 굉장했는데 이제는 선녀다. 높은 모듈화를 위해선 조금 복잡해지는건 당연한건가보다. 마스터하자...

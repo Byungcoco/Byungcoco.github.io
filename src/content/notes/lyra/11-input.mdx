@@ -1,0 +1,129 @@
+---
+series: lyra
+order: 11
+title: "Input"
+date: "2025-01-11"
+source: https://byungcoco.tistory.com/35
+---
+import Fig from '../../../components/Fig.astro';
+
+## 핵심포인트
+
+- <strong>HeroComponent에 Input을 정의함으로써의 이점</strong> Character에서 Input설정을 직접하는것이 아닌, HeroComponent를 통해 이루어져 종속성이 크게 떨어지게 설계하였다. 언제든 HeroComponent를 떼어내도 문제없이 캐릭터가 돌아가게끔! 추가적으로 InputConfig라는 단위로 Action을 Tag에 맞게 바인딩하고 설정하여 Context단위로 변경이 가능하다.
+
+HeroComponent의 상태가 DataInitialized로 넘어가는 단계에서 Camera와 Input에 대한 정보를 업데이트하는데, 이 방식이 Lyra에서 하드코딩에 대한 영역을 최소화 시켜 태그시스템을 활용하여 인풋을 관리한다.
+
+<Fig n={1} src="/img/notes/lyra/input/01.png" caption="GameplayTags의 AddAllTags()" />
+
+Input도 GameplayTag를 활용하여 만들어지는데, InitState를 만들었던것처럼 진행해주면된다. 헤더파일에 추가해주고 AddAllTags함수에 선언해준다.
+
+<Fig n={2} src="/img/notes/lyra/input/02.png" caption="InputAction을 생성 및 해당 Details" />
+
+InputAction을 생성하고 열어보면 ValueType으로 해당 Action이 발동할때 어떤 결과값을 뱉을지 설정할 수 있다. 먼저 진행해볼 Input은 결과값을 앞뒤, 마우스 움직임이니 Vector2D로 설정되겠다.
+
+<Fig n={3} src="/img/notes/lyra/input/03.png" caption="Input Mapping Context" />
+
+<Fig n={4} src="/img/notes/lyra/input/04.png" caption="Details" />
+
+Input Mapping Context를 생성해주고, 해당 액션이 어떤 키로 발동이 될지 어떤 값으로 반환할지 설정한다. 여기서도 알 수 있듯이 Context단위로 관리하면 게임의 종류에따라 캐릭터가 차에 타거나 비행기를 조종하거나 여러상황에서 바뀔수있는 Input을 간편하고 자유롭게 바꿀 수 있다.
+
+<Fig n={5} src="/img/notes/lyra/input/05.png" caption="Mappable Input Config" />
+
+그리고 그 Context단위를 들고이쓴것이 Mappable Input Config 이다.
+
+<Fig n={6} src="/img/notes/lyra/input/06.png" caption="PlayerMappableInputConfig" />
+
+해당 클래스는 PlayerMappableInputConfig를 들고있는 구조체이다.
+
+<Fig n={7} src="/img/notes/lyra/input/07.png" caption="HeroComponent의 일부" />
+
+그래서 Input 데이터를 관리하는 HeroComponent에서 해당 구조체를 Array로 가지고있다. 왜 Array냐면 여러개의 Config가 존재할 수 있으니까!(비행기, 자동차, 자전거 등등)
+
+<Fig n={8} src="/img/notes/lyra/input/08.png" caption="블루프린트에서 Character의 HeroComponent" />
+
+에디터의 블루프린트로 돌아와 HeroComponent의 인스펙터내에 해당 Mappable Input Config를 Default로 넣어준다.
+
+<Fig n={9} src="/img/notes/lyra/input/09.png" caption="InputConfig" />
+
+InputConfig는 DataAsset을 상속받아 생성한 클래스이며 NativeInputActions의 경우 주 방향키나 잘 변경이 이루어지지 않는 고정된 Input Action이다. Ability의 경우 추후에 AbilitySystem을 학습하며 추가할건데, Lyra에서는 특이하게 옆구르기나 점프의 경우도 Ability범주에 넣어서 사용하고있다.
+
+그리고 FBJInputAction 구조체의 경우 UInputAction과 그에 매칭되는 Tag를 매핑하고있는 구조체이고 USTRUCT의 메타키워드 BlueprintType으로 보아 에디터의 인스펙터창에 노출시키는 구조체이다.
+
+<Fig n={10} src="/img/notes/lyra/input/10.png" caption="UBJInputConfig의 FindNativeInputActionForTag" />
+
+구현부를 살펴보면 FindNativeInputActionForTag()는 NativeActions를 순회하며 매개변수인 InputTag와 동일한 태그를가진 Action을 찾아 InputAction을 반환하거나 찾지 못했다면 null을 반환한다. 즉, 앞서 에디터와 C++에서 모두 사용하기 위해 GameplayTag를 추가했었고, 이와 동일한 태그를 찾아 액션을 반환하는것이다.
+
+<Fig n={11} src="/img/notes/lyra/input/11.png" caption="UBJInputComponent의 BindNativeAction()" />
+
+템플릿으로 구성된 BindNativeAction() 함수이다. AbilitySystem의 경우 추후에 재등장 하니 생략하고 InputAction부만 보겠다.
+
+매개변수를 확인해보면 UBJInputConfig는 UInputAction과 GameplayTag를 매핑한 FBJInputAction 구조체를 Array로 들고있는 클래스이다. 두번째 매개변수는 BJGameplayTags에 선언된 GameplayTag들이고 로직내에서 조건문을 통해 존재여부<strong>(▲그림9.)</strong>를 확인한다. 그리고 태그와 매칭되어 반환받은 InputAction과, TriggerEvent, 발동할 함수를 바인딩한다.
+
+정리해서 InputConfig에 활성화 가능한 InputAction을 GameplayTag를 통해 반환받고 존재 한다면 해당 액션에 이벤트와 함수를 바인딩 하는것이고 그 역할을 하는것이 UBJInputComponent이다.
+
+<div class="note-box">
+
+여타 진행해온 분석에서 알 수 있듯이, 기본 클래스를 오버라이딩해서 사용하는 경우 에디터 프로젝트세팅에서 Default로 지정된 InputComponentClass를 해당  UBJInputComponent로 설정해주어야 한다!
+
+</div>
+
+<Fig n={12} src="/img/notes/lyra/input/12.png" caption="PawnData.h" />
+
+그래서 카메라와 마찬가지로 캐릭터에 따른 InputConfig에 대한 정보단위는 당연하게도 PawnData이다.
+
+<Fig n={13} src="/img/notes/lyra/input/13.png" caption="HeroComponent의 HandleChangeInitState() 일부분" />
+
+그리고 카메라와 동일하게 HeroComponent의 HandleChangeInitState()에서 DataInitialized상태로 넘어가는 단계에 InputComponent를 세팅해준다.
+
+<Fig n={14} src="/img/notes/lyra/input/14.png" caption="BJHeroComponent의 InitializePlayerInput()" />
+
+1. ULocalPlayer로 부터 해당 UENhancedInputLocalPlayerSubsystem(이하 Subsystem)을 가져와서 모든 mapping을 초기화한다.
+2. ExtensionComponent에 캐싱해둔 PawnData를 통해 InputConfig를 가져온다. (UBJInputConfig? UInputAction과 Gameplay를 매핑한 구조체 FBJInputAction을 TArray로 관리하는 클래스!)
+3. 그리고 HeroComponent의 멤버변수 DefaultInputConfigs(MappableConfigPair, 에디터에서 만들었던 PMI)를 순회하며 서브시스템을통해 플레이어에 설정을해준다. 이때 LoadSynchronous()를 호출하는데, 왜냐하면 해당 구조체에서 바인딩하고있는 Pair의 Config<strong>(▲그림6.)</strong>는 UPlayerMappableInputConfig로 PrimaryDataAsset을 상속받고 있기 때문이다.
+4. 오버라이딩된 UBJInputComponent로 캐스팅한 후에 AiblitySystem부분은 생략하고, 해당 컴포넌트<strong>(▲그림10.)</strong>를 통해 바인딩을 진행한다!
+
+이어서 PawnData에 추가했던 InputConfig<strong>(▲그림11.)</strong>를 에디터에서 추가해주는 작업을 진행할건데, 해당 UBJInputConfig는 DataAsset을 상속받는 클래스였다.<strong>(▲그림8.)</strong>
+
+<Fig n={15} src="/img/notes/lyra/input/15.png" caption="UBJInputConfig를 상속받는 블루프린트" />
+
+<Fig n={16} src="/img/notes/lyra/input/16.png" caption="그림14의 블루프린트 Details" />
+
+UInputAction과 해당하는 GameplayTag를 매핑하여 추가한다.<strong>(▲그림8.)</strong>
+
+<Fig n={17} src="/img/notes/lyra/input/17.png" caption="PawnData에 InputConfig" />
+
+<div class="note-box">
+
+에디터에서 했던 작업과 함께 정리하자면,
+
+<strong>(▲그림13)</strong>
+
+의 2번 해석부분에서 PawnData의 InputConfig는
+
+<strong>(▲그림14.)</strong>
+
+의 InputConfig에 해당한다. UBJInputConfig는 DataAsset을 상속받아 블루프린트로 생성해주고, 인스펙터창에 TArray로 표시되는것들은
+
+<strong>(▲그림8.)</strong>
+
+의 FBJInputAction, UInputAction과 GameplayTag를 매핑시켜놓은 구조체였다.
+
+그리고 3번 해석부분에서 DefaultInputConfigs는
+
+<strong>(▲그림8.)</strong>
+
+HeroComponent의 멤버변수로 등록한
+
+<strong>(▲그림5.)</strong>
+
+Context단위로 들고있던 PMI Conifg이다. 해당 Context를 로드해서 Subsystem에 등록한다.
+
+이 과정까지 키보드 및 마우스를 작동하면 어떤 값이 반환되는지 설정이 되었다. 마지막으로 4번과정에서 InputComponent를 통해 해당하는 태그와 매핑된 InputAction을 어떤 이벤트에 발동시키며 어떤 함수를 호출할지 설정해주었다.
+
+</div>
+
+<Fig n={18} src="/img/notes/lyra/input/18.png" caption="HeroComponent의 Input_Move()" />
+
+입력매개변수인 InputActionValue는 타입을 에디터에서 설정했던 타입과 동일하게 변환해야한다.
+
+<Fig n={19} src="/img/notes/lyra/input/19.png" caption="HeroComponent의 Input_Look_Mouse()" />

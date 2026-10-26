@@ -1,0 +1,76 @@
+---
+series: unreal-cpp
+order: 2
+title: "메타데이터, 메타데이터 지정자"
+date: "2024-12-17"
+source: https://byungcoco.tistory.com/24
+---
+## 메타데이터란?
+
+데이터를 위한 데이터, 태그 같은 느낌이다. 데이터를 직접적으로 표현하는 것이 아닌 <strong>데이터에 대한 설명을 추가</strong>하여 이를 <strong>구분, 관리, 제어하는데 사용</strong>된다. 예를들어,<strong>데이터가 책</strong>이라면? <strong>메타데이터는 책 제목, 저자, 출판연도</strong> 같은 느낌!
+
+## 1. 언리얼에서의 메타데이터
+
+언리얼의 메타데이터는 <strong>에디터 친화적인 데이터</strong>로써 [리플렉션 시스템](https://byungcoco.tistory.com/25)에서 UCLASS, UPROPERTY, UFUNCTION 매크로의 매개변수로 선언된다. <strong>게임로직에서 해당 메타데이터에 엑세스를 포함하는 로직이 작성되어서는 안된다.</strong> 이러한 메타데이터를 생성하기 위해선 프로퍼티의 매개변수로 선언해주어야 하는데 이를 메타데이터 지정자라 부르며 공식문서에서 다양한 [메타데이터 지정자](https://dev.epicgames.com/documentation/ko-kr/unreal-engine/metadata-specifiers-in-unreal-engine?application_version=5.5)를 확인해볼 수 있다. 이 중 UPROPERTY의 메타데이터 지정자 일부를 살펴보자!
+
+> UPROPERTY Specifiers
+
+<div class="tbl">
+
+|  | <strong>Defaults</strong> | <strong>Instance</strong> | <strong>EventGraph</strong> |
+|---|---|---|---|
+| <strong>Read Only</strong> | VisibleAnywhere | BlueprintReadOnly |  |
+| VisibleDefaultsOnly | VisibleInstanceOnly |  |  |
+| <strong>Read/Write(set)</strong> | EditAnywhere | BlueprintReadWrite |  |
+| EditDefaultsOnly | EditInstanceOnly |  |  |
+| <strong>Private Access</strong> | meta = (AllowPrivateAccess = "true") |  |  |
+| <strong>Category</strong> | Category = "Category Name" |  |  |
+
+</div>
+
+> 예제
+
+```csharp
+UCLASS()
+class MYPROJECT_API AMyActor : public AActor
+{
+    GENERATED_BODY()
+
+public:	
+    // 생성자
+    AMyActor();
+
+protected:
+    virtual void BeginPlay() override;
+
+public:	
+    virtual void Tick(float DeltaTime) override;
+
+    // 에디터에서 읽기 전용, 블루프린트에서만 읽기만 가능, 디테일 패널 카테고리 Example
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Example")
+    FString ExampleString = TEXT("Hello Unreal!");
+
+    // 에디터에서만 수정 가능, 블루프린트에서 접근 불가, 디테일 패널 카테고리 Config
+    UPROPERTY(EditAnywhere, Category = "Config")
+    float ExampleFloat = 10.5f;
+
+private:
+    // pirvate임에도 에디터와 블루프린트에 노출, 블루프린트에서 읽기/쓰기 가능
+    UPROPERTY(VisibleAnywhere, BlueprintReadWrite, meta = (AllowPrivateAccess = "true"))
+    int32 ExampleInt2 = 32;
+};
+```
+
+> 메타데이터 지정자가 없다면?
+
+<div class="tbl">
+
+| 특성 | UPROPERTY()만 사용한 경우 |
+|---|---|
+| 에디터 노출 | 노출되지 않음 |
+| 블루프린트 노출 | 접근 불가 (읽기/쓰기/노출 모두 불가능) |
+| 직렬화 | 가능 |
+| 네트워크 복제 | 복제되지 않음 |
+| 런타임 | 코드 내에서는 자유롭게 사용 가능 |
+
+</div>

@@ -1,0 +1,85 @@
+---
+series: lyra
+order: 4
+title: "Experience Load(2)"
+date: "2024-12-15"
+source: https://byungcoco.tistory.com/14
+---
+import Fig from '../../../components/Fig.astro';
+
+## 1. Experience Loading
+
+이전 포스팅에서 ExperienceLoad를 위한 로직을 설계했었다. 다음 프레임에 Load를 진행해서 게임정보를 안전하게 적용하기 위해 현재 프레임에서 PlayerSpawn을 막고 ExperienceLoad가 완료되면 RestartPlayer를 호출 할것이다. 그럼 이제 본격적인 Loading 로직을 살펴보자.
+
+<Fig n={1} src="/img/notes/lyra/experience-load-2/01.png" caption="GameModeBase의 HandleMatchAssignmentIfNotExpectingOne" />
+
+<Fig n={2} src="/img/notes/lyra/experience-load-2/02.png" caption="Lyra에서의 체크리스트" />
+
+이 함수는 다음프레임에 실행할것을 요청한 함수였다. 전 포스팅에서 설명했듯이 여러 환경<strong>(▲그림2.)</strong>을 체크 후 해당하는 ExperienceId를 OnMatchAssignmentGiven에 넘겨준다. 현재는 Default를 바로 입력해주며 무조건 해당 Experience를 로딩 하지만, GameFeaturePlugin을 분석할 때 추가적인 Experience를 만들며 더 구현할 것이다. <strong>현재 ExperienceId만 가져온것이고 로드가 진행된것은 아니다.</strong>
+
+<Fig n={3} src="/img/notes/lyra/experience-load-2/03.png" caption="GameModeBase의 OnMatchAssignmentGiven" />
+
+이 함수가 해주는 역할은 단순하게 ExperienceManagerComponent를 가져와서 ExperienceId를 넘겨준다. 여기서도 알 수 있듯이 ExperienceLoad는 <strong>전적으로 ManagerComponent에게 요청하며 역할을 확실히 나눈다.</strong>
+
+<Fig n={4} src="/img/notes/lyra/experience-load-2/04.png" caption="ExperienceManagerComponent의 ServerSetCurrentExperience" />
+
+싱글톤을 활용하여 AssetManager를 가져오고, 전달받은 ExperienceId로 경로를 가져와서 해당 ExperienceDefinition Class를 동기로드를 진행한다. 근데 여기서 TSubclassOf 형태를 유지하는게 아니라 <strong>CDO 형태</strong>로 가져오고 CurrentExperience에 설정한다. 아직까진 그 의도를 모르겠으니 StartExperienceLoad()를 보며 좀 더 분석해보자.
+
+<Fig n={5} src="/img/notes/lyra/experience-load-2/05.png" caption="ExperienceManagerComponent의 StartExperienceLoad" />
+
+LoadState를 갱신해주고 BundleAssetList라는게 보인다. 그리고 최근 Experience의 PrimaryAssetId를 추가한다.
+
+1. ServerSetCurrentExperience <strong>(▲그림4.)</strong>에서 ExperienceId를 넘겨주었는데, 여기서 CDO를 활용하여 GetPrimaryAssetId를 로딩할 대상으로 추가한다?( [PrimaryDataAsset](https://byungcoco.tistory.com/29) )
+2. FName형식의 Array <strong>BundlesToLoad</strong>가 있는데, OwnerNetMode가 Client인지 DedicatedServer인지에 따라서 해당 FName을 추가해주는데, 내부적으로 살펴보면 그냥 TEXT("Client") 형식의 <strong>단순 키워드로 추가</strong>된다.
+3. ChangeBundleStateForPrimaryAssets라는 함수는 BundleAssetList에서 BundlesToLoad에 추가된 키워드에 해당하는 Asset들을 "비동기"로드 진행한다. 즉, 플레이 환경에 따라 구분하여 필요한 <strong>Asset 데이터만 로드해서 메모리 낭비를 줄이겠다는 것이다.</strong> (ex. 클라에만 필요한 에셋 ==&gt; UI, 이펙트에셋 등) 현재는 NM_Standalone이므로 Client, Server 모두 로드한다.
+
+OnAssetLoadedDelegate라는 Delegate를 통해 OnExperienceLoadComplete<strong>(▲그림6.)</strong>를 바인딩 해두었다. 이 Delegate는 비동기 로드가 완료되면 3번과정의 "비동기"로드가 완료되면 Execute 할것을 다음 로직에서 이루어지는데, Handle이 존재하지 않거나 비동기로드가 완료되었다면 바로 Execute해준다. 아니라면 로딩이 완료됬을때 Execute할 것을 요청한다.
+
+<Fig n={6} src="/img/notes/lyra/experience-load-2/06.png" caption="ExperienceManagerComponent의 OnExperienceLoadComplete" />
+
+굳이 OnExperienceFullLoadCompleted()를 호출을 래핑해두었다. 왜냐하면 추후에 GameFeaturePlugin을 학습하며 다양한 로직이 들어갈 예정이다.
+
+<Fig n={7} src="/img/notes/lyra/experience-load-2/07.png" caption="ExperienceManagerComponent의 OnExperienceFullLoadCompleted" />
+
+Experience가 모두 완료됬음을 알리기 위해 OnExperienceLoaded Delegate를 Broadcast해주고 비워준다. 이렇게 되면 PlayerState에 PawnData캐싱과 GameModeBase에서 RestartPlayer를 실행하는 로직이 진행된다.
+
+<Fig n={8} src="/img/notes/lyra/experience-load-2/08.png" caption="PlayerState의 OnExperienceLoaded" />
+
+<Fig n={9} src="/img/notes/lyra/experience-load-2/09.png" caption="PlayerState의 GetPawnData와 SetPawnData" />
+
+<Fig n={10} src="/img/notes/lyra/experience-load-2/10.png" caption="GameModeBase의 GetPawnDataForController" />
+
+PlayerState에서 BJGameModeBase를 가져와 PawnData를 받아오고 캐싱해준다. 그 과정에서 멀쩡한 ExperienceDefinition을 두고, BJGameModeBase의 GetPawnDataForController라는 함수를 호출하여 가져오는데?
+
+내부를 보면 다시 PlayerState에 접근해 PawnData가 캐싱되어있었다면 그대로 반환하고 아니라면 다음 로직을 진행한다. ExperienceManagerComponent를 가져와서 로딩이 완료됬다면? GetCurrentExperienceChecked<strong>(▲그림11.)</strong>라는 함수를 통해 현재 ExperienceDefinition을 반환받아오고, 거기서 DefaultPawnData를 반환한다.
+
+<Fig n={11} src="/img/notes/lyra/experience-load-2/11.png" caption="ExperienceManagerComponent의 GetCurrentExperienceChecked" />
+
+왜 이렇게 왔다갔다 체크하며 할까?
+
+1. <strong>안전성 검사:</strong> 경우의 수는 적지만 Delegate를 통해 받아온 매개변수가 혹시 최신 Experience가 아닐 수 있으니 한번 더 점검해본다.
+2. <strong>유지보수성:</strong> PawnData를 가져오는 함수<strong>(▲그림10.)</strong>를 분산시키지 않고, <strong>한 곳에서만 이루어지도록 한다</strong>. PawnData를 가져오는 과정에 문제가 생긴다면 해당 함수를 수정하면 되기 때문이다.
+
+<Fig n={12} src="/img/notes/lyra/experience-load-2/12.png" caption="GameModeBase의 OnExperienceLoaded" />
+
+이제 GameModeBase에서 Experience로드가 완료됬을 때 호출될 함수를 본다. 월드에 존재하는 PlayerController를 순회하면서 RestartPlayer를 해준다.
+
+<Fig n={13} src="/img/notes/lyra/experience-load-2/13.png" caption="AGameModeBase의 RestartPlayer" />
+
+GameModeBase 내부적으로 정의된 함수 RestartPlayer는 시작지점을 가져와서 점검하고 RestartPlayerAtPlayerStart를 호출하는데, 해당 함수에서 Controller를 통해서 Pawn을 가져온다. 그리고 존재한다면 스폰을 진행하고 SetPawn을 해준다.
+
+<Fig n={14} src="/img/notes/lyra/experience-load-2/14.png" caption="BJGameModeBase의 HandleStartingNewPlayer" />
+
+그리고 GameModeBase의 오버라이드 했던 함수<strong>(▲그림14.)</strong>가 이제는 ExperienceLoad가 완료되었으니 정상 호출된다.
+
+<Fig n={15} src="/img/notes/lyra/experience-load-2/15.png" caption="PIE" />
+
+<Fig n={16} src="/img/notes/lyra/experience-load-2/16.png" caption="ExperienceDefinition PawnData의 PawnClass" />
+
+에디터를 켜서 Play<strong>(▲그림15.)</strong>를 했는데 소환되길 바랬던 SimpleHeroPawn<strong>(▲그림16.)</strong>은 온데간데 없이 BJCharacter만 월드에 생성되었다. 곰곰히 생각해보면 BJGameModeBase에 DefaultPawnClass로 BJCharacter를 설정해주었었고, Experience가 로드되고 나서 RestartPlayer가 될때 해당 PawnClass를 업데이트 해준적이 없었다.
+
+<Fig n={17} src="/img/notes/lyra/experience-load-2/17.png" caption="GameModeBase의 GetDefaultPawnClassForController" />
+
+그래서 DefaultPawnClass를 지정하는 함수<strong>(▲그림17.)</strong>를 오버라이딩 받아 업데이트를 진행해준다. <strong>(▲그림10.)</strong>를 통해 Experience에서 Load된 PawnData에 접근하여서 말이다.
+
+<Fig n={18} src="/img/notes/lyra/experience-load-2/18.png" caption="ExperienceDefinition에 정의된 PawnData의 PawnClass가 잘 적용된 PIE" />

@@ -1,0 +1,79 @@
+---
+series: lyra
+order: 18
+title: "Cosmetic(3)"
+date: "2025-01-12"
+source: https://byungcoco.tistory.com/42
+---
+import Fig from '../../../components/Fig.astro';
+
+이어서 ComponentToAttachTo를 OwnerComponent를통해 어떻게 얻어오는지 알아보자.
+
+<Fig n={1} src="/img/notes/lyra/cosmetic-3/01.png" caption="UBJPawnComponent_CharacterParts의 GetParentMeshComponent(), GetSceneComponentToAttachTo()" />
+
+간단하게도 PawnComponent_CharacterParts의 GetOwner()를 통해 Actor를 얻어오고 Character로 형변환해서 SkeletalMeshComponent를 들고 온다. 
+그 Meshcomponent가 존재하면 바로 반환하고 아니면 Actor의 RootComponent를 반환한다. 여기까지가 스폰의 로직이다. 
+
+그리고 스폰이후에 이루어지는 BroadcastChanged()를 구현해보자.
+
+<Fig n={2} src="/img/notes/lyra/cosmetic-3/02.png" caption="UBJPawnComponent_CharacterParts의 BroadcastChanged()" />
+
+일단 Tag를 이용하는 부분은 간단하기때문에 이부분은 추후에 실습하며 추가로 포스팅하도록하겠다. 
+아무튼 BodyMeshes에서 Tag를 이용해 SelectBestBodyStyle을 호출하는데 이전에 설명했던 설정했던 Tag를 매칭해서 필요한 SkeletalMesh를 설정해주는 과정이다. (Tag없으면 Default 반환) 
+BodyMeshes는 애니메이션 적용을 위한 메시와의 연결고리, MeshRule을 들고있던 AnimBodyStyleSelectionSet 구조체이다. MeshRule은 Tag와 해당 Tag에 맞는 Mesh가 있다. 
+그러고 메쉬컴포넌트에 세팅해준뒤 PhysicsAsset을 작업하는데, Physics설정은 생각보다 무거운 작업이다. ForcedPhysicsAsset이 존재한다면 무거운 작업을 반복하게 되는데 
+고맙게도 SetPhysicsAsset은 내부적으로 같은 PhysicsAsset이 요청된다면 초기화작업을 하지않게 막아두었다. 
+짧게 정리하자면, 인스턴스화 작업이 될때마다 동시에 스폰을 해주고 성공하게되면 Tag를 가져와서 MeshRule에 맞는, Tag에 매칭되는 Mesh를 가져와서 설정해준다. 
+에디터에서 만들었던 B_Manny를 장착하게되면 B_Manny에 맞는, 디폴트로 설정해두었던 Invisible Mesh가 반환이되고 설정해주는것이다.
+
+<Fig n={3} src="/img/notes/lyra/cosmetic-3/03.png" caption="UBJPawnComponent_CharacterParts의 GetCombinedTags" />
+
+<Fig n={4} src="/img/notes/lyra/cosmetic-3/04.png" caption="BJCharacterPartList의 CollectCombinedTags()" />
+
+Tag를 검색하는과정은 인스턴스화된 Entry들을 순회하며 IGameplayTagAssetInterface를 통해 이루어지는데, 이전에 만들었던 TaggedActor가 Interface를 상속 받아야만 캐스팅을 통해 모든 Entry들의 태그들이 반환이 되고, 
+반환된 Tag들을 매개변수로 입력된 Tag와 매칭하여 필터링을 한다.
+
+<Fig n={5} src="/img/notes/lyra/cosmetic-3/05.png" caption="BJAnimBodyStyleSelectionSet의 SelectBestBodyStyle()" />
+
+그리고 위에서 매칭하여 반환된 Tag를 MeshRule을 통해 맞는 Mesh를 반환한다. 
+
+총정리하자면, ControllerComponent_CharacterParts(이하 CP)에서 AddCharacterPart호출하게되면 CP에 CharacterPart의 메타데이터를 Entry에 저장하고 PawnComponent_CharacterParts(이하 PP)로 CharacterPart를 넘겨준다. 
+실질적인 인스턴스관리는 PP에서 하는것이 아닌 CharacterPartList에서 이루어지니 CharacterPartList의 AppliedEntry에 메타데이터를 저장하고 부착과 동시에 스폰을하는 SpawnActorForEntry에 CharacterPart를 넘겨주며 호출한다. 
+Actor와 Actor의 연결은 ChildActorComponent를 통해 이루어져야하니 ChildActorComponent를 만들어주고 SetChildActorClass를 통해 메타데이터기반 Actor클래스를 스폰하며 RegisterComponent를 통해 렌더링 해준다.(CosmeticPartClass를 ChildActorClass로 설정)  
+바로 이어서 Spawn이 되었다면 해당 Actor의 RootComponent(SceneComponent)들고와 AddTickPrerequisiteComponent로 Tick순서(부모 우선)를 잡아주고 AppliedEntry에 스폰된 Component를 캐싱 후 BroadCastChanged를 통해 Tag와 매칭되는 Mesh를 설정해준다. 
+
+이러한 복잡한 과정이 이루어지는 이유는 추후에 총장착이나 칼에 맞는 애니메이션을 동적으로 관리할 수 있다는 큰 장점이 생기기 때문이다. 
+이러한 로직없이 그냥 구현한다하면 보통 AnimLayer를 하나만 구성해서 엄청나게 많은 Boolean값(무기, 총 장착했을때...)을 관리하게 되는데, 당연히 유지보수면이나 협업면에서 최악이다. 
+즉, Tag를 통해 올바른 SkeletalMesh를 장착시킴으로써 AnimLayer 여러개를 쉽게 관리 할 수 있다는 큰 장점이 있다. 
+그리고 삭제 또한 CharacterPartList에 Entry들의 Handle값을 비교하여 캐싱된 Component포인터들을 nullptr로 밀어줌으로써 안전하고 빠르게 삭제가 가능하다.
+
+<Fig n={6} src="/img/notes/lyra/cosmetic-3/06.png" caption="B_PickRandomCharacter" />
+
+에디터에서 ControllerComponent_CharacterParts에 AddCharacterParts를 호출하고 CharacterPart로 B_Manny를 넘겨주었다.
+
+<Fig n={7} src="/img/notes/lyra/cosmetic-3/07.png" caption="PIE" />
+
+후에 L_ShooterGym으로 Experience를 변경을 하면 GameFeature의 AddComponent Action으로 ControllerComponent_CharacterParts가 Controller에 붙으며 로직이 실행되고 Mesh가 불러와질것을 기대한다. 
+근데 B_Manny Mesh는 코빼기도 보이지않는다. 도대체 뭐가 문제일까??? Mesh가 없다는건 ControllerComponent_CharacterParts에서 PawnComponent_CharacterParts로 CharacterPart를 넘기는 과정에서 문제가 생겼을것으로 추측해본다. 
+그래서 ControllerComponent에 AddCharacterParts의 GetPawnCustomizer를 디버깅해보면
+
+<Fig n={8} src="/img/notes/lyra/cosmetic-3/08.png" caption="GetPawnCustomizer() 디버깅" />
+
+다음과 같이 GetPawn으로 Pawn을 얻어오지못하고 nullptr을 반환하는 모습을 찾을수있었다. 
+ControllerComponent_CharacterParts는 Controller에 부착이됬고 BeginPlay까지 잘 호출을했으니까 당연히 Pawn이 Possess가 되었다고 생각할 수 있는데, 
+PlayerController가 스폰이 됬다고 해서 Possess 되는것이 아니라고 한다. 심지어 언리얼 내부상으로도 언제 Possess되는것 조차 알수없다고한다. 
+그렇다면 Possess가 완료되면 AddCharacterParts를 호출하도록 해야 한다는 것이다. 
+Lyra에서는 이부분을 해결하기 위해 AddDynamic을 활용하는 모습을 보여준다.
+
+<Fig n={9} src="/img/notes/lyra/cosmetic-3/09.png" caption="BJControllerComponent_CharacterParts의 OnPossessedPawnChanged()" />
+
+<Fig n={10} src="/img/notes/lyra/cosmetic-3/10.png" caption="BJControllerComponent_CharacterParts의 BeginPlay()" />
+
+UFUNCTION()으로 다음 OnPossessedPawnChanged를 선언해주고 ControllerComponent_CharacterParts의 BeginPlay에서 Controller를 불러와 OnPossessedPawnChanged라는 Delegate를 사용한다. 
+이 함수는 Controller가 부착되어있는 Pawn이 변경될때마다 등록한 함수를 호출해주는 기능을 맡고있다. 
+호출할 함수 OnPossessedPawnChanged의 매개변수를 살펴보면 OldPawn과 NewPawn이 있는데 OldPawn이 변경전 NewPawn이 변경후로 이루어져있따고 보면된다. 
+거기에 맞춰서 CharacterParts의 정보도 변경해주는 모습을 볼수있다.
+
+<Fig n={11} src="/img/notes/lyra/cosmetic-3/11.png" caption="PIE" />
+
+아주 잘된다!!

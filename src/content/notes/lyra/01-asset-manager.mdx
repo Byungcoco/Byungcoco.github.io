@@ -1,0 +1,72 @@
+---
+series: lyra
+order: 1
+title: "에셋매니저(AssetManager)"
+date: "2024-12-13"
+source: https://byungcoco.tistory.com/11
+---
+import Fig from '../../../components/Fig.astro';
+
+### 핵심포인트
+
+- AssetManager를 사용하는 이유
+- 동기로드 방식과 FScopeLogTime을 통한 병목 구간 추적
+- 멀티스레드 환경에서의 데이터 레이스 방지
+
+## 1. AssetManager를 왜 사용해야할까?
+
+<Fig n={1} src="/img/notes/lyra/asset-manager/01.png" caption="FObjectFinder를 통한 Asset 설정" />
+
+보통 ConstructerHelpers의 ObjectFinder를 통해 경로를 하드코딩해서 Asset을 찾고, 등록하는 경우가 많다. 이렇게 되면 에디터상의 Asset들의 경로는 무조건 하드코딩된 경로와 일치해야하고 변경해야한다면 일일히 찾아서 다 수정해줘야한다. 이러한 단점을 해결하고 <strong>하드코딩 영역을 줄이고자 사용하는 것이 AssetManager</strong>이다.
+
+기본적으로 언리얼엔진에서 프로젝트의 자산관리를 위한 UAssetManager클래스를 제공한다. UAssetManager의 설명 주석을 일부 해석해 보자면, <strong>"싱글톤으로 이루어져있으며 PrimaryAssets을 로딩/언로딩 하며, 프로젝트에 맞게 AssetManager클래스를 오버라이드하고 참조를 변경해야한다."</strong>Lyra의 코드에서 일부 클론 코딩해보며, UAssetManager를 어떻게 커스텀하여 Asset을 관리하는지 살펴보겠다.
+
+<Fig n={2} src="/img/notes/lyra/asset-manager/02.png" caption="BJAssetManager.h, static UBJAssetMAnager& Get();" />
+
+<Fig n={3} src="/img/notes/lyra/asset-manager/03.png" caption="BJAssetManager.cpp, UBJAssetManager& UBJAssetManager::Get()" />
+
+<Fig n={4} src="/img/notes/lyra/asset-manager/04.png" caption="GEngine내 캐싱되어있는 AssetManager" />
+
+<strong>싱글톤으로 유일성을 보장</strong>해주며, GEngine에 접근하여 기본적으로 캐싱되어있는 AssetManager를 가져와 오버라이드클래스로 Cast해준다. 아래는 UE_LOG 페이탈로 크래쉬를 내주고 로그를남기고 마지막 return은 컴파일을 위해 더미를 리턴한다. 즉, Get을 할때마다 GEngine의 AssetManager를 가져와서 형변환하여 반환하는 방식이다.
+
+## 2. 동기로드 방식과 FScopeLogTime을 통한 병목 구간 추적
+
+<Fig n={5} src="/img/notes/lyra/asset-manager/05.png" caption="솔루션 Properties내 CommandArguments 추가 후, 활용 하는 함수" />
+
+ShouldLogAssetLoads를 통해 CommandLine에 해당 키워드가 추가되었는지 여부를 확인하는 함수이다.
+
+<Fig n={6} src="/img/notes/lyra/asset-manager/06.png" caption="SynchronousLoadAsset 함수" />
+
+LyraAssetManager에서 중요한 부분인데, 함수 명칭에서 알 수 있듯이 동기식으로 Asset을 로드한다.
+
+보통 게임에서는 어떤 로드방식을 이용할까? 예를 들어 리그오브레전드에서 징크스가 궁극기를 이용해 큰 미사일을 날리는데, 해당 큰 미사일을 동기식으로 로드하게되면 플레이어가 뚝, 뚝 끊기는 현상을 겪게된다. 그래서 대부분 비동기를 활용하는데, 동기도 단점만 있는것은 아니다. <strong>동기는 비동기보다 속도가 빠르다는 장점</strong>이 있고, 비동기식의 특성상 로직순서도를 확인하기가 까다롭지만 순차적으로 진행하는 <strong>동기방식은 로직 순서도를 파악하기 빠르다.</strong> 그래서 동기로딩은 유저가 <strong>플레이를 진행하기전 "로딩화면" 같은 곳에서 많이 활용</strong>한다.
+
+Lyra는 이러한 점을 고려해서 동기로드시 시간이 많이 걸리거나 문제가 발생하는 곳을 추적하기위해 따로 SynchronousLoadAsset함수를 만들었다. 그리고 <strong>FScopeLogTime을 활용해 걸리는 시간을 체크</strong>하여 로그를 남기는데, 언리얼로 CommandLine도 활용가능하다는 점을 알고가는 정도로 보고가도 될것 같다.
+
+그리고 마지막부분에 혹시나 엔진에서 UAssetManager가 생성 안됬다면 TryLoad()를 활용하게되는데, 언리얼에서도 TryLoad()는 엄청 느리기때문에 사용을 권장하지않는다. 중요한건 TryLoad()나 LoadSynchronous의 공통점이 있는데 동기로드라서 기본적으로 느리기때문에 해당 애셋의 <strong>캐싱여부를 체크해서 캐싱도 안되어있다면 로드를 진행</strong>한다.
+
+<div class="note-box">
+
+즉, SynchronousLoadAsset 함수는 적재적소에 필요한 Asset을 로드하기위해 FSoftObjectPath로 경로를 받아올뿐더러, 동기로드 진행시 오래걸리는 구간을 빠르게 추적하기위해 FScopeLogTime으로 시간을 체크하는 목적으로 래핑해둔 함수이다.
+
+</div>
+
+## 3. 멀티스레드 환경에서의 데이터 레이스 방지
+
+<Fig n={7} src="/img/notes/lyra/asset-manager/07.png" caption="AddLoadedAsset" />
+
+언리얼은 기본적으로 멀티스레드 코딩을 지원한다. 컨텐츠 작업을 진행할 때 멀티스레드 문제에 대해 고려하지 않아도 될 정도로 내부적으로 관리를 해주는데, <strong>한가지 예외인 시점이 있다. 그 시점이 바로 엔진이 켜지기 전</strong>이다.
+
+즉, 에디터가 켜지기전 AssetManager 초기화 시점에서 Asset을 미리 로드하고 캐싱하기 위해 사용 될때 멀티스레드 환경에 노출되는데, <strong>TSet 컨테이너인 LoadedAssets에서 데이터 경쟁</strong>이 일어날 수 있다.
+
+그래서 Lyra는 이부분을 고려하여, FCriticalSection과 FScopeLock의 락을 통해 해당 AddLoadedAsset 코드 블락에 <strong>단 하나의 스레드만 작업을 수행할 수 있도록 보장</strong>하고 있다.
+
+<Fig n={8} src="/img/notes/lyra/asset-manager/08.png" caption="GetAsset, GetSubclass(생략)" />
+
+TSoftObjecPtr은 <strong>FSoftObjectPath를 내부적으로 포함하고있는 스마트포인터</strong>이다. 그래서 Path를 가져와 Get()을 통해 해당 객체가 이미 로드되었는지 확인한다. nullptr을 반환받았다면 SynchronousLoadAsset을 통해 로드하고, AddLoadedAsset을 통해 BJAssetManager에 캐싱한다.
+
+## 4. 커스텀 AssetManager를 프로젝트에 설정하는 법
+
+<Fig n={9} src="/img/notes/lyra/asset-manager/09.png" caption="AssetManager 세팅" />
+
+기존 UAssetManager를 상속받아 커스텀하여도 에디터상에서는 이에 대해 알지를 못한다. 그래서 직접 ProjectSetting에서 내가 만든 BJAssetManager로 지정해주어야하고, 굳이 에디터에 들어가지않고 DefaultEngine.ini파일에 기본클래스 설정을 해주면된다.

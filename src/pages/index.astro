@@ -3,8 +3,14 @@ import { getCollection } from 'astro:content';
 import Base from '../layouts/Base.astro';
 import Icon from '../components/Icon.astro';
 import { profile, stack, projects, games, GAMES_TOP } from '../data/site';
+import { noteSeries } from '../data/notes';
 
 const reviews = (await getCollection('reviews')).sort((a, b) => a.data.order - b.data.order);
+const notes = await getCollection('notes');
+const noteGroups = noteSeries.map((s) => {
+  const ns = notes.filter((n) => n.data.series === s.key).map((n) => n.data.date).sort();
+  return { ...s, count: ns.length, from: ns[0], to: ns[ns.length - 1] };
+});
 const firstReview = (key: string) => reviews.find((r) => r.data.project === key);
 ---
 <Base title="강병준 · 게임 클라이언트 프로그래머">
@@ -13,6 +19,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   <a class="navlink on" href="#about"><span class="lbl">소개</span><span class="ln"></span></a>
   <a class="navlink" href="#career"><span class="lbl">경력</span><span class="ln"></span></a>
   <a class="navlink" href="#projects"><span class="lbl">학습 프로젝트</span><span class="ln"></span></a>
+  <a class="navlink" href="#notes"><span class="lbl">학습 노트</span><span class="ln"></span></a>
   <a class="navlink" href="#play"><span class="lbl">플레이 로그</span><span class="ln"></span></a>
 </nav>
 <div class="wrap">
@@ -111,6 +118,22 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
       );
     })}
   </ol>
+</section>
+
+<section id="notes" aria-label="학습 노트" class="sec">
+  <h2 class="sechead">학습 노트</h2>
+  <h3 class="subhead">학습 노트</h3>
+  <p class="lede">강의와 책, 샘플 프로젝트를 따라가며 직접 구현하고 정리한 기록입니다.</p>
+  <div class="notes">
+    {noteGroups.map((g) => (
+      <a class="note" href={`/notes/#${g.key}`}>
+        <span class="nhead"><span class="nname">{g.name}</span><span class="pill gb">{g.count}편</span></span>
+        <span class="ndesc">{g.desc}</span>
+        {g.from && <span class="nmeta">{g.from.slice(0, 7).replace('-', '.')} ~ {g.to.slice(0, 7).replace('-', '.')} · {g.source}</span>}
+      </a>
+    ))}
+  </div>
+  <a class="review" href="/notes/">학습 노트 전체 보기 <span aria-hidden="true">→</span></a>
 </section>
 
 <section id="play" aria-label="플레이 로그" class="sec last">
@@ -242,6 +265,14 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .gmeta { font-size: 12px; color: #7C8BA8; }
   .gnote { font-size: 13px; line-height: 1.6; }
   .toggle { margin-top: 16px; min-height: 44px; padding: 0 4px; background: none; border: 0; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: #7FB2FF; }
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 8px; }
+  .note { display: flex; flex-direction: column; gap: 6px; padding: 16px; background: rgba(19,35,63,0.6); text-decoration: none; color: #9AA8C2; }
+  .note:hover { background: rgba(127,178,255,0.08); }
+  .note:hover .nname { color: #7FB2FF; }
+  .nhead { display: flex; align-items: center; gap: 8px; }
+  .nname { font-size: 16px; font-weight: 600; color: #E3EAF6; }
+  .ndesc { font-size: 14px; line-height: 1.6; }
+  .nmeta { font-size: 12px; color: #7C8BA8; }
   .foot { max-width: 440px; font-size: 13px; color: #7C8BA8; }
   .foot a { color: #B7C3D9; font-weight: 600; text-decoration: none; }
   .foot a:hover { color: #7FB2FF; }

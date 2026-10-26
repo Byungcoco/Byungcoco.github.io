@@ -1,0 +1,74 @@
+---
+series: lyra
+order: 12
+title: "GameFeature / Common User"
+date: "2025-01-11"
+source: https://byungcoco.tistory.com/36
+---
+import Fig from '../../../components/Fig.astro';
+
+이때까지의 과정을 훑어보면 Experience라는 새로운 게임모드 단위를 분석과 Character의 PawnExtensionComponent 분석으로 FeatureComponent들와 서로 관찰하며 상태를 갱신해나가고, Character에 종속적으로 Input과 여러 정보를 묶어두는 것이 아닌 HeroComponent에서 이를 담당하여 종속성을 줄이는 여러 방법 까지 분석해보았다.
+
+Character의 조작의 틀이 잡혔으니 다시 ExperienceLoad로 돌아가 Experience 단위로 소환되는 포탈들을 타고 해당 Experience로 이동하는 작업을 이어서 해볼 예정이다.
+
+Lyra에서는 Experience를 통한 Map간 이동을 CommonUser라는 플러그인을 활용해서 자체적인 시스템을 설계했다.
+
+멀티기반으로 개발되어서 CommonSession, CommonSubsystem을 통해 네트워크에 연결할 수 있도록하는데, Lyra에서는 굉장히 복잡하게 설계되어있다. 그래서 Map 이동만 구현해보며 알아보자.
+
+<Fig n={1} src="/img/notes/lyra/common-user/01.png" caption="Blank 플러그인 생성 / CommonUser" />
+
+<Fig n={2} src="/img/notes/lyra/common-user/02.png" caption="CommonUserPlugin 내 UCommonSessionSubsystem" />
+
+CommonUserPlugin내에 CommonSessionSubsystem을 만들어준다. 이 클래스는 UGameInstanceSubsystem을 상속받는다.
+
+> <strong>Subsystem</strong>
+
+여기서 잠깐 Subsystem을 짚고 넘어가자면, UE내부에는 여러 Subsystem이 존재한다. Engine, Editor, GameInstance, World, LocalPlayer로 이렇게 총 5가지가 존재하는데 단 하나의 존재, 고유성을 지니며 어디서든 Get을 통해 접근이 가능하다. 이러한 방식은 싱글톤과 유사한데 굳이 Subsystem으로 따로 관리하는 이유가 있다. 언리얼에서 싱글톤의 가장 큰 단점은 생명주기를 관리할 수 없다. 즉, 한번 생성되면 엔진이 종료되기까지 사라지지 않는다는것이다.
+
+간단한 예로, 싱글톤으로 게임 데이터를 받는 매니저를 생성하고 멀티플레이환경에서 테스트하기 위해 에디터를 키고 여러개의 PIE로 테스트를 진행한다. 테스트가 끝나고 두번째 테스트를 실행했을 때 해당 게임데이터매니저는 파괴되지않고 이전 데이터를 가지고있는채로 두번째 테스트가 진행이된다. 더 치명적인건 월드가 사라질때 같이 사라져야하는 매니저가있는데 이를 제어하지 못하면 어떤 문제가 발생할지 예상이 안간다. 그래서 5가지의 생명주기를 가지고있는 Subsystem을 언리얼에서 제공한다.
+
+여기서 사용해볼 Subsystem은 GameInstance의 생명주기를 따라가는 Subsystem인데, PIE환경에서 용이하다. 여러 PIE를 통해 테스트를 해도 각 PIE에 GameInstance가 생기고 개별적인 Subsystem 또한 생성되도록 설계되어있다. Subsystem을 Get하는 유틸함수도 굉장히 잘 구현되어있는데,
+
+- UMySystem* MySystem = GameInstance-&gt;GetSubsystem&lt;UMySystem&gt;();
+
+이런식으로 간단하게 Subsystem을 가져올수 있다.
+
+<Fig n={3} src="/img/notes/lyra/common-user/03.png" caption="USubsystem.h" />
+
+다음과 같이 초기화단계, 파괴단계, Subsystem을 생성할지 여부에대해서도 결정할수있다. 예를들어 네트워크 관련 서브시스템은 클라이언트에서 필요없으니 클라이언트에서는 Subsystem이 생성되지 않게도 가능하다.
+
+<Fig n={4} src="/img/notes/lyra/common-user/04.png" caption="UCommonSessionSubsystem.h에 추가된 클래스" />
+
+UCommonSessionSubsystem.h에 UCommonSession_HostSessionRequest 클래스를 추가해준다. PrimaryAssetId로 MapId를 들고있고, Experience이름을 가지고있는 ExtraArgs가 있다.
+
+<Fig n={5} src="/img/notes/lyra/common-user/05.png" caption="UCommonSession_HostSessionRequest의 GetMapName()" />
+
+간단하게, AssetManager를 통해 MapID로 AssetData를 가져온다.(로딩X) 그리고 해당 데이터의 이름을 반환하는 간단한 유틸 함수이다.
+
+<Fig n={6} src="/img/notes/lyra/common-user/06.png" caption="UCommonSession_HostSessionRequest의 ConstructTravelURL()" />
+
+이부분이 핵심인데, ExtraArgs Map의 Key가 존재하지 않는다면 넘어가는데, Key, Value에 따라 FString을 조합한다.
+
+마지막 주석에 달려있듯이 Map이름과 CombinedExtrArgs를 합쳐 ABC?Experience=FPSMode 라는 꼴이 완성되는데, 예를들면 Map이름이 ABC이고, Experience는 FPSMode로 정의되어있다는것이다.
+
+즉 호출부에서 ?를 통해 Map이름과 Experience를 구분하고 ABC라는 맵의 Experience FPSMode를 실행하면 된다는 것을 전송하는것 같다. (멀티플레이와 관련되어있는 듯) 여기서는 ?단위가 Argument의 단위라고 보면 되고, 맵을 이동하기 위한 하나의 URL을 만드는 함수라고 보면되겠다.
+
+<Fig n={7} src="/img/notes/lyra/common-user/07.png" caption="UCommonSessionSubsystem의 HostSession()" />
+
+그렇다면 해당 CommonSession_HostSessionRequest를 생성해 주어야하는데, 그부분은 UserFacingExperience에서 담당한다. 왜냐하면 UserFacingExperience에서 MapID와 ExperienceID를 가지고 있었기 때문이다.
+
+<Fig n={8} src="/img/notes/lyra/common-user/08.png" caption="UserFacingExperience의 CreateHostingRequest()" />
+
+CreateHostingRequest()의 메타키워드를 살펴보면 BlueprintCallable이 있다. 아마도 블루프린트 상에서 로직이 이루어질것같은데, Character가 포탈에 부딪히면 해당 포탈에 지정된 UserFacingExperience가 CreateHostingRequest를 하고 해당 LocalPlayer가 Map이동과 Experience변경이 이루어지도록 로직이 짜여질것같다.
+
+근데 여기서 정말 주의해야할 점이 UCommonSession_HostSessionRequest는 UObject로 GC처리가 이루어진다. 그리고 현재 어디에 캐싱해두는것이 아닌 함수 내에서 생성을 하고 생명주기가 스택프레임에 달려있다. 어짜피 해당 객체는 현재프레임에서만 사용되기 때문에 GC에 대한 생각을 할필요 없지만, 반환 받아놓고 이후의 프레임에서 따로 저장하지 않고 해당 객체를 사용할 경우 GC가 회수처리하고 난뒤일 확률이 높으니 dangling 문제가 생김을 유의해야한다!
+
+<Fig n={9} src="/img/notes/lyra/common-user/09.png" caption="" />
+
+<Fig n={10} src="/img/notes/lyra/common-user/10.png" caption=", 9. 포탈의 BeginOverlap 로직" />
+
+Experience단위인 포탈이 BeginOverlap된 Actor가 Pawn인지 캐스트를 진행하고, 폰의 Controller를 가져와 존재한다면 LocalController를 가져온다. 해당 과정이 정상적으로 이루어졌다면 Controller를 PlayerController로 캐스팅한다. 포탈에 캐싱된 UserFacingExperience로 CreateHostingRequest를 호출하여 URL을 반환하고, CommonSessionSubsystem에 접근해서 HostSession을 통해 플레이어를 이동해준다.
+
+HostSession<strong>(▲그림6.)</strong>에서 잘불러와지고 이동이 이루어지는지 브레이크포인트를 통해 검사를 해보면!
+
+<Fig n={11} src="/img/notes/lyra/common-user/11.png" caption="HostSession 디버그" />

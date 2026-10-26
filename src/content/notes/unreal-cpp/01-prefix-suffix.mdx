@@ -1,0 +1,35 @@
+---
+series: unreal-cpp
+order: 1
+title: "접두어 및 접미어 정리"
+date: "2024-12-16"
+source: https://byungcoco.tistory.com/16
+---
+## 1. 접두어
+
+<div class="tbl">
+
+|  | <strong>의미</strong> | <strong>설명</strong> | <strong>예시</strong> |
+|---|---|---|---|
+| <strong>F</strong> | Struct | - 대부분 ValueType으로 사용 - 메모리 효율성을 고려해 고정된 크기의 데이터 정의 | FVector, FRotator, FTransform |
+| 일반C++오브젝트 | - 일반 C++에서 사용하는 네이티브 객체 |  |  |
+| <strong>T</strong> | Template | - Generic 타입을 정의할 때 사용 - 다양한 데이터 유형을 처리할 수 있는 범용 클래스를 만들기 위해 사용 | TArray, TMap, TWeakObjectPtr |
+| <strong>U</strong> | UObject | - 리플렉션과 GC를 지원 - 블루프린트와 상호작용 할 수 있는 클래스와 데이터 | UActorComponent, UTexture |
+| <strong>A</strong> | Actor | - UObject를 상속받으며 Transform을 가질수 있음 - 씬에서 움직이거나 물리적상호작용 포함 가능 | ACharacter, AActor, APlayerController |
+| <strong>I</strong> | Interface | - 다중 상속을 지원하지 않는 언리얼에서 주요 확장도구 - UInterface를 상속받아 정의 | IInteractable, IPickable |
+| <strong>E</strong> | Enum | - State나 값을 구분하기위한 상수 집합 - UENUM() 매크로를 통해 블루프린트와 연동 가능 | ECharacterState, EBlendMode |
+| <strong>S</strong> | Slate | - UI 시스템의 SlateWidget을 나타낸다. - C++ 기반 고성능 UI를 정의할 때 사용 | SButton, STextBlock, SCanvas |
+| <strong>G</strong> | Global | - 엔진 전역에서 접근 가능한 전역 상태, 데이터 저장 - 주로 엔진 내부 구현에서 사용 | GEngine, GWorld |
+
+</div>
+
+## 2. 접미어
+
+<div class="tbl">
+
+|  | <strong>의미</strong> | <strong>설명</strong> |
+|---|---|---|
+| <strong>_C</strong> | UBlueprintGeneratedClass | 블루프린트의 런타임 컴파일 결과물 |
+| <strong>_Implementation</strong> | BlueprintNativeEvent의 C++ 기본 구현 | 블루프린트 구현과 기본 C++ 구현을 구분 <strong>C++구현이 우선순위가 높음!</strong> |
+
+</div>
