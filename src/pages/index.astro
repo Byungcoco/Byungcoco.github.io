@@ -77,6 +77,24 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   <h2 class="sechead">경력</h2>
   <h3 class="subhead">경력</h3>
   <div class="entry">
+    <span class="side"><span>2024.02</span><span>~2025.02 (1년)</span><span class="team">4인</span></span>
+    <div class="main">
+      <span class="etitle">4funSpeaking</span>
+      <span class="role">벤처/스타트업 · 기획 및 콘텐츠 개발 담당</span>
+      <span class="shots">
+        <img src="/img/career/4fun-1.jpg" alt="Roblox 영어 회화 게임 체크리스트 미션 화면" loading="lazy" />
+        <img src="/img/career/4fun-2.jpg" alt="Roblox 영어 회화 게임 NPC 대화 화면" loading="lazy" />
+      </span>
+      <ul class="cl">
+        <li>클리커 방식 미니게임 등 학습 콘텐츠 총 8종 기획 및 구현</li>
+        <li>상호작용 중심의 레벨 디자인</li>
+        <li>실제 영어 수업 커리큘럼 2개월간 활용, 중, 고, 성인 학습자 플레이 테스트를 거쳐 피드백 반영</li>
+      </ul>
+      <span class="tags"><span class="pill">Lua</span><span class="pill">Roblox Studio</span></span>
+      <span class="acts"><a class="act wadiz" href="https://www.wadiz.io/web/campaign/detail/402250" target="_blank" rel="noopener" aria-label="4funSpeaking 와디즈 펀딩 페이지">wadiz ↗</a></span>
+    </div>
+  </div>
+  <div class="entry">
     <span class="side"><span>2022.02</span><span>~2023.02 (1년)</span></span>
     <div class="main">
       <span class="etitle">(주)휴트리온</span>
@@ -252,6 +270,8 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .review:hover { background: rgba(127,178,255,0.12); border-color: #7FB2FF; text-decoration: underline; }
   .acts { display: flex; align-items: center; gap: 8px; margin-left: -8px; }
   .act { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; height: 44px; text-decoration: none; }
+  .wadiz { padding: 0 14px; border: 1px solid #24385A; border-radius: 8px; height: 36px; margin-left: 8px; font-size: 14px; font-weight: 700; color: #F4F6F9; }
+  .wadiz:hover { border-color: #7FB2FF; color: #7FB2FF; }
 
   .lede { margin: 0 0 24px; font-size: 15px; }
   .games { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
@@ -266,10 +286,10 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .gmeta { font-size: 12px; color: #A3ADBF; }
   .gnote { font-size: 13px; line-height: 1.6; }
   .toggle { margin-top: 16px; min-height: 44px; padding: 0 4px; background: none; border: 0; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: #7FB2FF; }
-  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 8px; }
-  .nth { display: block; aspect-ratio: 16 / 9; margin-bottom: 6px; overflow: hidden; border-radius: 6px; border: 1px solid #1E3150; background: #13233F; }
+  .notes { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+  .nth { grid-row: 1 / span 2; display: block; aspect-ratio: 16 / 10; overflow: hidden; border-radius: 6px; border: 1px solid #1E3150; background: #13233F; }
   .nth img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
-  .note { display: flex; flex-direction: column; gap: 6px; padding: 16px; background: rgba(19,35,63,0.6); text-decoration: none; color: #CDD5E1; }
+  .note { display: grid; grid-template-columns: 200px minmax(0, 1fr); grid-template-rows: auto 1fr; column-gap: 20px; row-gap: 6px; align-items: start; padding: 16px; background: rgba(19,35,63,0.6); text-decoration: none; color: #CDD5E1; }
   .note:hover { background: rgba(127,178,255,0.08); }
   .note:hover .nname { color: #7FB2FF; }
   .nhead { display: flex; align-items: center; gap: 8px; }
@@ -304,6 +324,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
     .subhead { font-size: 30px; }
   }
   @media (max-width: 1023px) {
+    .note { grid-template-columns: 112px minmax(0, 1fr); column-gap: 14px; padding: 12px; }
     .wrap { flex-direction: column; padding: 0 24px; gap: 0; }
     .left { position: static; height: auto; max-height: none; padding: 64px 0 24px; }
     .toc { display: none; }
