@@ -1,0 +1,128 @@
+---
+series: lyra
+order: 26
+title: "GameplayCue와 WeaponFire"
+date: "2024-12-03"
+topic: "인프런 Lyra 클론 코딩 메모"
+---
+import Fig from '../../../components/Fig.astro';
+
+<Fig n={1} src="/img/notes/lyra/gameplay-cue-weapon-fire/01.png" caption="" />
+
+일전에 만들어 두었던 GCN에 CueTag도 등록해준다.
+
+<Fig n={2} src="/img/notes/lyra/gameplay-cue-weapon-fire/02.png" caption="" />
+
+이어서 GCN에 Default SocketName 지정, Weapon_r_muzzle
+
+GA에서 GCNParameter와 CueTag를 통해 해당 Effect를 요청할거고 해당 CueTag와 동일한 GCN의 Event가 발동된다.(현재의 경우 OnBurst)
+
+<Fig n={3} src="/img/notes/lyra/gameplay-cue-weapon-fire/03.png" caption="" />
+
+Content폴더에 BlueprintMacroLibrary인 WeaponMacros를 생성해주고 Input, Output을 설정해준다.
+
+<Fig n={4} src="/img/notes/lyra/gameplay-cue-weapon-fire/04.png" caption="" />
+
+B_Waepon의 Input도 다음과 같이 정의해준다
+
+<Fig n={5} src="/img/notes/lyra/gameplay-cue-weapon-fire/05.png" caption="" />
+
+다음과 같은 로직이 되는데, Pawn을 Input으로 받아오고, EquipmentManagerComponent를 들고와서 WeaponInstance가 존재하는지, 그 WeaponInstance의 스폰된 액터가 있으며, 존재하는지 존재한다면 B_Weapon으로 Cast해서 Output으로 뱉는데
+
+정리하자면 해당 폰이 WeaponInstance로써 Equipment로 스폰된것인지 체크해보는 과정의 매크로이다.
+
+<Fig n={6} src="/img/notes/lyra/gameplay-cue-weapon-fire/06.png" caption="" />
+
+GA에서 Burst를 호출할때 Parameter와 tag를 전달했는데 Parameter엔 HitResult에 대한 정보가 있고, 해당 정보를 Array로 변환하여 Surface(Hit된부분의 재질), Location, Normal을 B_Weapon의 FireEvent의 입력 매개변수로 전달한다.
+
+여기서 아까 만들었던 B_Weapon으로 Cast해서 실패해도 ReturnNode를 통해 그대로 실행해버린다. 그리고 추후에 Surface에 해당하는 재질들을 등록하는 과정이 있을텐데, 거기에 등록 존재하지않는 재질이라면 Deafult를 반환한다.
+
+정리하자면, TargetPawn 즉, 장착한 무기! B_Weapon을 Cast해서 존재한다면 전달받은 Parameters의 각정보를 B_Weapon FireEvent로 전달해주는 과정이다.
+
+<Fig n={7} src="/img/notes/lyra/gameplay-cue-weapon-fire/07.png" caption="" />
+
+Content폴더 내 Blueprints에 액터블루프린트를 다음과 같이 생성해준다. Fire는 격발에 대한, Impacts는 맞은 대상에 대한, Decals는 피격 Effect를 담당하게 된다. FireEvent에서 이 3개를 호출하는 방식으로 구성된다.
+
+Lyra에서 Impatcs의 경우 맞은 대상마다 다른 효과가 나타나도록 블루프린트로 최적화를 해두었는데 눈여겨 보아야할 필요가있다! Blueprint로 이게 가능하다고?!?!?
+
+<Fig n={8} src="/img/notes/lyra/gameplay-cue-weapon-fire/08.png" caption="" />
+
+B_Weapon의 FireEvent로직을 만들기 앞서 다음과같이 변수를 추가해준다.
+
+<Fig n={9} src="/img/notes/lyra/gameplay-cue-weapon-fire/09.png" caption="" />
+
+입력 매개변수로 받아온 데이터를 캐싱한뒤, MuzzlePosition의 경우 SkeletalMesh내부에 Muzzle이라는 Socket이 존재하니 이것도 캐싱해둔다. 그리고 이 데이터를 통해 WeaponFire, Decals, Impacts를 불러온다! 이제 이부분을 구현해보러 가자
+
+<Fig n={10} src="/img/notes/lyra/gameplay-cue-weapon-fire/10.png" caption="" />
+
+WeaponFire로 돌아와 변수를 다음과 같이 정의해준다... Shall Eject, Muzzle Flash, Tracer 이렇게 3분류로 나누었는데, Shall Eject는 탄피효과, Muzzle Flash는 총구화염 관련 이펙트, Tracer는 총 궤적 이펙트이다.
+
+public으로 열어둔 변수들은 expose on spawn 옵션을 켜둬야한다(해당 B_WeaponFire을 블루프린트 통해 Spawn 호출과 동시에 입력 가능하게 하는것)
+
+NiagaraSystem과 NiagaraParticleSystemComponent의 차이? NiagaraSystem은 클래스, NiagaraParticleSystemComponent는 System을 통해 Spawn, 생성된 Instance라 보면된다.
+
+해당 이펙트를 NiagaraSystem을 통해서 New를 통해 이펙트가 생성되는데, 매번 생성하기에는 비효율적이니 이를 재활용하기 위해 NiagaraParticleSystemComponent로 캐싱해두는 것이다.
+
+Lyra에서 필요한 NS(NiagaraSystem)을 Migrate해서 각각 System과 StaticMesh에 지정해주자.
+
+<Fig n={11} src="/img/notes/lyra/gameplay-cue-weapon-fire/11.png" caption="" />
+
+Fire가 호출되면서 bool값과 NS Shell Eject(NiagaraParticleSystemComponent)를 체크한다. Shell Eject는 뭐다? NiagaraSystem에 의해 생성된 Instance와 유사하다! NS Shell Eject가 존재한다면 계속 꺼내 쓸테니, 없었을 경우 어떻게 들고오는지 로직을 확인해보자.
+
+<Fig n={12} src="/img/notes/lyra/gameplay-cue-weapon-fire/12.png" caption="" />
+
+SpawnSystemAttached가 호출되는 조건은 NS Shell Ejct에 캐싱되어 있지 않거나 Active 되지 않았을 때이다. SkeletalMesh는 당연하게도 이 이펙트를 소환하는 주체 Pawn이나 Character가 될것이고 Mesh 내부에 ShellEject라는 SocketName이 따로 존재한다.
+
+그리고 TransformSpace가 RTS Actor라고 되있는데, Actor기준 위치 정보인것이다. 왜냐? 해당 이펙트는 Acto 기준에서 발생되는것이니까! 소켓기준 Transform정보를 SpawnSystemAttached에 넘겨준다.
+
+여기서 Auto Destroy, Auto Active가 있는데 말그대로 해당 이펙트를 자동으로 생성해주며 일정시간뒤에 자동으로 Destroy해주는 여부를 묻는 Bool값이다. 수많은 이펙트의 생명주기를 일일히 제어해줄 필요없이 편리한 기능을 제공해준다.
+
+<Fig n={13} src="/img/notes/lyra/gameplay-cue-weapon-fire/13.png" caption="" />
+
+<Fig n={14} src="/img/notes/lyra/gameplay-cue-weapon-fire/14.png" caption="Shell Eject Niagara System 내부" />
+
+해당 함수에서 나온 ReturnValue를 Niaragara Particle System Component를 캐싱해준다. 이어서 해당 Niagara Particle System Component 내에 User.ShellEjectStaticMesh라는 곳에 Shell Eject System(Value), StaticMesh를 세팅해준다. Trigger로직에 이어서 또다시 해당 Niagara System Component의 User.Trigger에 값을 바인딩해준다.
+
+<Fig n={15} src="/img/notes/lyra/gameplay-cue-weapon-fire/15.png" caption="" />
+
+이어서 Muzzle작업을 이어갈건데, 과정은 비슷해서 일부 생략하고, StaticMesh설정하는 부분을 제외하고 마지막에 User.Direction을 설정해주는 부분이 추가된다. 연기가 나가는 방향을 결정해주는 것!
+
+즉, ImpactPosition(맞은 위치)에서 Muzzle소켓의 위치를 빼고 Normalize를 하게되면 내가 쏜 위치 기준에서 맞은 쪽의 거리방향정보가 나오게 된다. 이부분을 설정해주는것!
+
+<Fig n={16} src="/img/notes/lyra/gameplay-cue-weapon-fire/16.png" caption="" />
+
+Tracer 역시 Muzzle Socket에서 진행된다. 모든 로직이 똑같고 마지막에 ImpactPosition을 세팅해준다.
+
+이렇게 3개의 이펙트 탄피, 연기, 궤적를 완료했다.
+
+B_Weapon의 FireEvent로직을 마저 완성하자!
+
+<Fig n={17} src="/img/notes/lyra/gameplay-cue-weapon-fire/17.png" caption="" />
+
+<Fig n={18} src="/img/notes/lyra/gameplay-cue-weapon-fire/18.png" caption="" />
+
+B_WeaponFire가 존재하지않다면? SpawnActor를 통해 생성을 진행하고, B_WeaponFire 작업할때 public으로 열었던 변수들에 접근 가능한게 확인된다. 이어서 WeaponFire에 캐싱해주고 SkeletalMeshComponent에 붙여준다.
+
+여기서 의문! WeaponFire가 캐싱되어있다면 왜 Impact관련 정보들을 재설정 해주는걸까? WeaponFire의 경우 같은곳에서 발생되는것이아니다. 캐싱되어있는 이펙트는 동일하지만 방향은 매 순간, 매 이벤트가 발생되는 순간에는 달라지기때문에 GCN이 불릴때마다 업데이트해서 계산해줘야 한다.
+
+<Fig n={19} src="/img/notes/lyra/gameplay-cue-weapon-fire/19.png" caption="" />
+
+다음과 같이 B_Weapon을 상속받는 B_Pistol에 정보를 기입해주면 된다. 시스템을 구축하는데 많은 시간이 걸렸지만, 이와 같이 NiagaraSystem을 넣어주는것 만으로도 기본적인 이펙트를 표현 해낼 수 있는 틀이 완성 되었다.
+
+<Fig n={20} src="/img/notes/lyra/gameplay-cue-weapon-fire/20.png" caption="아주 잘 구현된다!" />
+
+여기서 중요한점을 짚고갈게 있다. B_WeaponFire는 하나의 Actor이다. 그렇다는건 누군가 소멸시켜주지 않으면 평생 남아있다. 헷갈릴 수 있는게 AutoDestroy로 이펙트를 지우고 있지않나? 할 수 있지만 말 그대로 이펙트, NiagaraSystem은 Destroy되는게 맞다. 근데 여기서 말하는건 B_WeaponFire 이펙트를 재생시키는 그 자체 Actor를 말하는 것이다.
+
+<Fig n={21} src="/img/notes/lyra/gameplay-cue-weapon-fire/21.png" caption="" />
+
+B_WeaponPistol에서 각 3개의 Effect를 재생하는 Sequence가 있었는데 핀을 하나 추가해서 다음과 같은 로직을 추가한다.
+
+3초마다 체크하며 Effect가 하나라도 남아있으면 반복, 남아있지 않는다면 스스로 파괴시키는 로직이다. 이렇게 소멸케이스까지 만들어 관리하도록 짜두었다.
+
+Fire에 대한 부분을 구현하며 WeaponDecal과 WeaponImpacts가 남아있는데, 진행하기 앞서 한번 정리해보자.
+
+<Fig n={22} src="/img/notes/lyra/gameplay-cue-weapon-fire/22.png" caption="" />
+
+총을 쏘게되면 내부적으로 TagSystem에 의해서 GameplayAbility_RangedWeapon의 Tag를 찾아 매칭이되서 Active가 되고, 총알 궤적 계산 및 충돌 판정을해서 타겟이 존재한다면 OnRangeWeaponTargetDataReady가 발동이 되게 된다.
+
+GameplayCueManager를 이용해서 타겟정보와 GameplayCueTag를 전달하며 요청하고, 해당 GameplayCueTag와 동일한 GCN이벤트(현재의 경우 OnBurst)가 발동된다. 폰에 장착되어있는 B_Weapon의 정보와, 전달받은 타겟정보등을 Fire이벤트로 넘겨주며 호출하게 된다. 그러면서 해당 이펙트, NiagaraSystem을 관리하는 Actor인 B_WeaponFire를 생성하고 NiagaraSystem과 이펙트 위치에 대한 정보와 각종 데이터를 전달하며 B_WeaponFire의 Fire를 호출하게 된다.

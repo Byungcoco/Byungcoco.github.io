@@ -1,0 +1,37 @@
+---
+series: lyra
+order: 30
+title: "ShooterHUDLayout"
+date: "2024-12-06"
+topic: "인프런 Lyra 클론 코딩 메모"
+---
+import Fig from '../../../components/Fig.astro';
+
+PrimaryLayout에 HUDLayout을 장착하는것까지 구현을 했었다. UIExtension System은 아직 구현이 안되어서 Widget들을 등록은했지만 장착은 이루어지지 않았다.
+그리고 PrimaryLayout도 WidgetBase를 상속받아 관리되었고 HUDLayout도 Widget계열을 상속받아 관리하게 된다.
+
+<Fig n={1} src="/img/notes/lyra/shooter-hud-layout/01.png" caption="CommonActivatableWidget 상속받아 생성" />
+
+일전에 만들어두었던 AHUD를 상속받은 BJAHUD를 기억할것이다. 그 AHUD가 ActivatableWidget을 상속받아 생성되니 BJActivatableWidget 클래스를 만들어 준것이다.
+
+<Fig n={2} src="/img/notes/lyra/shooter-hud-layout/02.png" caption="" />
+
+CommonActivatableWidget은 CommonUI Plugin내에 존재하는 Widget이다. Widget Layout과 Widget Instance를 구분하기 위한 용도로 CommonActivatableWidget은 Layout을 정의한다.
+
+GameHUDLayout을 쓰다가 MenuHUDLayout으로 전환할때 결국엔 GameHUDLayout으로 갔다가 Game으로 다시 넘어갈텐데(StackLayout), 그때마다 WidgetTree에서 제거를 하면 퍼포먼스 낭비가 심하다. 뿐만아니라 삭제했다가 생성하는 과정도 무겁기때문에 동적으로 키고 끄는 큰 장점을 제공한다. 그리고 Input 처리 방법도 내부적으로 한번 커스텀해서 만들어두어 편리하게 제공한다.
+
+<Fig n={3} src="/img/notes/lyra/shooter-hud-layout/03.png" caption="" />
+
+<Fig n={4} src="/img/notes/lyra/shooter-hud-layout/04.png" caption="" />
+
+EMouseCaptureMode는 언리얼에서 기본적으로 제공하는 Enum이다. 원래는 얘를 이용해서 세팅을 하는데, 이를 활용해서 EBJWidgetInputMode로 제어할 예정이다.
+
+예를들어 인벤토리를 조작하고있는데 게임내의 공격이 입력되면 안되는 상황은 EBJWidgetInputMode에서 Menu, Game으로 돌아왔다 그럼 Game 등으로 말이다.
+
+<Fig n={5} src="/img/notes/lyra/shooter-hud-layout/05.png" caption="" />
+
+ActivatableWidget을 만들었으니, 이를 상속받는 HUDLayout 클래스를 만들어주겠다. 이 클래스는 블루프린트로 사용할것이니 빈 클래스이다.
+
+<Fig n={6} src="/img/notes/lyra/shooter-hud-layout/06.png" caption="" />
+
+그리고 ShooterCorePlugin의 UserInterface폴더에 HUDLayout 으로 만든 BlueprintWidget을 생성해주겠다.

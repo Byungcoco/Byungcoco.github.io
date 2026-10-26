@@ -1,0 +1,144 @@
+---
+series: lyra
+order: 29
+title: "GameFeatureAction_AddWidget"
+date: "2024-12-05"
+topic: "인프런 Lyra 클론 코딩 메모"
+---
+import Fig from '../../../components/Fig.astro';
+
+GameplayTag을 매핑하여 해당 Tag에 맞는 Layout을 띄울수 있게 기반을 만들어봤다. 그렇다면 해당 Layout안에 또다른 UI Widget이 추가될건데(Ex. 상점, 아이템창 등) 그러한 구분은 또 어떻게 이루어질까?
+이때까지 만든 구조는 하나뿐인 큰 PrimaryLayout에 상황에 맞는 4가지의 Layout을 만들었다. 해당 4가지의 Layout안에 또다른 UI들을 UIExtension으로 구분한다. 이것또한 GameplayTag로 구분이 이루어지는데, 첫번째 접근에 어떤 Layout인지? 두번째 접근에 그 Layout내에서 어떤 UIExtension인지? 정리하자면 PrimaryLayout( Layout( UIExtension ) )으로 존재한다고 보면된다.
+
+PrimaryLayout은 무조건 기본적으로 생성되어있는것이고, 해당 Layout은 어느 시점에 생성하고 관리할지 등은 GameFeatureAction을 이용하게 된다. 해당 액션이 발동하면 Layout이 장착되고 거기에 해당되는 UIExtension도 장착아 이루어지게 한다는것이다.
+
+<Fig n={1} src="/img/notes/lyra/game-feature-action-add-widget/01.png" caption="" />
+
+GameFeatureAction_WorldActionBase를 상속받아 생성한다.
+
+<Fig n={2} src="/img/notes/lyra/game-feature-action-add-widget/02.png" caption="" />
+
+Layout은 어떤 Layout을 장착할지에 대한 요청, 해당 Layout이 Widget은 어떤 UIExtension들을 구성하는지에 대한 변수이다. 사실 Layout은 웬만하면 복수개일 수 없다. 아마 여러가지 확장성을 고려해서 TArray로 선언만 해놓은듯 하다.
+
+<Fig n={3} src="/img/notes/lyra/game-feature-action-add-widget/03.png" caption="" />
+
+각각 UI의 Layout으로 CommonActivatableWidget을 이용, PrimaryGameLayout의 LayerID를 의미한다.
+
+<Fig n={4} src="/img/notes/lyra/game-feature-action-add-widget/04.png" caption="" />
+
+해당 Layout위에 올릴 대상이 되는 WidgetClass와 LayoutClass에 정의된 Slot(GameplayTag)을 의미한다. TSoftClassPtr에 주목! 그렇다는건 따로 로드해서 장착을 한다.
+
+<Fig n={5} src="/img/notes/lyra/game-feature-action-add-widget/05.png" caption="" />
+
+GameFeatureAction을 사용할때 항상 클래스내 FPerContextData라는 구조체를 꼭 선언한다. 그이유는 ? FPerContextData가 없으면 관리가 굉장히 어렵다. GameFeatureAction의 경우 UEngine을 Subsystem에서 상속받아 사용되고 있기 때문에, 관리가 Instance별로 되지 않는다. 그래서 굳이 World단위로 캐싱해서 진행했었다. 결론적으로 PIE 환경을 여러개를 켜서 사용해도 FPerContextData로 월드별 데이터가 정리될것이기 때문에 이러한 경우를 대비해서 꼭 사용되고 있는것이다.
+
+ComponentRequestHandle의 경우 진행하면서 이해하는게 빠르고, Layout이 생성되서 관리 될텐데 그 부분을 캐싱해두는곳이 LayoutsAdded 이다. UIExtensionHandle은 FBJHUDElementEntry를 위한 Handle이다. 즉 FBJHUDElementEntry를 한번더 가공해서 Handle 형태로 들고있는 것이다.
+
+<Fig n={6} src="/img/notes/lyra/game-feature-action-add-widget/06.png" caption="" />
+
+그리고 특이하게 UIExtension의 경우 Plugin을 통해 추가적으로 확장이 이루어졌다. 이런 복잡한 구조를 가지고있어서 Lyra UI방식이 조금 호불호가 갈리는것같다. 그래서 UI내에서 확장할수 있는 기능들이 이 Plugin에 함축되어있다고 보인다.
+
+<Fig n={7} src="/img/notes/lyra/game-feature-action-add-widget/07.png" caption="" />
+
+Build에 키워드 추가해주고...
+
+중간 정리를 하고가자면, CommonUIManagerSubsystem에서 Policy를 들고 있고 Policy에서는 Layout을 들고 관리하며 세팅한다. PrimaryLayout을 세팅하며 각 Layout을 세팅하고 그 안의 HUD Widget들을 UIExtension이라 부르는데, UIExtension은 CommonUIManagerSubsystem에서 관리하지않는다. UIExtensionSystem이라고 따로 만들어서 관리한다.
+
+<Fig n={8} src="/img/notes/lyra/game-feature-action-add-widget/08.png" caption="None으로 UIExtension 플러그인에 생성" />
+
+<Fig n={9} src="/img/notes/lyra/game-feature-action-add-widget/09.png" caption="" />
+
+UIExtensionSystem헤더파일이다. UUIExtensionSubsystem은 WorldSubsystem으로 월드별로 구성되어있다. 아까 FBJHUDElementEntry를 Handle로 한번 래핑해서 사용한다 했는데, WorldSubsystem단위인 ExtensionSource, 즉 어떤 월드에 FUIExtension인지 래핑한것이다. UUIExtensionSubsystem과 UIExtension을 한세트로 만든것
+
+아래 template은 복사같은걸 편하게 하기위한 문법이다.
+
+<Fig n={10} src="/img/notes/lyra/game-feature-action-add-widget/10.png" caption="" />
+
+FUIExtension은 일단 GC대상이 아닌 SharedPtr이다. ExtensionPointTag 게임태그를 가지고있고, UObject*는 Widget Class를 가지고 있으며, ContextObject는 소유자를 뜻하는데 보통 LocalPlayer로 설정된다.
+
+아까 말했던 UIExtension 하나의 단위! Widget과 GameplayTag가 매핑되어있다.
+
+<Fig n={11} src="/img/notes/lyra/game-feature-action-add-widget/11.png" caption="" />
+
+메인 모듈의 빌드파일에 UIExtension을 추가해주고 AddWidget을 마저 구성해보자.
+
+<Fig n={12} src="/img/notes/lyra/game-feature-action-add-widget/12.png" caption="" />
+
+<Fig n={13} src="/img/notes/lyra/game-feature-action-add-widget/13.png" caption="" />
+
+GameFeatureAction_AddWidgets로 돌아와서 오버라이딩함수 정의해주고 ContextData를 추가해주자. AddToWorld는 어떤 Action을 활성화했을때 현재 월드정보를 넘기는데, FGameFeatureStateChangeContext의 경우 그 월드를 구별하기 위한 하나의 FName이라고 보면된다.
+
+<Fig n={14} src="/img/notes/lyra/game-feature-action-add-widget/14.png" caption="" />
+
+GameFrameworkComponentManager를 가져올 GameInstance와 World는 GameWorld여야 한다. 여기서 복습차원으로 GameFrameworkComponentManager를 사용한다는것은 어떤 의미를 가질까?라는 의문을 가져보자. GameFeature Action을 활용하겠다는것이고, 그렇기 위해선 Receiver로 등록이 되어야한다고 했었다. Receiver로 등록을 위해 한번 래핑한 ABJHUD라는 HUDActorClass가 나오는것이다.(예전에 ModularPlayerController만들었던것 회상)
+
+<Fig n={15} src="/img/notes/lyra/game-feature-action-add-widget/15.png" caption="" />
+
+확장등록을 하는 ExtensionRequestHandle도 예전에 만들었던 Event호출을 보며 복습해보자면 ExtensionHandlerDelegate에 함수 HandleActorExtension을 등록해두고, 이벤트를 통해 Reciever로 등록된 HUDActorClass와 정의한 키워드(위의 캡쳐기준, NAME_BindInputsNow)를 전달받아 해당 로직을 실행하는 매커니즘이였다.
+
+<Fig n={16} src="/img/notes/lyra/game-feature-action-add-widget/16.png" caption="" />
+
+Receiver인 ABJHUD의 Removed/Added에 따라 widget을 추가 제거해준다.
+
+<Fig n={17} src="/img/notes/lyra/game-feature-action-add-widget/17.png" caption="HUD를 상속받아 생성" />
+
+<Fig n={18} src="/img/notes/lyra/game-feature-action-add-widget/18.png" caption="" />
+
+<Fig n={19} src="/img/notes/lyra/game-feature-action-add-widget/19.png" caption="" />
+
+위에서 말했던 HUD를 래핑해 Receiver를 등록해준다. 가장 초기단계 PreInitializeComponents에서 Receiver 등록, BeginPlay때 GameActorReady키워드 이벤트 전달, EndPlay때 Receiver 제거! 복습했던 내용이 확 와닿는다!
+
+이렇게 Receiver를 등록해야만 GameFeatureAction을 활용할수있으니 다음과 같은 작업을 했던것이다. 이렇게 되면 생성과 동시에 GameFeatureAction이 발동!
+
+<Fig n={20} src="/img/notes/lyra/game-feature-action-add-widget/20.png" caption="" />
+
+PerContextData는어떤 Layout인지 Widget을 사용할지에 대한 정보가 담겨있다. Layout을 순회하는 로직이긴 하지만 보통 한개이다. LayoutClass를 가져와서 해당 태그와 함께 LocalPlayer에게 넘겨주고있다.
+
+즉, PrimaryLayer에게 이 Tag(LayerID)에 해당하는 Layout(ConcreteWidgetClass)을 넣어줘라!를 요청하는것이다. 요청과 동시에 ActiveData의 LayoutsAdded에 업데이트해준다. 신기하게 요청은 CommonUIExtension에서 진행한다.
+
+그다음이 중요한데 Widget(Layout)을 ExtensionSubsystem을 통해 RegisterExtensionAsWidgetForContext하는데, 함수 이름에서 봐서 알수 있듯이 실제로 추가해서 등록하는게 아닌, 관리할 수있도록 Subsystem에 등록하는것이다.
+
+<Fig n={21} src="/img/notes/lyra/game-feature-action-add-widget/21.png" caption="UGameUIManagerSubsystem에 다음과 같이 추가" />
+
+<Fig n={22} src="/img/notes/lyra/game-feature-action-add-widget/22.png" caption="" />
+
+<Fig n={23} src="/img/notes/lyra/game-feature-action-add-widget/23.png" caption="" />
+
+LocalPlayer에 태그에 해당하는 Widget을 붙여주는 작업! UIManagerSubsystem을 LocalPlayer를 통해 들고온다. PrimaryLayout을 들고있는건 Policy였고 Policy를 들고있는건 UIManager였으니까 들고오는 작업을 진행하는것이다! 그러면 GetRootLayout을 하게되면 해당 LocalPlayer가 장착하고 있는 PrimaryLayout을 들고온다. 그리고 PrimaryLayout(W_OverallUILayout)내에 해당 태그와 일치하는 Layout을 Stack으로 넣어준다.
+
+<Fig n={24} src="/img/notes/lyra/game-feature-action-add-widget/24.png" caption="" />
+
+RootViewportLayouts은 LocalPlayer와 PrimaryLayout을 매핑시켜놨던 구조체이다.
+
+<Fig n={25} src="/img/notes/lyra/game-feature-action-add-widget/25.png" caption="" />
+
+<Fig n={26} src="/img/notes/lyra/game-feature-action-add-widget/26.png" caption="" />
+
+UIPrimaryGameLayout에 다음과 같이 추가한다. PushWidgetToLayerStack이 오버로딩되어 있는데 일반적으로 생성단계시 초기화 함수를 바인딩해줄것 아니면 윗버전을 많이쓴다. 어찌 됬건 두번째 오버로딩된 함수로 들어가는데, 해당 GameplayTag를 통해서 PrimaryLayout안에 있는 Layer를 들고오고, 이 Layer에다가 AddWidget을 한다. 추가적으로 초기화 함수, InitInstanceFunc는 Lyra에서 Widget이 Push가 되기전 되고난 후로 분기점을 나누는 유틸로 사용하는데, 나중에 분석해보자!
+
+<Fig n={27} src="/img/notes/lyra/game-feature-action-add-widget/27.png" caption="" />
+
+<Fig n={28} src="/img/notes/lyra/game-feature-action-add-widget/28.png" caption="" />
+
+UIExtensionHandle에 연산자오버로딩함수들과 Unregister, IsValid() 등 추가해주자.
+이어서 RegisterExtensionAsWidgetForContext를 마저 구현해보자. ExtensionMap의 경우 하나의 GaemplayTag에 여러개의 Extension이 존재할수있으니 Array로 관리하게되며 해당 Array를 Value값을 지정해주었다.
+
+<Fig n={29} src="/img/notes/lyra/game-feature-action-add-widget/29.png" caption="" />
+
+매개변수가 UObject* ContextObject나 UUserWidget으로 되어있는 명칭때문에 헷갈릴수 있지만 호출부로 다시돌아가 살펴보면 각각 LocalPlayer와 WidgetClass를 넘겨주고있다. Tag와 Data가 없으면 진행이 안되니 체크해주고,
+
+Tag로 Map에 추가와 동시에 List추출, UIExtension은 SharedPtr이니 MakeShare!하며 List에 추가하며 데이터를 넣어준다.
+
+<Fig n={30} src="/img/notes/lyra/game-feature-action-add-widget/30.png" caption="Handle의 경우 반환하며 생성! 헷갈리는것같아 다시한번 강조" />
+
+<Fig n={31} src="/img/notes/lyra/game-feature-action-add-widget/31.png" caption="" />
+
+이래서 FPerContextData를 쓴다. 바로 접근해서 어떤 Layout을 쓰는지 알수있고, 꺼내서 순회하며 DeactivateWidget을 해준다. 그리고 LayoutsAdded를 비워주고, Handle또한 순회하며 제거해준다.
+
+<Fig n={32} src="/img/notes/lyra/game-feature-action-add-widget/32.png" caption="" />
+
+ExtensionHandle에서 Unregister를 호출하게되면 Subsystem의 UnregisterExtension을 호출한다. DataPtr(UIExtension)을 가져와서 Tag를 통해 ExtensionList를 가져온다. 그리고 해당하는 Extension을 List가 비어있다면 Map에서도 정리를 진행한다. Subsystem이니까 가능한 방법이다. Subsystem에서 모든 UI를 관리하니까!
+
+<Fig n={33} src="/img/notes/lyra/game-feature-action-add-widget/33.png" caption="" />
+
+Lyra의 InGameLayer는 어떻게 구성되는지 보며 정리해보자. 이 Layout을 부르는건 PrimaryLaout 가장 큰틀이라고 보면되고 해당 Widget들을 포함하는 하나의 테마가 Layout이다. 중간에 작은 글씨들이 보이는데 GameplayTag이다. 해당 태그 위치에 Widget(UIExtension)들이 장착되는것이다. 현재 UIExtension은 등록까지만 진행되었으니 앞으로 장착이 어떻게 이루어지는지 구현해볼예정이다.

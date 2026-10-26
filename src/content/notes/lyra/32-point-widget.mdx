@@ -1,0 +1,210 @@
+---
+series: lyra
+order: 32
+title: "PointWidget"
+date: "2024-12-10"
+topic: "인프런 Lyra 클론 코딩 메모"
+---
+import Fig from '../../../components/Fig.astro';
+
+이제 UIExtension은 등록했지만 장착까지 이루어지지않았다.
+
+<Fig n={1} src="/img/notes/lyra/point-widget/01.png" caption="" />
+
+DynamicEntryBoxBase를 상속받아 UIExtensionPlugin에 생성
+
+<Fig n={2} src="/img/notes/lyra/point-widget/02.png" caption="" />
+
+PointWidget? Lyra에서 들고온 HUDLayout인데, 잘 보면 박스안에 Tag와 명칭이 보인다. 그리고 저곳에 해당하는 UIExtension을 부착한다. 언제든 해당 PointWidget에 UIExtension을 장착 및 해제가 가능하다는것!
+
+즉, 저기에 태그와 이름으로 배치되어있는 박스는 PointWidget! 그리고 해당 태그와 매칭되는 UIExtension을 장착하는 메커니즘이다.
+
+이 부분을 분석하게되면 UIExtension이라는 플러그인을 따로 생성해 WorldSubsystem을 활용하는지 알게될 수 있을것이다.
+
+<Fig n={3} src="/img/notes/lyra/point-widget/03.png" caption="" />
+
+UDynamicEntryBoxBase의 경우 CommonUI는 아니고, 기존 언리얼에 있던 기능이다. Tag와 TagMatch는 해당 PointWidget의 태그와 태그매치정책이라고 보면된다.
+
+DataClass의 경우 UClass이다. Tag에 의해서 Widget을 등록할 때, 적용이 안되는 Widget을 등록해서 크래쉬가 나는 상황을 방지하기 위한 것이다. 즉, UIExtensionPointWidget에 결합이 허용되는 Widget Class 모음이다.
+
+ExtensionMapping은 말그대로 UIExtension과 Widget간의 관계 매핑인데, Handle을 통해서 관리한다. PointWidget또한 Handle을 통해 객체 관리!
+
+Handle들과 EnumClass 등 세부사항은 UIExtensionSystem 헤더파일에 작성되어있다!
+
+<Fig n={4} src="/img/notes/lyra/point-widget/04.png" caption="" />
+
+해당 EnumClass는 PointWidget의 GameplayTag와 일부 매치하는지? 정확히 매치하는지? 의 상태를 나타낸다고 보면된다. PartialMatch를 예로들면 A.B태그는 A.B.C태그의 PointWidget에 배치를 허용한다 이다.
+
+<Fig n={5} src="/img/notes/lyra/point-widget/05.png" caption="" />
+
+<Fig n={6} src="/img/notes/lyra/point-widget/06.png" caption="" />
+
+FUIExtensionHandle에 다음과같이 Hash값을 설정해주는 함수가 있다. UUIExtensionPointWidget에서 Map을 활용해 ExtensionHandle을 Key값으로 사용하고 있기때문에 키값 리턴을 구조체 내에 정의 해주어야한다.
+
+Hash의 경우 고유성이 보장되어야하는데, DataPtr, FUIExtension의 주소값은 고유성이 보장되니 다음과 같이 설정해주었다.
+
+<Fig n={7} src="/img/notes/lyra/point-widget/07.png" caption="" />
+
+<Fig n={8} src="/img/notes/lyra/point-widget/08.png" caption="" />
+
+ExtensionPointWdgiet에 직접 접근하지않고, ExtensionPoint를 통해 장착이 이루어질것이고, UIExtensionSubsystem에서 Tag와 매핑해서 관리가 이루어진다.
+
+그렇다면 해당 Tag에 맞는 ExtensionPoint가 Tag, Instigator(ContextObject), 허용된 클래스를 검사해서 델리게이트를 걸고, 델리게이트를 통해서 장착이 이루어진다.
+
+ContextObject가 자주 보이는이유는, UI장착 요청자가 일치해야 하기때문이다. UCommonLocalPlayer, UModularPlayerState 등 다양한 곳에서 요청이 이루어질수있기때문에!
+
+<Fig n={9} src="/img/notes/lyra/point-widget/09.png" caption="" />
+
+그리고 ExtensionPointWdgiet에서 들고있는것은 Handle이고, Handle은 UIExtensionSubsystem을 관리하고있다. Handle은 Subsystem과 Point를 매칭시켜놓고있는데, Subsystem에서 Point를 전부 관리하고 Handle을 통해 Subsystem에 바로 접근하기 위함이다.
+
+<Fig n={10} src="/img/notes/lyra/point-widget/10.png" caption="" />
+
+UIExtension의 Tag를 통해서 UIExtensionPoint를 비교해봤는데, Tag도 일치하고 허용된 클래스다? PointWidget에 장착요청! 요청에 필요한 데이터를 담고있는 구조체이다.
+
+ExtensionHandle은 UIExtension을 가지고있고, UIExtension은 WidgetClass를 가지고있다.
+
+정리하자면 PointWidget(DynamicEntryBoxBase)이 생성되고 난 뒤에 ExtensionPoint를 만들것을 UIExtensionSubsystem에 요청한다. 그럼 ExtensionPoint에 따른 태그, 생성/제거요청한 주체, 허용클래스, Callback함수가 생성이되고 Handle에 Subsystem과 함께 관리된다. 일반 UIExtensionWidget들에게 AddWidget을 통해 요청이 들어오고, ExtensionPoint의 조건들과 맞아떨어지면 ExtensionRequest를 생성해서 보내는 방식이다.
+
+<Fig n={11} src="/img/notes/lyra/point-widget/11.png" caption="" />
+
+Subsystem에 UIExtensionPoint에 대한것들을 정의해준다. 일전에 만든 UIExtension 생성 로직과 비슷할 예정이다.
+
+<Fig n={12} src="/img/notes/lyra/point-widget/12.png" caption="" />
+
+RegisterExtensionPoint는 ForContext에 전달. (현재는 ContextObject nullptr로 전달.)
+
+<Fig n={13} src="/img/notes/lyra/point-widget/13.png" caption="" />
+
+다음과 같이 생성해준다. Tag,Callback과 AllowedDataClasses가 없으면 허용된 WidgetClass를 구별하고 Callback으로 Widget을 추가할수 없으므로 그냥 리턴한다.
+
+ExtensionPointMap에 다음과같이 추가해주는데 List에서 따로 중복체크하지 않는다는건 Register/Unregister를 확실히 해주어야 한다는 의미인것같다.
+
+<Fig n={14} src="/img/notes/lyra/point-widget/14.png" caption="" />
+
+UnregisterExtensionPoint는 UIExtension때와 똑같다. List에서 Point제거하고 개수가 0개면 Map에서도 제거!
+
+<Fig n={15} src="/img/notes/lyra/point-widget/15.png" caption="" />
+
+여기까지 등록/제거가 이루어졌으니 적용 로직에 대해 알아보자.
+
+<Fig n={16} src="/img/notes/lyra/point-widget/16.png" caption="" />
+
+<Fig n={17} src="/img/notes/lyra/point-widget/17.png" caption="" />
+
+매개변수의 Tag의 Parent를 끝까지 타고 올라가며 순회하는 For문이다. A.B.C -&gt; A.B -&gt; A -&gt; null
+
+ExtensionMap에서 해당 Tag에 속하는 ExtensionList를 들고와 순회하며 DoesExtensionPassContract를 통해 DataClasses와 일치하는 타입인지 체크한다. 여기서 헷갈리지 말아아햘게 ExtensionPoint를 추가하며 Extension에게 알리는 함수이므로 Tag와 일치한 Extension을 순회하며 ExtensionPoint가 순회하는 Extension에 허용되는 DataClasses인지 비교하고 허용된다면 Request를 생성하여 Delegate를 등록하여 추가를 진행할것을 등록한다.
+
+마지막에 If문을 통해서 ExactMatch에 해당하면 더이상 Tag를 타고올라가며 순회하지않고 loop를 탈출한다.
+
+<Fig n={18} src="/img/notes/lyra/point-widget/18.png" caption="" />
+
+매개변수 Extension의 ContextObject와 현재 Point의 ContextObject를 비교하여 일치하는지? nullptr세팅인지? 아니면 instigator가 Locaplayer 혹은 PlayerState 등으로 일치하는지 보는것이다.
+
+해당 조건에 충족하면 Extension의 WidgetClass를 추출해서 UClass의 자식이라면 Cast를 진행하고 아니라면 GetClass를 통해 Class를 가져온다.
+
+그리고 AllowedDataClasses를 통해 자식클래스인지 순회하며 확인하고 결과를 반환한다.
+
+<Fig n={19} src="/img/notes/lyra/point-widget/19.png" caption="" />
+
+다음과 같이 핸들, 태그, 우선순위, WidgetClass, ContextObject를 담아 Request를 생성해 반환한다.
+
+<Fig n={20} src="/img/notes/lyra/point-widget/20.png" caption="" />
+
+NotifyExtensionPointOfExtensions가 호출되는 시점은, Subsystem에 ExtensionPoint에 대한 정보를 등록하는 시점이다.
+
+<Fig n={21} src="/img/notes/lyra/point-widget/21.png" caption="" />
+
+그럼 이어서 NotifyExtensionPointsOfExtension, Extension이 추가되며 ExtensionPoint들에게 알리는 함수를 구현해보자.
+
+NotifyExtensionPointOfExtensions와 로직이 유사한데, break포인트 없이 모드 순회하는것을 알수가있다. 왜냐하면 ExtensionPoint에 TagMatchType이 존재하기 때문이다. ExtensionPoint가 매개변수였던 함수는 해당 변수가 기준이기때문에 MatchType을 확인후 Break 할 수있지만, 이 함수는 Extension이 매개변수이다. 즉 ExtensionPoint가 MatchType이 ExactMatch가 아닐 경우도 고려해야하기때문에, 모두 순회하는것이다.
+
+그래서 bOnInitialTag를 통해 첫번째 순회는 ExactMatch가 될 수 밖에 없기때문에, 첫번째 순회후 false로 설정해주고 Tag의 Parent로 타고들어가 다시 순회를 진행한다. 왜? MatchType이 ExtensionPoint에 있고, PartialMatch인 경우를 고려해 순회해보아야 하니까!
+
+<Fig n={22} src="/img/notes/lyra/point-widget/22.png" caption="" />
+
+ExtensionPoint와 동일하게, Extension이 Map에 등록되는 시점에 Notify를 해준다.
+
+<Fig n={23} src="/img/notes/lyra/point-widget/23.png" caption="" />
+
+Remove또한 Extension이 지워질때 진행한다.
+
+<Fig n={24} src="/img/notes/lyra/point-widget/24.png" caption="" />
+
+왜 UIExtension을 Subsystem으로 따로 빼두어 관리하고 Extensions와 ExtensionPoints 각각 서로 Map에 등록될때마다 Notify함수를 통해 Delegate를 걸어둘까?
+
+만약, 단순하게 (ㄱ.)이 진행되어 PointWidget이 생성되고 Extension이 동일한 Tag를 가진 ExtensionPoint를 찾아(ㄴ.) PointWidget이 있는곳에 장착되는 순서인 로직을 설계했다면 어떻게 될까? 속도도 느리고 비효율적이다.
+
+그리고 언리얼엔진에서 이 순서를 정확히 보장못한다. 여러 HUDLayout을 전환하다보면 Extension이 먼저 준비되는 경우가 생길것이고, Extension 등록이 먼저 진행되고 Notify해봤자 ExtensionPoint는 다음 프레임에 등록되서 HUD_Layout엔 PointWidget 외에는 아무것도 존재하지 않거나, 상황에 따라 부분적으로만 장착되는 버그가 발생할것이다.
+
+하지만, 서로 데이터가 Map에 등록될때 서로 탐색하여 존재한다면 Delegate를 등록하는 로직을 설계해둔다면 순서에 신경을 안써도된다. 다시말해 Extension이 먼저 Map에 등록되어 Delegate를 못 걸더라도, ExtensionPoint가 Map에 등록되는 시점에 Notify함수를 통해 Extension을 탐색해서 매칭하여 Delegate를 걸어주니, 순서가 꼬였을 경우를 고려하지 않아도 된다는 큰 장점이 생긴다.
+
+<Fig n={25} src="/img/notes/lyra/point-widget/25.png" caption="" />
+
+일전에 만들어둔 UIExtensionPointWidget으로 돌아와서, interface함수 한개와 멤버함수 3개를 다음과같이 만들어준다.
+
+먼저, RegisterExtensionPoint를 살펴보면,
+
+<Fig n={26} src="/img/notes/lyra/point-widget/26.png" caption="" />
+
+ResetExtensionPoint도 추가해주자. UDynamicEntryBoxBase를 상속받으니 ResetInternal을 호출, ExtensionMapping을 날려주고 해당 Map 내부에 있는 UserWidget(ExtensionWidget)들은 알아서 GC처리된다.
+
+그리고 ExtensionPointHandle을 순회하며 Unregister 호출하여 Subsystem에서 등록해제주고, Reset해준다.
+
+<Fig n={27} src="/img/notes/lyra/point-widget/27.png" caption="" />
+
+Subsystem에 접근해서 ExtensionPoint를 추가하는데, ContextObject가 nullptr인것과 LocalPlayer인 경우로 두가지 추가해준다.
+
+<Fig n={28} src="/img/notes/lyra/point-widget/28.png" caption="" />
+
+각각 Delegate가 Broadcast됬을때 수행할 함수 로직이다. Action에따라 Create, Remove를 진행하는데,
+
+<Fig n={29} src="/img/notes/lyra/point-widget/29.png" caption="" />
+
+CreateEntryInternal을 호출할시 다음과같이 Child에 장착이 이루어지도록 한다.
+
+<Fig n={30} src="/img/notes/lyra/point-widget/30.png" caption="" />
+
+마지막으로 ContextObject가 PlayerState인 경우에도 만들어준다. LocalPlayer나 nullptr이 ContextObject인 경우는 상관없지만 PlayerState인 경우에는 PlayerState가 PlayerController에 장착되는 그 시점에 호출되어야한다.
+
+<Fig n={31} src="/img/notes/lyra/point-widget/31.png" caption="" />
+
+UCommonLocalPlayer에 다음과같이 선언해준다.
+
+<Fig n={32} src="/img/notes/lyra/point-widget/32.png" caption="" />
+
+PlayerState를 들고와서 현재시점에 존재하면 Delegate 발동! 아니라면 Delegate등록하고 Handle을 반환한다.
+
+<Fig n={33} src="/img/notes/lyra/point-widget/33.png" caption="" />
+
+그래서 ACommonPlayerController에서 Controller가 세팅되는 시점에는 PlayerState도 존재한다. 그래서 이때 Broadcast를 진행해준다.
+
+이제, ExtensionPointWidget의 RegisterExtensionPointForPlayerState를 Delegate에 등록만 진행해주면 PlayerState가 붙는 시점에 ExtensionPoint를 Subsystem에 등록해줄수있다.
+
+<Fig n={34} src="/img/notes/lyra/point-widget/34.png" caption="" />
+
+RebuildWidget이 호출되는 시점은 해당 Widget이 생성 및 초기화 되는 단계에 호출된다.
+
+여기서 IsDesignTime()이 있는데, true일때는 에디터상에서 직접 Widget 컨트롤하고 배치할때를 말하며, false일때는 실제로 InGame에 렌더링 될때를 얘기한다. 이를 IsDesignTime() True/False로 구분한다.
+
+(!IsDesignTime()) InGame에서 해당 Widget이 렌더링될때 Subsystem에 ContextObject가 LocalPlayer, nullptr, PlayerState 버전 각각 Register해준다.
+
+IsDesignTime()에서는 에디터상에 PointWidget이 생성되었을때 어떻게 표시되는지에 대한 로직이라 넘어가겠다.
+
+그리고 ContextObject가 LocalPlayer, nullptr, PlayerState인 경우로 3가지를 추가하는 이유는 Subsystem에서 ContextObject를 일치하는지 검사하며 Extension을 붙여줄때, ContextObject가 꼬이지 않도록 확실하게 하기위해서라고 보인다.
+
+어떠한 상황에서 추가가될지 모르며, 추가가 됬을때 ContextObject가 확실하게 비교되어야 하므로!(Ex. 등록을 LocalPlayer 해제를 PlayerState와 같은 경우를 방지)
+
+에디터를 실행해서 에임 조준선을 만들어주자.
+
+<Fig n={35} src="/img/notes/lyra/point-widget/35.png" caption="" />
+
+HUDLayout에 다음과같이 추가해주자. UIExtensionPointWidget은 ExtensionPoint_Reticle로 이름변경
+
+<Fig n={36} src="/img/notes/lyra/point-widget/36.png" caption="" />
+
+<Fig n={37} src="/img/notes/lyra/point-widget/37.png" caption="" />
+
+조준선이니 정확히 중앙에 오게 세팅해주고, GameTag를 설정해주면 다음과같이 별다른 Text를 추가하지않아도 에디터상에서 표시된다. 아까 RebuildWidget의 IsDesignTime()내 로직에 의해서!
+
+이제 Reticle Extension을 해당 Tag에 맞추어 부착해주기만하면 기본적인 FPS의 조준선이 완성된다!

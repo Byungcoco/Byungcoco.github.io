@@ -1,0 +1,6 @@
+---
+// /reviews/ 로 들어오면 첫 프로젝트 목록으로 보냄
+import { projects } from '../../data/site';
+const to = `/reviews/${projects[0].key}/`;
+---
+<html lang="ko"><head><meta charset="utf-8" /><meta http-equiv="refresh" content={`0; url=${to}`} /><link rel="canonical" href={to} /><title>코드 리뷰</title></head><body><a href={to}>코드 리뷰 목록으로 이동</a></body></html>

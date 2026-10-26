@@ -4,12 +4,15 @@ import Base from '../layouts/Base.astro';
 import Icon from '../components/Icon.astro';
 import { profile, stack, projects, games, GAMES_TOP } from '../data/site';
 import { noteSeries } from '../data/notes';
+import { thumbOf } from '../lib/preview';
 
 const reviews = (await getCollection('reviews')).sort((a, b) => a.data.order - b.data.order);
 const notes = await getCollection('notes');
 const noteGroups = noteSeries.map((s) => {
-  const ns = notes.filter((n) => n.data.series === s.key).map((n) => n.data.date).sort();
-  return { ...s, count: ns.length, from: ns[0], to: ns[ns.length - 1] };
+  const list = notes.filter((n) => n.data.series === s.key).sort((a, b) => a.data.order - b.data.order);
+  const ds = list.map((n) => n.data.date).sort();
+  const thumb = list.map((n) => thumbOf(n.body, n.data.thumb)).find(Boolean);
+  return { ...s, count: list.length, from: ds[0], to: ds[ds.length - 1], thumb };
 });
 const firstReview = (key: string) => reviews.find((r) => r.data.project === key);
 ---
@@ -108,7 +111,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
             <img class="thumb" src={p.thumb} alt={`${p.name} 플레이 화면`} loading="lazy" />
             <span class="desc">{p.desc}</span>
             <span class="tags">{p.tags.map((t) => <span class="pill">{t}</span>)}</span>
-            {r && <a class="review" href={`/reviews/${r.id}/`}>코드 리뷰 보기 <span aria-hidden="true">→</span></a>}
+            {r && <a class="review" href={`/reviews/${p.key}/`}>코드 리뷰 보기 <span aria-hidden="true">→</span></a>}
             <span class="acts">
               <a class="act" href={p.yt} target="_blank" rel="noopener" aria-label={`${p.name} 플레이 영상 (YouTube)`}><Icon name="youtube" /></a>
               <a class="act" href={p.gh} target="_blank" rel="noopener" aria-label={`${p.name} 소스 코드 (GitHub)`}><Icon name="github" /></a>
@@ -126,7 +129,8 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   <p class="lede">강의와 책, 샘플 프로젝트를 따라가며 직접 구현하고 정리한 기록입니다.</p>
   <div class="notes">
     {noteGroups.map((g) => (
-      <a class="note" href={`/notes/#${g.key}`}>
+      <a class="note" href={`/notes/${g.key}/`}>
+        <span class="nth">{g.thumb && <img src={g.thumb} alt="" loading="lazy" />}</span>
         <span class="nhead"><span class="nname">{g.name}</span><span class="pill gb">{g.count}편</span></span>
         <span class="ndesc">{g.desc}</span>
         {g.from && <span class="nmeta">{g.from.slice(0, 7).replace('-', '.')} ~ {g.to.slice(0, 7).replace('-', '.')} · {g.source}</span>}
@@ -183,7 +187,7 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   const links = [...document.querySelectorAll<HTMLAnchorElement>('.navlink')];
   const secs = links.map((a) => document.querySelector(a.getAttribute('href')!)!);
   const onScroll = () => {
-    const y = window.scrollY + window.innerHeight * 0.3;
+    const y = window.scrollY + window.innerHeight * 0.5; // 화면 가운데를 기준으로
     let cur = 0;
     secs.forEach((s, i) => { if ((s as HTMLElement).offsetTop <= y) cur = i; });
     links.forEach((a, i) => a.classList.toggle('on', i === cur));
@@ -202,15 +206,14 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .name a { text-decoration: none; }
   .title { margin: 0; font-size: 20px; font-weight: 500; color: #E3EAF6; }
   .tagline { margin: 4px 0 0; max-width: 360px; }
-  .toc { position: fixed; right: 20px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 10px 8px; border-radius: 10px; border: 1px solid transparent; }
-  .toc:hover { background: rgba(14,29,53,0.96); border-color: #1E3150; }
-  .navlink { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 30px; text-decoration: none; color: #7C8BA8; font-size: 13px; font-weight: 600; }
-  .navlink .ln { display: block; width: 16px; height: 2px; border-radius: 2px; background: #3A4A68; }
-  .navlink.on .ln { width: 28px; background: #7FB2FF; }
-  .navlink .lbl { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-width .15s, opacity .15s; }
-  .toc:hover .navlink .lbl { max-width: 160px; opacity: 1; }
-  .navlink:hover, .navlink.on { color: #E3EAF6; }
-  .navlink:hover .ln { width: 28px; background: #E3EAF6; }
+  .toc { position: fixed; right: 24px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .navlink { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 30px; text-decoration: none; color: #7C8BA8; font-size: 13px; font-weight: 600; transition: color .15s, font-size .15s; }
+  .navlink .ln { display: block; width: 16px; height: 2px; border-radius: 2px; background: #3A4A68; transition: width .15s, background .15s; }
+  .navlink .lbl { white-space: nowrap; }
+  .navlink:hover { color: #E3EAF6; }
+  .navlink.on { color: #7FB2FF; font-size: 15.5px; font-weight: 700; }
+  .navlink.on .ln { width: 32px; height: 3px; background: #7FB2FF; }
+  .navlink:hover .ln { width: 24px; background: #E3EAF6; }
   .stack { margin-top: 40px; display: flex; flex-direction: column; gap: 14px; }
   .stackh { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.16em; color: #E3EAF6; }
   .sg { display: flex; flex-direction: column; gap: 6px; }
@@ -266,6 +269,8 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
   .gnote { font-size: 13px; line-height: 1.6; }
   .toggle { margin-top: 16px; min-height: 44px; padding: 0 4px; background: none; border: 0; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: #7FB2FF; }
   .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 8px; }
+  .nth { display: block; aspect-ratio: 16 / 9; margin-bottom: 6px; overflow: hidden; border-radius: 6px; border: 1px solid #1E3150; background: #13233F; }
+  .nth img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
   .note { display: flex; flex-direction: column; gap: 6px; padding: 16px; background: rgba(19,35,63,0.6); text-decoration: none; color: #9AA8C2; }
   .note:hover { background: rgba(127,178,255,0.08); }
   .note:hover .nname { color: #7FB2FF; }
@@ -283,6 +288,8 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
     .stackh, .sgk { font-size: 13px; }
     .contact { font-size: 15px; }
     .navlink { font-size: 14px; }
+    .navlink.on { font-size: 16.5px; }
+    .right { padding-right: 150px; }
     .side { font-size: 15px; }
     .team { font-size: 14px; }
     .etitle { font-size: 19px; }

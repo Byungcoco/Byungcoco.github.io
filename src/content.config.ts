@@ -15,6 +15,7 @@ const reviews = defineCollection({
     // 개선 과정: 이 주제의 이전 단계 리뷰
     // 하나 또는 여러 개. href가 사이트 안 리뷰면 제목은 그 리뷰에서 자동으로 가져온다.
     lineage: z.union([lin, z.array(lin)]).optional(),
+    thumb: z.string().optional(), // 목록 썸네일(없으면 본문 첫 그림)
   }),
 });
 
@@ -28,6 +29,7 @@ const notes = defineCollection({
     date: z.string(), // 처음 작성한 날짜 YYYY-MM-DD
     topic: z.string().optional(),
     source: z.string().optional(), // 원문 링크(티스토리 등)
+    thumb: z.string().optional(), // 목록 썸네일(없으면 본문 첫 그림)
   }),
 });
 

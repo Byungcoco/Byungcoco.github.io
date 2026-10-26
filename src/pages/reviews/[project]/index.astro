@@ -1,0 +1,13 @@
+---
+import List from '../../../layouts/List.astro';
+import { projects } from '../../../data/site';
+import { reviewGroups, reviewCards } from '../../../lib/lists';
+export function getStaticPaths() {
+  return projects.map((p) => ({ params: { project: p.key } }));
+}
+const { project } = Astro.params;
+const p = projects.find((x) => x.key === project)!;
+const groups = await reviewGroups(project!);
+const cards = await reviewCards(project!);
+---
+<List pageTitle={`${p.name} · 코드 리뷰`} heading={`${p.name} 코드 리뷰`} desc={p.desc} backHref="/#projects" groups={groups} cards={cards} />

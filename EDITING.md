@@ -124,7 +124,15 @@ void CEffect::PlayRotaionAnim(const wstring &key_in, bool _bLoop, bool _bOffeset
 
 ---
 
-## 6. 자주 나는 실수 (빌드 실패 원인)
+## 6. 학습 노트 · 목록 페이지
+
+- 학습 노트 글: `src/content/notes/<시리즈>/<번호>-<이름>.mdx` (머리: `series`, `order`, `title`, `date: "YYYY-MM-DD"`, `topic`, `source`)
+- **새 카테고리(시리즈) 추가**: `src/data/notes.ts`에 한 줄(`key`, `group`, `name`, `desc`) + `src/content.config.ts`의 `series` 목록에 `key` 추가 → 왼쪽 카테고리·메인 카드·목록 페이지가 자동으로 생깁니다. `group`이 같으면 같은 묶음(예: 언리얼, CS) 아래로 들어갑니다.
+- 목록 주소: 학습 노트 `/notes/`(전체), `/notes/<시리즈>/`, 코드 리뷰 `/reviews/<프로젝트>/`
+- **썸네일**: 글 본문의 첫 그림이 자동으로 쓰입니다. 바꾸고 싶으면 글 머리에 `thumb: /img/...png` 를 적으면 됩니다.
+- **목록 요약 문장**: 본문의 첫 문단에서 자동으로 뽑습니다.
+
+## 7. 자주 나는 실수 (빌드 실패 원인)
 
 | 증상 | 원인 / 해결 |
 |---|---|

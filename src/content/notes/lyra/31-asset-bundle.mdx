@@ -1,0 +1,200 @@
+---
+series: lyra
+order: 31
+title: "AssetBundle 심화"
+date: "2024-12-06"
+topic: "인프런 Lyra 클론 코딩 메모"
+---
+import Fig from '../../../components/Fig.astro';
+
+<Fig n={1} src="/img/notes/lyra/asset-bundle/01.png" caption="" />
+
+ShooterCorePlugin의 Experiences 폴더에 ExperienceActionSet을 상속받아 DataAsset을 다음과같이 정의해주어 생성해주고, 만든 GameFeatrueAction과 해당하는 HUDLayout과 Tag를 매핑시켜놓는다.
+
+<Fig n={2} src="/img/notes/lyra/asset-bundle/02.png" caption="" />
+
+그리고, ExperienceDefinition의 ActionSet에 추가해주고 HUD가 등록되며 Delegate를 호출하던 시점에 브레이크포인트를 걸고 테스트해보자. 그런데 전혀 브레이크포인트에 걸리지않는다. 왜그런걸까?
+
+Delegate에 등록했던 HandleActorExtension함수가 호출이 안됬다는건 애초에 Layout등록도 전인 Receiver쪽에서 문제가 나는것으로 유추된다.
+
+<Fig n={3} src="/img/notes/lyra/asset-bundle/03.png" caption="" />
+
+곰곰히 생각해보니 ABJHUD를 등록하는 과정이 빠져있었고, 그렇다는건 Receiver 등록자체가 안됬던것이다. 이는 GameModeBase 생성자 호출부에서 Receiver등록을 위해 래핑했던 클래스들을 기본클래스로 정의를 해줬었다.
+
+<Fig n={4} src="/img/notes/lyra/asset-bundle/04.png" caption="" />
+
+<Fig n={5} src="/img/notes/lyra/asset-bundle/05.png" caption="" />
+
+이제 AddWidgets에 브레이크포인트가 잘걸리고, 경로지정까지 잘되었지만 실질적으로 등록하는 과정이 진행되지 않고있다.
+
+<Fig n={6} src="/img/notes/lyra/asset-bundle/06.png" caption="" />
+
+<Fig n={7} src="/img/notes/lyra/asset-bundle/07.png" caption="" />
+
+그렇다면 이부분에서 Entry.LayoutClass.Get()을 통해 가져오는게 진행이 안되고 있다는것이다.
+
+일전에 강조했듯이 TSoftClassPtr은 경로만 가르키고있다. Get을 진행하기전에 Load를해서 메모리에 할당되어야 해당 CDO를 반환이 이루어지는것인데, 안된다는것은 Load가 이루어지지 않아 메모리에도 없다는것이다.
+
+이와 비슷한 경우가 InputConfig 구현할 때 있었는데
+
+<Fig n={8} src="/img/notes/lyra/asset-bundle/08.png" caption="" />
+
+GameFeatureAction_InputConfig에서 해당 TSoftObjectPtr을 로드해서 넣어줬다. 그렇다면? Load를 저기서 진행해줘서 직접 넣어줘야하는것인가? 해당 방법을 쓰면 간편하겠지만 Lyra에서는 그렇게 하지않았다.
+
+Lyra는 멀티플레이 환경이고, GameFeatureAction의 경우 서버든 클라이언트든 똑같이 발동이된다. 그러면 서버가 UI에 대한것을 로드해서 메모리에 올릴필요가 있을까?를 고민해야한다. 왜? 멀티플레이 환경개발이니까!
+
+그래서 Lyra는 효율적으로 사용하기위해 Client들만 해당 Asset들을 로드해서 관리한다. 그렇다는것은 해당 함수 AddWidget이 들어오기전에 클라이언트만 로드가 완료 되어있어야 된다.
+
+그럼 어떻게 Client들만 로드하게 가능할까? 라고 생각하면 예전에 Experience했을때 AssetBundle에 Server, Client에따라 불러올 Bundle에 해당 키워드를 업데이트 해줬던 적이있었다.
+
+<Fig n={9} src="/img/notes/lyra/asset-bundle/09.png" caption="" />
+
+ExperienceManagerComponent에서 다음과 같은 로직이 있었다. BundlesToLoad에 해당 FName 키워드를 추가하고, 맨아래 ChangeBundleStateForPrimaryAssets로 진행했었다. BundleAssetList는 UserExperienceDefinition이었고 해당 프로퍼티에서 Clinet, Server키워드가 있는 것들을 같이 로드한다는것이었다. 근데 왜 UserExperienceDefinition에는 해당 키워드가 추가되어있지않을까??
+
+<Fig n={10} src="/img/notes/lyra/asset-bundle/10.png" caption="" />
+
+생각해보면 따로 키워드를 정하지 않아도 로드 되었었다. 왜냐하면 TObjectPtr은 UObject기반 객체로 메모리에 이미 로드되어있어 강하게 참조를 하기때문이다. 생각해보면 별도의 로드 과정없이 NewObject를 통해 객체를 즉시 생성해서 메모리에 할당 가능하다. 즉, ExperienceDefinition의 Property들을 보면 서버와 클라이언트에 둘다 필요한 필수 데이터들이다.
+
+하지만 Widget의 경우 서버에서 필요없는 정보이므로 선택적 로드를 위해 TSoftClassPtr로 지정해놓은것이다. 해당 키워드에 따라 로드하는 함수 ChangeBundleStateForPrimaryAssets를 내부적으로 디버그해보며 살펴보자.
+
+<Fig n={11} src="/img/notes/lyra/asset-bundle/11.png" caption="" />
+
+일단 ChangeBundleStateForPrimaryAssets의 매게변수중 중요한 AssetsToChange, AddBundles를 보자. AssetsToChange는 로딩할 대상 현재의 경우 ExperienceDefinition이 될것이고, AddBundles은 로드할 키워드(서버, 클라이언트)라고 보면된다.
+
+<Fig n={12} src="/img/notes/lyra/asset-bundle/12.png" caption="" />
+
+<Fig n={13} src="/img/notes/lyra/asset-bundle/13.png" caption="" />
+
+현재의 문제를 해결하기위해서 이 함수를 통해 ExperienceDefinition뿐만아니라, ExperienceDefinition의 ActionSets(GameFeatureAction_AddWidget)도 함께 로드되길 바란다.
+
+<Fig n={14} src="/img/notes/lyra/asset-bundle/14.png" caption="" />
+
+ExperienceManagerComponent에서 BundleAssetList를 형성하는 과정에 ExperienceActionSet을 순회하며 BundleAssetList에 넣어주는 로직을 추가한다.
+
+여기서 BundleAssetList는 Bundle로 등록할 Root의 PrimaryDataAsset을 추가하는 과정이다.
+
+<Fig n={15} src="/img/notes/lyra/asset-bundle/15.png" caption="아주 잘들고와진다!" />
+
+<Fig n={16} src="/img/notes/lyra/asset-bundle/16.png" caption="" />
+
+ChangeBundleStateForPrimaryAssets의 내부를 확인해보니 NameData의 경우 Null이다? GetNameData를 또 내부적으로 살펴보면
+
+<Fig n={17} src="/img/notes/lyra/asset-bundle/17.png" caption="" />
+
+AssetManager에서 PrimaryAssetId에 해당하는것들을 가져오는것인데, 못찾고있어서 안뜬다. 왜그럴까? Scan이 안되어있어서 못 찾고있다!
+
+<Fig n={18} src="/img/notes/lyra/asset-bundle/18.png" caption="" />
+
+GameFeatureData인 ShooterCore에 다음과 같이 등록해준다.
+
+<Fig n={19} src="/img/notes/lyra/asset-bundle/19.png" caption="확인해보면 아주 잘들어가있다!" />
+
+<Fig n={20} src="/img/notes/lyra/asset-bundle/20.png" caption="" />
+
+AddBundle하는 부분도 확인해보면 PIE환경, Stand All상태라 두 키워드에 접근한다. Client와 Server 해당 메타키워드가 선언된것에 모두 접근하겠다!이다.
+
+<Fig n={21} src="/img/notes/lyra/asset-bundle/21.png" caption="이건 경로라 당연히 추가가 되는부분이고," />
+
+<Fig n={22} src="/img/notes/lyra/asset-bundle/22.png" caption="" />
+
+위에서 추가했던 NewBundleState, 그러니까 키워드들을 순회하며 각 키워드에 해당하는 BundleAsset을 들고오지만 아무것도 존재하지않는다? 왜? 지정해준적이 없으니까!
+
+즉, GameFeatureActionSet인 HAS_ShooterGame_SharedHUD는 경로를 통해 들고오지만, 내부에있는 Widget들은 전혀 로드 되지않고있다는것이 된다.
+
+이에 대한 해결, 동적으로 번들시스템을 추가해줄 수 있도록 에픽게임즈에서 제공한다.
+
+<Fig n={23} src="/img/notes/lyra/asset-bundle/23.png" caption="" />
+
+<Fig n={24} src="/img/notes/lyra/asset-bundle/24.png" caption="" />
+
+ExperienceDefinition에 다음과같이 추가하면 된다. Add AdditionalAssetBundleData는 UGameFeatureAction의 메서드이다. 임의적 호출을 통해 AssetBundleData에 추가해준다.
+
+그리고 ExperienceActionSet에도 똑같이 선언해줘야한다. Definition에서 ActionSet, ActionSet에서 Action까지 타고타고 들어가서 번들로 등록해주는것!
+
+그럼 Action까지 Bundle로 등록했는데, GameFeatureAction_AddWidget도 똑같이 UpdateAssetBundleData을 선언 해주면 Widget들도 번들에 등록이 될까???
+
+안타깝게도 GameFeatureAction_AddWidget은 PrimaryDataAsset타입이 아니기때문에 UpdateAssetBundleData 선언자체가 안된다....
+
+그럼 Action단에서 하나하나 까서 등록해줘야하나? 그것도 하나의 방법이긴하다. 근데, 갯수가 많아지면 하나하나 캐스트체크하기에는 손쓸수가 없어진다.
+
+여기까지도 내다본 에픽게임즈! UpdateAssetBundleData을 내부적으로 분석해보자.
+
+<Fig n={25} src="/img/notes/lyra/asset-bundle/25.png" caption="" />
+
+PostLoad단에서 UpdateAssetBundleData를 부른다.
+
+<Fig n={26} src="/img/notes/lyra/asset-bundle/26.png" caption="" />
+
+당연히 AssetManager를 체크하고 데이터를 리셋한다음에 신기한 함수를 호출한다.
+
+this라는건 PrimaryDataAsset이 되는거고 현재는 타고타고 들어간 ActionSet, HAS_ShooterGame_SharedHUD가 들어가게 되는것이다.
+
+ActionSet이 넘어가며 AssetBundleData에 저장하게 되는데...
+
+<Fig n={27} src="/img/notes/lyra/asset-bundle/27.png" caption="" />
+
+내부적으로 들어오면 해당함수까지 들어오게된다. 여기서 UStruct*는 HAS_ShooterGame_SharedHUD를 GetClass한것!
+
+<Fig n={28} src="/img/notes/lyra/asset-bundle/28.png" caption="" />
+
+HAS_ShooterGame_SharedHUD안에있는 모든 Property를 돈다! 그리고 SharedHUD는 ActionSet이니까 ArrayAction을 들고있고 그 Action은 TObjectPtr&lt;GameFeatureAction&gt;타입이며 심지어 GameFeatureAction는 UObject를 상속받는다.
+
+UObject 이부분이 왜 중요하냐면 해당 ForLoop을 돌며 타입을 검사하는데...
+
+<Fig n={29} src="/img/notes/lyra/asset-bundle/29.png" caption="" />
+
+<Fig n={30} src="/img/notes/lyra/asset-bundle/30.png" caption="" />
+
+<Fig n={31} src="/img/notes/lyra/asset-bundle/31.png" caption="" />
+
+<Fig n={32} src="/img/notes/lyra/asset-bundle/32.png" caption="" />
+
+마지막 조건문 Object에 적합하니 걸릴것이다.
+
+<Fig n={33} src="/img/notes/lyra/asset-bundle/33.png" caption="" />
+
+그럼 내부적으로 이렇게 로직이 진행되는데 또다시? Recursive를 진행한다.
+
+그러니까 HAS_ShooterGame_SharedHUD내부에 Property를 돌며 TObjectPtr&lt;GameFeatureAction&gt;를 보니 UObject네? 오케이 한번더 안의 Property를 돌게된다는것이다.
+
+그렇게되면 HAS_ShooterGame_SharedHUD의 Action, GameFeatureAction_AddWidget을 돌게된다!
+
+<Fig n={34} src="/img/notes/lyra/asset-bundle/34.png" caption="" />
+
+<Fig n={35} src="/img/notes/lyra/asset-bundle/35.png" caption="" />
+
+GameFeatureAction_AddWidget 내부에 선언됬던 Property들 이러한것때문에 USTRUCT()를 붙여준것같다.
+
+<Fig n={36} src="/img/notes/lyra/asset-bundle/36.png" caption="" />
+
+그렇다면 Struct니까 Recursive에서 해당 조건문에 걸리게된다. FoundRef로 저장한다음에
+
+<Fig n={37} src="/img/notes/lyra/asset-bundle/37.png" caption="" />
+
+다음 로직에서 그 Struct내에 있는 Property들을 순회한다. 꺼내온다음 GetMetaData를 한다! 입력 매개변수 AssetBundlesName? UPROPERTY(~~, ~~, meta=(AssetBundles="~~, ~~"))를 의미한다.
+
+Meta데이터 내에 AssetBundle이름! 그걸 String으로 가져와서 콤마(,)로 나눈다. AssetBundles에 여러개의 키워드가 기입될수 있기때문에!
+
+그래서 해당 MetaData, AssetBundleName 키워드가 있으면? BundleSet에 추가를 진행한다. 없으면 추가하지 않는다!
+
+즉 현재까지의 진행상황으론 Widget들은 Bundle로 추가가 진행 되지않았던것이다. 왜? Meta키워드가 없었으니까
+
+<Fig n={38} src="/img/notes/lyra/asset-bundle/38.png" caption="" />
+
+<Fig n={39} src="/img/notes/lyra/asset-bundle/39.png" caption="" />
+
+이렇게 추가해준다.
+
+<Fig n={40} src="/img/notes/lyra/asset-bundle/40.png" caption="다시 디버깅해보면? 번들이 2개가 추가되었다!" />
+
+<Fig n={41} src="/img/notes/lyra/asset-bundle/41.png" caption="" />
+
+에디터에서 W_ShooterHUDLayout, InputConfig 설정해주고
+
+<Fig n={42} src="/img/notes/lyra/asset-bundle/42.png" caption="" />
+
+<Fig n={43} src="/img/notes/lyra/asset-bundle/43.png" caption="" />
+
+AddWidget이 잘 진행되어 브레이크 포인트까지 걸리고, OverallUILayout(PrimaryLayout)에 HUDLayout이 잘 장착된다!
+
+이렇게까지 SoftPtr을 적극 활용하며 meta키워드를 통해 로드를 나누는 이유는 데디케이트서버의 최적화 뿐만아니라 필요한것만 찾아서 로드할수 있도록 지원해주어 불필요한 메모리 소모를 줄이는것이다.
