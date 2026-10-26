@@ -8,3 +8,5 @@
   - 그림 `<Fig n={1} … />`, 그림 참조 `<FigRef n={1} />`, 코드 창 `<Editor file="…" fn="…">` + ```cpp 펜스, 탭 `<Tabs labels={[…]}><Tab>…</Tab></Tabs>`
 - 이미지: `public/img/…`
 - 로컬 실행: `npm install` → `npm run dev`
+
+직접 고치는 방법은 [EDITING.md](EDITING.md) 참고.
