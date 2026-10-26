@@ -1,7 +1,6 @@
 ---
 import List from '../../layouts/List.astro';
-import { noteGroups, noteCards } from '../../lib/lists';
-const groups = await noteGroups();
+import { noteCards } from '../../lib/lists';
 const cards = await noteCards();
 ---
-<List pageTitle="학습 노트 · 강병준" heading="학습 노트" desc="강의와 책, 샘플 프로젝트를 따라가며 직접 구현하고 정리한 기록입니다. 최근 글부터 보여 줍니다." backHref="/#notes" groups={groups} cards={cards} />
+<List pageTitle="학습 노트 · 강병준" heading="학습 노트" desc="강의와 책, 샘플 프로젝트를 따라가며 직접 구현하고 정리한 기록입니다. 최근 글부터 보여 줍니다." section="notes" cards={cards} />

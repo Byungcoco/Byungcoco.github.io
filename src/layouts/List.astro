@@ -1,32 +1,14 @@
 ---
-// 블로그형 목록: 왼쪽 카테고리 + 오른쪽 썸네일 카드 (학습 노트·코드 리뷰 공통)
+// 블로그형 목록: 왼쪽 사이드바 + 썸네일 카드 (학습 노트·코드 리뷰 공통)
 import Base from './Base.astro';
-interface Cat { label: string; href: string; count: number; active?: boolean; sub?: boolean }
-interface Group { title?: string; items: Cat[] }
+import Sidebar from '../components/Sidebar.astro';
 interface Card { href: string; title: string; meta: string; summary?: string; thumb?: string; badge?: string }
-interface Props { pageTitle: string; heading: string; desc?: string; backHref: string; groups: Group[]; cards: Card[] }
-const { pageTitle, heading, desc, backHref, groups, cards } = Astro.props;
+interface Props { pageTitle: string; heading: string; desc?: string; section: 'notes' | 'reviews'; active?: string; cards: Card[] }
+const { pageTitle, heading, desc, section, active, cards } = Astro.props;
 ---
 <Base title={pageTitle}>
-<header class="top">
-  <div class="topin">
-    <a class="back" href={backHref}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg><span>홈으로</span></a>
-    <span class="crumb">{heading}</span>
-  </div>
-</header>
+<Sidebar section={section} active={active} />
 <div class="lay">
-  <aside class="side" aria-label="카테고리">
-    {groups.map((g) => (
-      <div class="grp">
-        {g.title && <span class="gt">{g.title}</span>}
-        <ul>
-          {g.items.map((c) => (
-            <li><a class={`cat${c.active ? ' on' : ''}${c.sub ? ' sub' : ''}`} href={c.href} aria-current={c.active ? 'page' : undefined}><span>{c.label}</span><span class="cnt">{c.count}</span></a></li>
-          ))}
-        </ul>
-      </div>
-    ))}
-  </aside>
   <main class="main">
     <h1>{heading}</h1>
     {desc && <p class="desc">{desc}</p>}
@@ -47,21 +29,8 @@ const { pageTitle, heading, desc, backHref, groups, cards } = Astro.props;
   </main>
 </div>
 <style>
-  .top { position: sticky; top: 0; z-index: 5; background: rgba(10,22,40,0.88); backdrop-filter: blur(8px); border-bottom: 1px solid #1E3150; }
-  .topin { max-width: 1200px; margin: 0 auto; padding: 12px 32px; box-sizing: border-box; display: flex; align-items: center; gap: 16px; }
-  .back { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid #24385A; border-radius: 8px; font-size: 14px; font-weight: 600; color: #7FB2FF; text-decoration: none; box-sizing: border-box; }
-  .back:hover { border-color: #7FB2FF; background: rgba(127,178,255,0.08); }
-  .crumb { font-size: 14px; font-weight: 600; color: #7C8BA8; }
-  .lay { max-width: 1200px; margin: 0 auto; padding: 40px 32px 96px; box-sizing: border-box; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; align-items: start; }
-  .side { position: sticky; top: 96px; display: flex; flex-direction: column; gap: 20px; }
-  .gt { display: block; margin: 0 0 6px 10px; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: #7C8BA8; }
-  .side ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
-  .cat { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; padding: 0 10px; border-radius: 8px; font-size: 15px; font-weight: 600; color: #C9D4E8; text-decoration: none; }
-  .cat.sub { padding-left: 20px; font-weight: 500; }
-  .cat:hover { background: rgba(127,178,255,0.08); color: #E3EAF6; }
-  .cat.on { background: rgba(127,178,255,0.14); color: #7FB2FF; }
-  .cnt { font-size: 12px; font-weight: 600; color: #7C8BA8; }
-  .cat.on .cnt { color: #7FB2FF; }
+  .lay { max-width: 1040px; margin: 0 auto; padding: 56px 48px 96px; box-sizing: border-box; }
+  @media (min-width: 1024px) { .lay { margin-left: max(248px, calc((100vw - 1040px) / 2 + 124px)); } }
   .main h1 { margin: 0 0 8px; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: #E3EAF6; }
   .desc { margin: 0 0 28px; font-size: 16px; }
   .cards { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
@@ -77,12 +46,7 @@ const { pageTitle, heading, desc, backHref, groups, cards } = Astro.props;
   .ct { font-size: 19px; font-weight: 700; line-height: 1.4; color: #E3EAF6; }
   .sum { font-size: 15px; line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   @media (max-width: 900px) {
-    .lay { grid-template-columns: minmax(0, 1fr); gap: 24px; padding: 24px 20px 64px; }
-    .side { position: static; flex-direction: row; flex-wrap: wrap; gap: 8px; }
-    .grp { display: contents; }
-    .gt { display: none; }
-    .side ul { flex-direction: row; flex-wrap: wrap; gap: 6px; }
-    .cat, .cat.sub { min-height: 36px; padding: 0 12px; border: 1px solid #24385A; border-radius: 999px; font-size: 14px; }
+    .lay { padding: 32px 16px 96px; }
     .card { grid-template-columns: 120px minmax(0, 1fr); gap: 14px; padding: 12px 0; }
     .ct { font-size: 16px; }
     .sum { -webkit-line-clamp: 2; font-size: 14px; }

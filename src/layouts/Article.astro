@@ -1,18 +1,22 @@
 ---
 // 코드 리뷰·학습 노트 공통 글 레이아웃
 import Base from './Base.astro';
+import Sidebar from '../components/Sidebar.astro';
 interface Item { href: string; title: string; topic?: string }
 interface Props {
   pageTitle: string; title: string; crumb: string; backHref: string; ddLabel: string;
   siblings: Item[]; idx: number; headings: { depth: number; slug: string; text: string }[];
   lineage?: { href?: string; label: string }[]; lineageLabel?: string; meta?: string;
+  section: 'notes' | 'reviews'; active: string;
 }
-const { pageTitle, title, crumb, backHref, ddLabel, siblings, idx, headings, lineage = [], lineageLabel = '개선 과정 · 이전 단계', meta } = Astro.props;
+const { pageTitle, title, crumb, backHref, ddLabel, siblings, idx, headings, lineage = [], lineageLabel = '개선 과정 · 이전 단계', meta, section, active } = Astro.props;
 const prev = siblings[idx - 1];
 const next = siblings[idx + 1];
 const toc = headings.filter((h) => h.depth === 2);
 ---
 <Base title={pageTitle}>
+<Sidebar section={section} active={active} current={siblings[idx].href} />
+<div class="page">
 <header class="top">
   <div class="topin">
     <a class="back" href={backHref}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg><span>목록</span></a>
@@ -49,6 +53,7 @@ const toc = headings.filter((h) => h.depth === 2);
     <p class="lineage">{lineageLabel}: {lineage.map((l, i) => <>{i > 0 && <span class="sep"> · </span>}{l.href ? <a href={l.href}>{l.label}</a> : <span>{l.label}</span>}</>)}</p>
   )}
 </main>
+</div>
 
 <div class="modal" id="modal" role="dialog" aria-modal="true" hidden>
   <button type="button" class="dimbg" data-close aria-label="미리보기 닫기"></button>
@@ -113,6 +118,7 @@ const toc = headings.filter((h) => h.depth === 2);
 </script>
 
 <style is:global>
+  @media (min-width: 1024px) { .page { margin-left: 248px; } }
   .top { position: sticky; top: 0; z-index: 5; background: rgba(10,22,40,0.88); backdrop-filter: blur(8px); border-bottom: 1px solid #1E3150; }
   .topin { max-width: 1200px; margin: 0 auto; padding: 12px 48px; box-sizing: border-box; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
   .back { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid #24385A; border-radius: 8px; font-size: 14px; font-weight: 600; color: #7FB2FF; text-decoration: none; box-sizing: border-box; }

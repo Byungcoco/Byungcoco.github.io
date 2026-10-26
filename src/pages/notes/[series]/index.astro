@@ -1,13 +1,12 @@
 ---
 import List from '../../../layouts/List.astro';
 import { noteSeries } from '../../../data/notes';
-import { noteGroups, noteCards } from '../../../lib/lists';
+import { noteCards } from '../../../lib/lists';
 export function getStaticPaths() {
   return noteSeries.map((s) => ({ params: { series: s.key } }));
 }
 const { series } = Astro.params;
 const s = noteSeries.find((x) => x.key === series)!;
-const groups = await noteGroups(series);
 const cards = await noteCards(series);
 ---
-<List pageTitle={`${s.name} · 학습 노트`} heading={s.name} desc={s.desc} backHref="/#notes" groups={groups} cards={cards} />
+<List pageTitle={`${s.name} · 학습 노트`} heading={s.name} desc={s.desc} section="notes" active={series} cards={cards} />
