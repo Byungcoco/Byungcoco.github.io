@@ -44,7 +44,7 @@ export const projects: {
   {
     key: 'katana', name: '카타나 제로 모작', genre: '2D 액션', start: '2025.06', end: '2025.07', dur: '1개월', team: '개인',
     lead: false, roleText: '클라이언트 · 콘텐츠', thumb: '/img/projects/katana.jpg',
-    desc: '한 번에 끝나는 2D 액션을 Win32 · GDI 엔진으로 만들었습니다. 시간을 늦추는 슬로모션과 잔상, 충돌과 카메라를 직접 구현했습니다.',
+    desc: 'Win32 · GDI 기반으로 핵앤슬래시 액션 게임을 만들었습니다. 리플레이, 시간을 늦추는 슬로모션과 잔상, 충돌과 카메라 로직 등을 직접 구현했습니다.',
     tags: ['Win32', 'GDI+', 'C++'],
     yt: 'https://youtu.be/IY5oGaIb_kI?si=H4RgzuLevsUUnN-G', gh: 'https://github.com/Byungcoco/KatanaZero_Copy',
   },
