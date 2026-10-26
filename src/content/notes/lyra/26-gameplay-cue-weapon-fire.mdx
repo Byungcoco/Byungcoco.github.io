@@ -109,7 +109,7 @@ B_WeaponFire가 존재하지않다면? SpawnActor를 통해 생성을 진행하�
 
 다음과 같이 B_Weapon을 상속받는 B_Pistol에 정보를 기입해주면 된다. 시스템을 구축하는데 많은 시간이 걸렸지만, 이와 같이 NiagaraSystem을 넣어주는것 만으로도 기본적인 이펙트를 표현 해낼 수 있는 틀이 완성 되었다.
 
-<Fig n={20} src="/img/notes/lyra/gameplay-cue-weapon-fire/20.png" caption="아주 잘 구현된다!" />
+<Fig n={20} src="/img/notes/lyra/gameplay-cue-weapon-fire/20.gif" caption="아주 잘 구현된다!" />
 
 여기서 중요한점을 짚고갈게 있다. B_WeaponFire는 하나의 Actor이다. 그렇다는건 누군가 소멸시켜주지 않으면 평생 남아있다. 헷갈릴 수 있는게 AutoDestroy로 이펙트를 지우고 있지않나? 할 수 있지만 말 그대로 이펙트, NiagaraSystem은 Destroy되는게 맞다. 근데 여기서 말하는건 B_WeaponFire 이펙트를 재생시키는 그 자체 Actor를 말하는 것이다.
 
