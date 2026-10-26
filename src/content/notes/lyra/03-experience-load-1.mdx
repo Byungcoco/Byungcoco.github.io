@@ -12,11 +12,13 @@ import Fig from '../../../components/Fig.astro';
 - <strong>Experience 로드 과정</strong> GameMode는 Experience로드를 요청하고, 로딩과 상태 관리는 GameState의 ExperienceComponentManager가 담당 언리얼 SpawnPlayer의 순서에 따라 Framework 생성 시점(GameInstance=&gt; GameMode =&gt; GameState =&gt; PlayerController =&gt; PlayerState)에 맞추어 다음프레임에 Experience 로딩이 이루어지고 Player가 Spawn하도록 설계 Experience는 서버에서 로드 진행
 - <strong>Lyra의 모듈화 설계</strong> Component를 적극 활용하며 모듈화와 확장성 극대화
 
+<Fig n={1} src="/img/notes/lyra/experience-load-1/01.png" caption="PlayerSpawn 다이어그램 일부 (*인프런[UE5 Lyra 클론코딩] 참고자료.)" />
+
 ## 1. ExperienceLoad
 
 UserFacingExperienceDefinition을 로드하여 포탈을 생성하는것 까지 이루어졌다. 이제 플레이어가 포탈에 BeginOverlap 되었을 때, 해당 맵으로 이동하며 ExperienceDefinition내 정보들을 플레이어에게 적용시킬텐데, 그부분에 대해서 다뤄보겠다.
 
-<Fig n={1} src="/img/notes/lyra/experience-load-1/01.png" caption="GameMode 세팅 클래스 다이어그램" />
+<Fig n={2} src="/img/notes/lyra/experience-load-1/02.png" caption="GameMode 세팅 클래스 다이어그램" />
 
 월드에 존재하는 단 하나의 GameMode아래로 네가지가 분류된다. Experience가 전환되면 각각의 Component, Data가 부품교체 되듯이 전환될것이다.
 
@@ -27,11 +29,11 @@ UserFacingExperienceDefinition을 로드하여 포탈을 생성하는것 까지 
 
 CameraManager? CameraComponent? PawnData의 CameraMode? 이렇게 분리 되어있는걸 보면 카메라 또한 모듈화가 이루어졌음을 알 수 있다. CameraComponent는 캐릭터라는 촬영자의 속성과 기능을 보유하고 있을뿐, 실질적인 렌더링은 CameraManager에서 이루어진다.
 
-<Fig n={2} src="/img/notes/lyra/experience-load-1/02.png" caption="GameModeBase의 기본 클래스 지정" />
+<Fig n={3} src="/img/notes/lyra/experience-load-1/03.png" caption="GameModeBase의 기본 클래스 지정" />
 
 GameModeBase의 생성자에 기본클래스를 다음과같이 설정해주면 에디터에도 반영이 된다.
 
-<Fig n={3} src="/img/notes/lyra/experience-load-1/03.png" caption="GameModeBase 오버라이드 함수 InitGame()" />
+<Fig n={4} src="/img/notes/lyra/experience-load-1/04.png" caption="GameModeBase 오버라이드 함수 InitGame()" />
 
 이어서 UE의 프레임워크에 따라 UWorld에서 InitializeActorsForPlay()를 호출하여 액터를 준비하고, BJGameMode에서 <strong>InitGame()을 가장 먼저 호출</strong>한다. <strong>World에 Actor가 스폰되기전인 굉장히 이른 시점</strong>에 하나의 델리게이트를 설정하는데, "SetTimerForNextTick" <strong>다음 프레임에 해당 함수를 실행</strong>할 것을 요청한다.
 
@@ -41,9 +43,9 @@ HandleMatchAssingmentIfNotExpectingOne의 역할은 Load를 하기 전 Experienc
 
 <strong>(▲그림1.)</strong> GameState에 ExperienceManagerComponent를 부착하기 위해 "Modular Gameplay"이라는 플러그인이 필요하다. Component를 Actor 유형인 GameState, Player, GameFeature 등에 <strong>확장성 있게 부착이 이루어진다.</strong> Lyra에서는 해당 플러그인을 적극 활용하여 기능을 구현해낸다.
 
-<Fig n={4} src="/img/notes/lyra/experience-load-1/04.png" caption="GameState 생성자 시점에서 ExperienceManagerComponent 생성" />
+<Fig n={5} src="/img/notes/lyra/experience-load-1/05.png" caption="GameState 생성자 시점에서 ExperienceManagerComponent 생성" />
 
-<Fig n={5} src="/img/notes/lyra/experience-load-1/05.png" caption="ExperienceManagerComponent.h" />
+<Fig n={6} src="/img/notes/lyra/experience-load-1/06.png" caption="ExperienceManagerComponent.h" />
 
 CurrentExperience는 말 그대로 현재 ExperienceDefinition을 들고있다. 하지만, 해당 함수에 Experience가 존재한다고 해서 로딩이 완료된것은 아니다. GameMode에서 해당 Experience 로딩을 요청 받아야만 본격적인 로딩이 이루어진다. 그래서 Experience가 Loading된 단계를 세분화 시키고 enum class타입의 LoadState를 통해 이를 구분하고 업데이트 시킨다.
 
@@ -61,7 +63,7 @@ ExperienceManagerComponent의 Owner는 GameState이다. 최근 Experience의 정
 
 ### 1-A. GameModeBase와 GameState의 관계, 역할
 
-<Fig n={6} src="/img/notes/lyra/experience-load-1/06.png" caption="" />
+<Fig n={7} src="/img/notes/lyra/experience-load-1/07.png" caption="" />
 
 이쯤에서 굳이 왜? GameState에 Component를 생성해가며 GameModeBase와 Delegate를 통해 통신을 주고 받는걸까? GameModeBase는 왜 GameState를 포인터로 가지고 있는걸까?
 
@@ -72,37 +74,37 @@ Lyra는 멀티플레이 환경을 고려하여 개발되었기 때문에, GameMo
 
 이렇게 게임 그 자체라 할 수 있는 중요한 정보를 서버에서 관리하고 각 클라이언트는 동일한 게임경험을 진행 해야하기 때문에 복잡한 과정을 거친다. Lyra에서는 GameMode의 일부 역할을 Experience가 일임하는 느낌이니, 데이터관리 또한 Component에서 이루어진다고 보면된다.
 
-<Fig n={7} src="/img/notes/lyra/experience-load-1/07.png" caption="Manager의 OnExperienceLoaded Delegate 유틸 함수" />
+<Fig n={8} src="/img/notes/lyra/experience-load-1/08.png" caption="Manager의 OnExperienceLoaded Delegate 유틸 함수" />
 
 여기서 Delegate 추가를 래핑한 함수가있는데, Experience가 이미 로드된 상태라면 Delegate를 바로 호출하고, 로드가 안되었다면 델리게이트에 추가를 해준다. 즉, GameMode에서 뿐만아니라 또 다른 요청자가 존재할 수 있으니 해당 시점에 Experience가 이미 로드된 상태를 고려하여 만든 유틸 함수라 보면된다.
 
-<Fig n={8} src="/img/notes/lyra/experience-load-1/08.png" caption="GameModeBase에서 Delegate 등록" />
+<Fig n={9} src="/img/notes/lyra/experience-load-1/09.png" caption="GameModeBase에서 Delegate 등록" />
 
 위에서 말했듯이 ExperienceManagerComponent가 생성되었다고 보장받는 시점은 InitGameState()에서 FindComponentByClass로 해당 컴포넌트의 포인터를 반환받는다. 언리얼에서 제공하는 Actor 클래스의 멤버함수로 Actor에 부착가능한 UActorComponent에서 파생된 Component들만 찾을 수 있다. 그렇게 Component에 접근해 Delegate에 해당 Experience가 로드됬을 때 실행할 함수를 걸어둔다.
 
-<Fig n={9} src="/img/notes/lyra/experience-load-1/09.png" caption="PlayerSpawn의 다이어그램 (*인프런[UE5 Lyra 클론코딩] 참고자료.)" />
+<Fig n={10} src="/img/notes/lyra/experience-load-1/10.png" caption="PlayerSpawn의 다이어그램 (*인프런[UE5 Lyra 클론코딩] 참고자료.)" />
 
 중간 점검을 하자면 <strong>(▲그림8.)</strong>지금까지 10번의 과정까지 틀을 만들어보았다. 그 후부터는 플레이어를 세팅하고 스폰하는 과정 (11번 ~ 29번)인데, 기존의 로직이라면 상관없겠지만 Lyra에서는 Experience로 GameMode단위를 대신했었고, ExperienceLoad를 다음 프레임에 시작할 것을 요청했다. 그래서 30번부터 과정을 살펴보면 ExperienceManagerComponent에 Load를 요청하고 완료되면 Broadcast를 통해 Delegate에 바인딩된 함수들의 로직을 실행한다. RestartPlayerAtPlayerStart는 Experience가 Load되며 <strong>PawnData가 PlayerState에 세팅 완료가 보장</strong>되니 GameMode에서 Player 상태를 리셋 해주며 데이터를 업데이트 해준다.
 
-<Fig n={10} src="/img/notes/lyra/experience-load-1/10.png" caption="PlayerState" />
+<Fig n={11} src="/img/notes/lyra/experience-load-1/11.png" caption="PlayerState" />
 
 그렇다면 PlayerState에 왜 PawnData가 있는가? 이건 추후에 만들어질 AbilitySystem과 관련이 있는데, AbilitySystemComponent의 Owner가 PlayerState이고, PawnData를 참조해서 작업이 이루어지기때문이라고 알아두면 좋을것 같다.
 
-<Fig n={11} src="/img/notes/lyra/experience-load-1/11.png" caption="PlayerState의 PostInitializeComponents()" />
+<Fig n={12} src="/img/notes/lyra/experience-load-1/12.png" caption="PlayerState의 PostInitializeComponents()" />
 
 PlayerState는 언리얼엔진 프레임워크상 GameState가 생성되고 난 후에 생성되기 때문에 PostInitializeComponents(), 초기화가 완료된 시점에 안전하게 GameState와 ExperienceManagerComponent에 접근 가능하다. 그리고 PawnData캐싱을 위해 로드 완료 Deleagte에 함수를 바인딩한다.
 
-<Fig n={12} src="/img/notes/lyra/experience-load-1/12.png" caption="PawnData.h" />
+<Fig n={13} src="/img/notes/lyra/experience-load-1/13.png" caption="PawnData.h" />
 
 UPawnData는 추후에 많이 추가되겠지만 지금 당장에는 PawnClass가 있다. 그리고 PrimaryDataAsset이니 에디터상에서 생성하여 직접 PawnClass를 바인딩해주겠다.
 
-<Fig n={13} src="/img/notes/lyra/experience-load-1/13.png" caption="PawnData 생성 후 Class 바인딩, ExperienceDefinition에 PawnData 바인딩" />
+<Fig n={14} src="/img/notes/lyra/experience-load-1/14.png" caption="PawnData 생성 후 Class 바인딩, ExperienceDefinition에 PawnData 바인딩" />
 
 이제 Player가 생성되면서 스폰되는것을 막아줘야하니, <strong>(▲그림8.)</strong>의 24번을 오버라이드 하여 로직을 잡아준다.
 
-<Fig n={14} src="/img/notes/lyra/experience-load-1/14.png" caption="GameMode의 IsExperieceLoaded()" />
+<Fig n={15} src="/img/notes/lyra/experience-load-1/15.png" caption="GameMode의 IsExperieceLoaded()" />
 
-<Fig n={15} src="/img/notes/lyra/experience-load-1/15.png" caption="GameModeBase의 HandleStartingNewPlayer 오버라이드 함수" />
+<Fig n={16} src="/img/notes/lyra/experience-load-1/16.png" caption="GameModeBase의 HandleStartingNewPlayer 오버라이드 함수" />
 
 이렇게 <strong>(▲그림8.)</strong>의 24번부터 막아버리면 아래 29번까지 로직이 진행되지 않으며 월드에 Player가 스폰되지 않고 다음프레임으로 넘어간다.
 
