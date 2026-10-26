@@ -7,7 +7,7 @@ interface Props { pageTitle: string; heading: string; desc?: string; section: 'n
 const { pageTitle, heading, desc, section, active, cards } = Astro.props;
 ---
 <Base title={pageTitle}>
-<Sidebar section={section} active={active} />
+<Sidebar section={section} active={active} label={heading} />
 <div class="lay">
   <main class="main">
     <h1>{heading}</h1>

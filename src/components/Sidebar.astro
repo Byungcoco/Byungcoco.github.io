@@ -4,8 +4,8 @@
 import { getCollection } from 'astro:content';
 import { noteSeries } from '../data/notes';
 import { projects, profile } from '../data/site';
-interface Props { section: 'notes' | 'reviews'; active?: string; current?: string }
-const { section, active, current } = Astro.props;
+interface Props { section: 'notes' | 'reviews'; active?: string; current?: string; label?: string }
+const { section, active, current, label } = Astro.props;
 
 const notes = await getCollection('notes');
 const reviews = await getCollection('reviews');
@@ -20,7 +20,7 @@ const posts = !current ? [] : section === 'notes'
   <button type="button" class="sbopen" id="sbopen" aria-label="메뉴 열기" aria-controls="sb" aria-expanded="false">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
   </button>
-  <a class="mname" href="/">{profile.name}</a>
+  <span class="mname">{label ?? profile.name}</span>
 </header>
 <button type="button" class="sbdim" id="sbdim" aria-label="메뉴 닫기" hidden></button>
 <aside class="sb" id="sb" aria-label="사이트 메뉴">
@@ -138,7 +138,7 @@ const posts = !current ? [] : section === 'notes'
     .mbar { display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 17; height: 56px; padding: 0 8px; box-sizing: border-box; background: rgba(11,24,44,0.94); backdrop-filter: blur(8px); border-bottom: 1px solid #1E3150; }
     .sbopen { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: #F4F6F9; cursor: pointer; }
     .sbopen:hover { background: rgba(127,178,255,0.08); }
-    .mname { font-size: 16px; font-weight: 700; color: #F4F6F9; text-decoration: none; }
+    .mname { flex: 1 1 auto; min-width: 0; padding-right: 8px; font-size: 16px; font-weight: 700; color: #F4F6F9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sbdim:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 18; border: 0; background: rgba(0,0,0,0.5); }
   }
   @media (prefers-reduced-motion: reduce) { .sb, .chev { transition: none; } }
