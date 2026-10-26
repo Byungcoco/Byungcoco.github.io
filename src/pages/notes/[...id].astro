@@ -15,8 +15,7 @@ const siblings = (await getCollection('notes', (n) => n.data.series === entry.da
   .sort((a, b) => a.data.order - b.data.order);
 const idx = siblings.findIndex((n) => n.id === entry.id);
 const items = siblings.map((n) => ({ href: `/notes/${n.id}/`, title: n.data.title, topic: n.data.topic }));
-const meta = `${entry.data.date.replaceAll('-', '.')} 작성` + (entry.data.source ? ' · 원문 ' + entry.data.source.replace(/^https?:\/\//, '') : '');
 ---
-<Article pageTitle={`${entry.data.title} · ${series.name} 학습 노트`} title={entry.data.title} crumb={`학습 노트 · ${series.name}`} backHref={`/notes/${series.key}/`} ddLabel={`${series.name} 노트`} section="notes" active={series.key} siblings={items} idx={idx} headings={headings} meta={meta}>
+<Article pageTitle={`${entry.data.title} · ${series.name} 학습 노트`} title={entry.data.title} crumb={`학습 노트 · ${series.name}`} section="notes" active={series.key} siblings={items} idx={idx} headings={headings}>
   <Content />
 </Article>

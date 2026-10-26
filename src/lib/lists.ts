@@ -2,15 +2,13 @@ import { getCollection } from 'astro:content';
 import { noteSeries } from '../data/notes';
 import { thumbOf, summaryOf } from './preview';
 
-const fmt = (d: string) => d.replaceAll('-', '.');
-
 export async function noteCards(series?: string) {
   let list = await getCollection('notes', (n) => !series || n.data.series === series);
   list = series ? list.sort((a, b) => a.data.order - b.data.order) : list.sort((a, b) => b.data.date.localeCompare(a.data.date) || b.data.order - a.data.order);
   return list.map((n) => ({
     href: `/notes/${n.id}/`,
     title: n.data.title,
-    meta: fmt(n.data.date) + (n.data.topic ? ` · ${n.data.topic}` : ''),
+    meta: n.data.topic ?? '',
     badge: series ? `#${n.data.order}` : noteSeries.find((s) => s.key === n.data.series)!.name,
     summary: summaryOf(n.body),
     thumb: thumbOf(n.body, n.data.thumb),

@@ -23,6 +23,6 @@ const lineage = [entry.data.lineage ?? []].flat().map((l) => {
 });
 const items = siblings.map((r) => ({ href: href(r), title: r.data.title, topic: r.data.topic }));
 ---
-<Article pageTitle={`${entry.data.title} · ${project.name} 코드 리뷰`} title={entry.data.title} crumb={`${project.name} · 코드 리뷰`} backHref={`/reviews/${project.key}/`} ddLabel={`${project.name}의 코드 리뷰`} section="reviews" active={project.key} siblings={items} idx={idx} headings={headings} lineage={lineage}>
+<Article pageTitle={`${entry.data.title} · ${project.name} 코드 리뷰`} title={entry.data.title} crumb={`${project.name} · 코드 리뷰`} section="reviews" active={project.key} siblings={items} idx={idx} headings={headings} lineage={lineage}>
   <Content />
 </Article>

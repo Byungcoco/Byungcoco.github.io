@@ -10,9 +10,8 @@ const reviews = (await getCollection('reviews')).sort((a, b) => a.data.order - b
 const notes = await getCollection('notes');
 const noteGroups = noteSeries.map((s) => {
   const list = notes.filter((n) => n.data.series === s.key).sort((a, b) => a.data.order - b.data.order);
-  const ds = list.map((n) => n.data.date).sort();
   const thumb = list.map((n) => thumbOf(n.body, n.data.thumb)).find(Boolean);
-  return { ...s, count: list.length, from: ds[0], to: ds[ds.length - 1], thumb };
+  return { ...s, count: list.length, thumb };
 });
 const firstReview = (key: string) => reviews.find((r) => r.data.project === key);
 ---
@@ -133,7 +132,6 @@ const firstReview = (key: string) => reviews.find((r) => r.data.project === key)
         <span class="nth">{g.thumb && <img src={g.thumb} alt="" loading="lazy" />}</span>
         <span class="nhead"><span class="nname">{g.name}</span><span class="pill gb">{g.count}편</span></span>
         <span class="ndesc">{g.desc}</span>
-        {g.from && <span class="nmeta">{g.from.slice(0, 7).replace('-', '.')} ~ {g.to.slice(0, 7).replace('-', '.')} · {g.source}</span>}
       </a>
     ))}
   </div>

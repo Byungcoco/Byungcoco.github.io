@@ -16,9 +16,12 @@ const posts = !current ? [] : section === 'notes'
   ? notes.filter((n) => n.data.series === active).sort((a, b) => a.data.order - b.data.order).map((n) => ({ href: `/notes/${n.id}/`, title: n.data.title }))
   : reviews.filter((r) => r.data.project === active).sort((a, b) => a.data.order - b.data.order).map((r) => ({ href: `/reviews/${r.id}/`, title: r.data.title }));
 ---
-<button type="button" class="sbopen" id="sbopen" aria-label="메뉴 열기" aria-controls="sb" aria-expanded="false">
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-</button>
+<header class="mbar">
+  <button type="button" class="sbopen" id="sbopen" aria-label="메뉴 열기" aria-controls="sb" aria-expanded="false">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+  <a class="mname" href="/">{profile.name}</a>
+</header>
 <button type="button" class="sbdim" id="sbdim" aria-label="메뉴 닫기" hidden></button>
 <aside class="sb" id="sb" aria-label="사이트 메뉴">
   <a class="who" href="/">
@@ -91,9 +94,16 @@ const posts = !current ? [] : section === 'notes'
   openBtn.addEventListener('click', () => set(true));
   dim.addEventListener('click', () => set(false));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') set(false); });
-  // 지금 글이 보이도록 사이드바 스크롤
-  const cur = sb.querySelector<HTMLElement>('.post.cur');
-  if (cur) sb.scrollTop = cur.offsetTop - sb.clientHeight / 2 + cur.offsetHeight / 2;
+  // 글 목록은 따로 스크롤되는 상자: 지금 글을 가운데로, 사이드바 자체는 강조된 카테고리가 보이게
+  const place = () => {
+    const box = sb.querySelector<HTMLElement>('.posts');
+    const cur = sb.querySelector<HTMLElement>('.post.cur');
+    if (box && cur) box.scrollTop = cur.offsetTop - box.clientHeight / 2 + cur.offsetHeight / 2;
+    const cat = sb.querySelector<HTMLElement>('.cat.on');
+    if (cat && cat.offsetTop > sb.clientHeight - 200) sb.scrollTop = cat.offsetTop - 120;
+  };
+  place();
+  openBtn.addEventListener('click', place);
 </script>
 
 <style>
@@ -117,15 +127,18 @@ const posts = !current ? [] : section === 'notes'
   .cat.on { background: rgba(127,178,255,0.14); border-left-color: #7FB2FF; color: #7FB2FF; font-weight: 600; }
   .cnt { font-size: 11.5px; color: #5E6F8E; }
   .cat.on .cnt { color: #7FB2FF; }
-  .posts { margin: 4px 0 8px 10px; padding: 0 0 0 8px; list-style: none; border-left: 1px solid #24385A; display: flex; flex-direction: column; gap: 1px; }
+  .posts { position: relative; max-height: 46vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #24385A transparent; margin: 4px 0 8px 10px; padding: 0 0 0 8px; list-style: none; border-left: 1px solid #24385A; display: flex; flex-direction: column; gap: 1px; }
   .post { display: block; padding: 5px 8px; border-radius: 6px; font-size: 12.5px; line-height: 1.45; color: #8696B2; text-decoration: none; }
   .post:hover { color: #E3EAF6; background: rgba(127,178,255,0.06); }
   .post.cur { color: #E3EAF6; font-weight: 600; background: rgba(127,178,255,0.1); box-shadow: inset 2px 0 0 #7FB2FF; }
-  .sbopen, .sbdim { display: none; }
+  .mbar, .sbdim { display: none; }
   @media (max-width: 1023px) {
     .sb { transform: translateX(-100%); transition: transform .2s; width: 280px; box-shadow: 8px 0 30px rgba(0,0,0,0.4); }
     .sb.open { transform: none; }
-    .sbopen { display: flex; align-items: center; justify-content: center; position: fixed; left: 16px; bottom: 16px; z-index: 19; width: 48px; height: 48px; border-radius: 999px; border: 1px solid #24385A; background: #0E1D35; color: #E3EAF6; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.45); }
+    .mbar { display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 17; height: 56px; padding: 0 8px; box-sizing: border-box; background: rgba(11,24,44,0.94); backdrop-filter: blur(8px); border-bottom: 1px solid #1E3150; }
+    .sbopen { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: #E3EAF6; cursor: pointer; }
+    .sbopen:hover { background: rgba(127,178,255,0.08); }
+    .mname { font-size: 16px; font-weight: 700; color: #E3EAF6; text-decoration: none; }
     .sbdim:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 18; border: 0; background: rgba(0,0,0,0.5); }
   }
   @media (prefers-reduced-motion: reduce) { .sb, .chev { transition: none; } }

@@ -4,12 +4,12 @@ import Base from './Base.astro';
 import Sidebar from '../components/Sidebar.astro';
 interface Item { href: string; title: string; topic?: string }
 interface Props {
-  pageTitle: string; title: string; crumb: string; backHref: string; ddLabel: string;
+  pageTitle: string; title: string; crumb: string;
   siblings: Item[]; idx: number; headings: { depth: number; slug: string; text: string }[];
   lineage?: { href?: string; label: string }[]; lineageLabel?: string; meta?: string;
   section: 'notes' | 'reviews'; active: string;
 }
-const { pageTitle, title, crumb, backHref, ddLabel, siblings, idx, headings, lineage = [], lineageLabel = '개선 과정 · 이전 단계', meta, section, active } = Astro.props;
+const { pageTitle, title, crumb, siblings, idx, headings, lineage = [], lineageLabel = '개선 과정 · 이전 단계', meta, section, active } = Astro.props;
 const prev = siblings[idx - 1];
 const next = siblings[idx + 1];
 const toc = headings.filter((h) => h.depth === 2);
@@ -19,7 +19,6 @@ const toc = headings.filter((h) => h.depth === 2);
 <div class="page">
 <header class="top">
   <div class="topin">
-    <a class="back" href={backHref}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg><span>목록</span></a>
     <div class="ttl">
       <span class="crumb">{crumb} {idx + 1} / {siblings.length}</span>
       <h1>{title}</h1>
@@ -27,15 +26,6 @@ const toc = headings.filter((h) => h.depth === 2);
     <nav class="nav3" aria-label="글 이동">
       {prev ? <a class="nb" href={prev.href}><span class="nk"><span aria-hidden="true">←</span> 이전 글</span><span class="nt">{prev.title}</span></a>
             : <span class="nb off"><span class="nk">← 이전 글</span><span class="nt">처음 글입니다</span></span>}
-      <span class="ddwrap">
-        <button type="button" class="nb mid" id="ddbtn" aria-haspopup="true" aria-expanded="false" aria-controls="dd"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1" fill="currentColor"/><circle cx="3.5" cy="12" r="1" fill="currentColor"/><circle cx="3.5" cy="18" r="1" fill="currentColor"/></svg><span class="nk" style="color:#E3EAF6">목차 보기</span></button>
-        <div class="dd" id="dd" role="menu" aria-label={ddLabel} hidden>
-          <span class="ddh">{ddLabel}</span>
-          {siblings.map((r, i) => (
-            <a class={`ddi${i === idx ? ' cur' : ''}`} role="menuitem" href={i === idx ? '#top' : r.href}><span class="ddn">{String(i + 1).padStart(2, '0')}</span><span class="ddx"><span class="ddt">{r.title}</span>{r.topic && <span class="dds">{r.topic}</span>}</span></a>
-          ))}
-        </div>
-      </span>
       {next ? <a class="nb right" href={next.href}><span class="nk">다음 글 <span aria-hidden="true">→</span></span><span class="nt">{next.title}</span></a>
             : <span class="nb right off"><span class="nk">다음 글 →</span><span class="nt">마지막 글입니다</span></span>}
     </nav>
@@ -94,21 +84,13 @@ const toc = headings.filter((h) => h.depth === 2);
   }));
   modal.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
 
-  // 같은 프로젝트 리뷰 목록
-  const ddbtn = document.getElementById('ddbtn')!;
-  const dd = document.getElementById('dd')!;
-  const setDd = (open: boolean) => { dd.hidden = !open; ddbtn.setAttribute('aria-expanded', String(open)); };
-  ddbtn.addEventListener('click', (e) => { e.stopPropagation(); setDd(dd.hidden); });
-  document.addEventListener('click', (e) => { if (!dd.hidden && !dd.contains(e.target as Node)) setDd(false); });
-  dd.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => setDd(false)));
-
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { close(); setDd(false); } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
 
   // 오른쪽 목차 강조
   const tis = [...document.querySelectorAll<HTMLAnchorElement>('.ti')];
   const hs = tis.map((a) => document.getElementById(decodeURIComponent(a.hash.slice(1)))!);
   const onScroll = () => {
-    const y = window.scrollY + 140;
+    const y = window.scrollY + window.innerHeight * 0.5; // 화면 가운데 기준
     let cur = 0;
     hs.forEach((h, i) => { if (h && h.getBoundingClientRect().top + window.scrollY <= y) cur = i; });
     tis.forEach((a, i) => a.classList.toggle('on', i === cur));
@@ -121,8 +103,6 @@ const toc = headings.filter((h) => h.depth === 2);
   @media (min-width: 1024px) { .page { margin-left: 248px; } }
   .top { position: sticky; top: 0; z-index: 5; background: rgba(10,22,40,0.88); backdrop-filter: blur(8px); border-bottom: 1px solid #1E3150; }
   .topin { max-width: 1200px; margin: 0 auto; padding: 12px 48px; box-sizing: border-box; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
-  .back { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid #24385A; border-radius: 8px; font-size: 14px; font-weight: 600; color: #7FB2FF; text-decoration: none; box-sizing: border-box; }
-  .back:hover { border-color: #7FB2FF; background: rgba(127,178,255,0.08); }
   .ttl { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
   .crumb { font-size: 13px; font-weight: 600; color: #7C8BA8; }
   .ttl h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: #E3EAF6; }
@@ -132,31 +112,17 @@ const toc = headings.filter((h) => h.depth === 2);
   .nb.right { text-align: right; align-items: flex-end; }
   .nb.off { opacity: 0.45; cursor: default; }
   .nb.off:hover { border-color: #24385A; background: transparent; }
-  .nb.mid { width: auto; height: 100%; flex-direction: row; align-items: center; gap: 8px; padding: 0 16px; color: #7FB2FF; }
   .nk { font-size: 12px; font-weight: 600; color: #7C8BA8; line-height: 1.3; }
   .nt { font-size: 13px; font-weight: 600; color: #E3EAF6; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-  .ddwrap { position: relative; display: flex; }
-  .dd { position: absolute; top: calc(100% + 10px); right: 0; z-index: 8; width: 340px; max-width: 86vw; display: flex; flex-direction: column; padding: 8px; background: #0E1D35; border: 1px solid #24385A; border-radius: 12px; box-shadow: 0 16px 40px rgba(0,0,0,0.45); }
-  .dd[hidden] { display: none; }
-  .ddh { padding: 6px 10px 8px; font-size: 12px; font-weight: 600; color: #7C8BA8; }
-  .ddi { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 10px; border-radius: 8px; text-decoration: none; color: #C9D4E8; }
-  .ddi:hover { background: rgba(127,178,255,0.10); color: #E3EAF6; }
-  .ddi.cur { background: rgba(127,178,255,0.14); }
-  .ddi.cur .ddt { color: #7FB2FF; }
-  .ddn { flex: 0 0 22px; font-size: 12px; font-weight: 700; color: #7C8BA8; }
-  .ddx { min-width: 0; display: flex; flex-direction: column; }
-  .ddt { font-size: 14px; font-weight: 600; line-height: 1.4; }
-  .dds { font-size: 12px; color: #7C8BA8; line-height: 1.4; }
 
-  .toc { position: fixed; right: 20px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 10px 8px; border-radius: 10px; border: 1px solid transparent; }
-  .toc:hover { background: rgba(14,29,53,0.96); border-color: #1E3150; }
-  .ti { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 30px; text-decoration: none; color: #7C8BA8; font-size: 13px; font-weight: 600; }
-  .ti .ln { display: block; width: 16px; height: 2px; border-radius: 2px; background: #3A4A68; }
-  .ti.on .ln { width: 28px; background: #7FB2FF; }
-  .ti .lbl { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: max-width .15s, opacity .15s; }
-  .toc:hover .ti .lbl { max-width: 160px; opacity: 1; }
-  .ti:hover, .ti.on { color: #E3EAF6; }
-  .ti:hover .ln { width: 28px; background: #E3EAF6; }
+  .toc { position: fixed; right: 20px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 10px 8px; }
+  .ti { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 30px; text-decoration: none; color: #7C8BA8; font-size: 13px; font-weight: 600; transition: color .15s, font-size .15s; }
+  .ti .ln { flex: none; display: block; width: 16px; height: 2px; border-radius: 2px; background: #3A4A68; transition: width .15s, background .15s; }
+  .ti.on { color: #7FB2FF; font-size: 15.5px; font-weight: 700; }
+  .ti.on .ln { width: 32px; height: 3px; background: #7FB2FF; }
+  .ti .lbl { max-width: 190px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .ti:hover { color: #E3EAF6; }
+  .ti:hover .ln { width: 24px; background: #E3EAF6; }
 
   /* 본문 */
   .article { max-width: 1200px; margin: 0 auto; padding: 56px 96px 96px 48px; box-sizing: border-box; line-height: 1.8; }
@@ -235,14 +201,13 @@ const toc = headings.filter((h) => h.depth === 2);
 
   /* PC에서 글자 1~2px 크게 */
   @media (min-width: 1024px) {
-    .back { font-size: 15px; }
     .crumb { font-size: 14px; }
     .ttl h1 { font-size: 24px; }
     .nk { font-size: 13px; }
     .nt { font-size: 14px; }
-    .ddh, .dds { font-size: 13px; }
-    .ddt { font-size: 15px; }
     .ti { font-size: 14px; }
+    .ti.on { font-size: 16.5px; }
+    .article { padding-right: 260px; }
     .article { font-size: 17.5px; }
     .article h2 { font-size: 30px; }
     .article h3 { font-size: 20px; }
@@ -260,10 +225,11 @@ const toc = headings.filter((h) => h.depth === 2);
     .mcap { font-size: 14.5px; }
   }
   @media (max-width: 1023px) {
-    .topin { padding: 10px 20px; gap: 12px; }
+    .top { position: static; }
+    .topin { padding: 12px 16px; gap: 12px; }
     .nav3 { width: 100%; }
     .nb { flex: 1 1 0; width: auto; min-width: 0; }
-    .article { padding: 32px 20px 64px; }
+    .article { padding: 28px 16px 64px; }
     .toc { display: none; }
     .summary { grid-template-columns: minmax(0, 1fr); }
   }
