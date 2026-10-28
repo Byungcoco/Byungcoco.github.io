@@ -36,7 +36,7 @@ import Tab from '../../../components/Tab.astro';
 
 | 클래스 | 책임 |
 | --- | --- |
-| `CEventBus_Manager` | 상태가 Broadcast한 스킬 단계 이벤트를 구독한 스킬 컴포넌트에 전달 |
+| `CEventBus_Manager` | 상태가 Broadcast한 스킬 단계 이벤트를 Subscribe한 스킬 컴포넌트에 전달 |
 | `CSkillComponent` | 슬롯별 쿨타임, 스킬 오브젝트 생성, 단계 이벤트를 해당 스킬에 전달 |
 | `CSkillStateContainer` | 스킬 하나의 애니메이션 단계(시작·충전·돌진 등)를 순서대로 진행하는 상태 |
 | `CSkillBase` · `SKILL_PRESET` | 단계 전환, 이벤트에 등록된 커맨드를 파츠에 실행 |
@@ -159,7 +159,7 @@ HRESULT CState_Chidori_Attack::Start(void* pArg, _bool bForce)
 </Tab>
 <Tab>
 
-캐릭터에 붙는 컴포넌트입니다. 슬롯별 스킬 상태(`m_vecSkill`)와 쿨타임을 들고 `CanUse`/`Use`로 스킬 오브젝트를 만들며, `Subscribe_SkillEvenets()`로 구독한 단계 이벤트 가운데 자기 캐릭터의 것만 골라 해당 스킬에 넘깁니다.
+캐릭터에 붙는 컴포넌트입니다. 슬롯별 스킬 상태(`m_vecSkill`)와 쿨타임을 들고 `CanUse`/`Use`로 스킬 오브젝트를 만들며, `Subscribe_SkillEvenets()`로 Subscribe한 단계 이벤트 가운데 자기 캐릭터의 것만 골라 해당 스킬에 넘깁니다.
 
 #### A. 쿨타임과 생성
 
@@ -478,7 +478,7 @@ void CSkillStateContainer::Update(const _float fTimeDelta)
 
 ## 5. 피드백
 
-**한 캐릭터의 스킬 단계를 전역 Broadcast로 알렸습니다.** 모든 스킬 컴포넌트가 같은 채널을 구독하고, 각자 "내 캐릭터인가"를 비교해 걸러 냅니다. 받을 쪽이 정해진 호출에 Broadcast를 썼기 때문에 캐릭터가 늘수록 쓸모없는 호출도 함께 늘어납니다. 스킬 컴포넌트를 직접 호출하거나 캐릭터별 채널을 두었다면 걸러 내는 비용과 잘못 받을 가능성이 함께 사라졌을 것입니다.
+**한 캐릭터의 스킬 단계를 전역 Broadcast로 알렸습니다.** 모든 스킬 컴포넌트가 같은 채널을 Subscribe하고, 각자 "내 캐릭터인가"를 비교해 걸러 냅니다. 받을 쪽이 정해진 호출에 Broadcast를 썼기 때문에 캐릭터가 늘수록 쓸모없는 호출도 함께 늘어납니다. 스킬 컴포넌트를 직접 호출하거나 캐릭터별 채널을 두었다면 걸러 내는 비용과 잘못 받을 가능성이 함께 사라졌을 것입니다.
 
 남은 개선점입니다.
 
