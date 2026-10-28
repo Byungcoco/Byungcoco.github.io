@@ -1,0 +1,526 @@
+---
+project: duet
+order: 8
+title: 이벤트 버스 · Multicast Delegate
+topic: 이벤트 시스템
+chips: [Event Bus, Multicast Delegate, Variadic Template, type_index, static_assert, std::function]
+lineage:
+  label: 나루토 모작 — 스킬 시스템
+  href: /reviews/naruto/02-skill-system/
+---
+import Chips from '../../../components/Chips.astro';
+import Fig from '../../../components/Fig.astro';
+import FigRef from '../../../components/FigRef.astro';
+import Editor from '../../../components/Editor.astro';
+import Tabs from '../../../components/Tabs.astro';
+import Tab from '../../../components/Tab.astro';
+
+## 1. 개요
+
+<Chips items={frontmatter.chips} />
+
+이벤트 버스는 보내는 쪽과 받는 쪽이 서로를 모른 채 "이벤트 종류"만으로 이어지게 하는 구조입니다. 보내는 쪽은 방송만 하고, 받을 쪽은 미리 구독해 두었다가 방송이 오면 호출됩니다. 구독자 목록을 들고 한 번에 여러 함수를 부르는 부품이 Multicast Delegate이고, 이벤트 버스는 이 델리게이트를 이벤트 종류마다 하나씩 보관하는 전역 관리자입니다.
+
+개인 프로젝트에서 만든 이 구조를 팀 프레임워크의 공용 통신 수단으로 가져왔습니다. 보스가 그로기에 빠지면 방송만 하고, 약점 UI와 체력바 UI는 각자 구독해서 반응하므로 보스 코드는 UI를 전혀 참조하지 않습니다. 같은 델리게이트 클래스를 모델이 직접 멤버로 두어 애니메이션 노티파이도 같은 방식으로 전달합니다.
+
+## 2. 문제
+
+> 팀 프로젝트에서는 한 사건에 반응해야 하는 쪽이 여러 사람의 코드에 흩어져 있었습니다. 보스가 그로기 상태가 되면 약점 UI가 떠야 하고, 사망 연출이 시작되면 체력바가 꺼져야 하며, 애니메이션 특정 프레임에서는 기믹·판정·이펙트·사운드·카메라가 동시에 움직여야 했습니다. 보스가 UI를 직접 찾아 호출하거나 UI가 매 프레임 보스 상태를 확인하면, 기능이 늘어날 때마다 서로의 코드를 고쳐야 합니다. 또 콜백 안에서 다른 구독을 추가하거나 해제하는 일이 생기는데, 이때 순회 중인 구독자 배열이 바뀌면 반복자가 깨집니다. 여러 사람이 이벤트를 정의하는 만큼, 콜백 함수의 형식이 이벤트와 맞지 않는 실수도 실행해 보기 전에 잡아야 했습니다.
+
+## 3. 구조 요약
+
+세 층으로 나눴습니다. `CMulticastDelegate`는 구독자 목록과 방송만 담당하고, `CEventBus_Manager`는 이벤트 태그 타입마다 델리게이트를 하나씩 채널로 보관합니다. 게임 코드는 `CGameInstance`의 위임 함수로만 구독·방송합니다. 특정 객체에만 묶인 이벤트는 버스를 거치지 않고 델리게이트를 멤버로 직접 둡니다.
+
+<Fig n={1} white max={620} src="/img/reviews/duet/08-event-bus/class.png" caption="이벤트 버스 · Multicast Delegate 클래스 관계도" />
+
+### 책임 분리
+
+<div class="tbl">
+
+| 클래스 / 구조체 | 책임 |
+| --- | --- |
+| 이벤트 태그 (`BOSS_GROGGY` 등) | 데이터 없는 빈 구조체. `Signature`로 콜백 형식을 정함 |
+| `CEventBus_Manager` | 태그 타입별 채널 생성·보관, 구독 방식 3종(람다·정적 함수·멤버 함수), 방송·해제 |
+| `IChannel` / `Channel<Signature>` | 형식이 다른 델리게이트를 한 컨테이너에 담기 위한 공통 부모와 래퍼 |
+| `CMulticastDelegate` | 구독자 슬롯 목록, 방송, 방송 중 구독 변경의 지연 반영 |
+| `DelegateHandle` | 구독 해제용 식별자(ID·세대) |
+
+</div>
+
+## 4. 코드 리뷰
+
+<Tabs labels={['실제 사용', '이벤트 버스', 'Multicast Delegate']}>
+<Tab>
+
+보스는 상태가 바뀔 때 방송만 하고, 받는 쪽은 각자 구독합니다. 애니메이션 노티파이처럼 한 모델에만 묶인 이벤트는 모델이 델리게이트를 직접 들고 있습니다.
+
+#### A. 전역 이벤트: 보스 그로기 방송
+
+<Editor file="Client_EventDefine.h" fn="BOSS_UI_ON, BOSS_UI_OFF, BOSS_GROGGY">
+
+```cpp
+struct BOSS_UI_ON { using Signature = void(); };							// 시빌라 체력바 켜기
+struct BOSS_UI_OFF { using Signature = void(); };							// 끄기
+
+struct BOSS_GROGGY { using Signature = void(); };							// 약점 노출
+```
+
+</Editor>
+
+<Editor file="Boss_Xibi.cpp" fn="CBoss_Xibi::On_Hit(...), On_Dying()">
+
+```cpp
+_bool CBoss_Xibi::On_Hit(const HIT_DESC& hitDesc)
+{
+	_bool result = Super::On_Hit(hitDesc);
+	if (result == true)
+	{
+		CMonsterControlContext *pControlContext = Get_Component<CMonsterControlContext>();
+		// ... 코드 중략
+		if (pControlContext->IsGroggy() == true)
+		{
+			// ... 코드 중략
+		}
+		else
+		{
+			EGroggyState eGroggy{ EGroggyState::None };
+			// ... 코드 중략
+
+			// 그로기 세팅하고 !!리턴!!
+			if (eGroggy != EGroggyState::None)
+			{
+				if (_bool bRequstedSucess = pControlContext->Set_Groggy(eGroggy))
+					m_pGameInstance->Broadcast<BOSS_GROGGY>();
+
+			}
+		}
+	}
+	return result;
+}
+
+void CBoss_Xibi::On_Dying()
+{
+	CMonsterControlContext* pControlContext = Get_Component<CMonsterControlContext>();
+	if (_bool bRequestedSucess = pControlContext->Set_Groggy(EGroggyState::Final))
+		m_pGameInstance->Broadcast<BOSS_GROGGY>();
+}
+```
+
+</Editor>
+
+그로기 요청이 실제로 받아들여졌을 때만 방송합니다. 보스 코드에는 UI 이름이 한 번도 나오지 않고, 약점 UI와 체력바 UI는 팀원들이 각자 `Subscribe<BOSS_GROGGY>`, `Subscribe<BOSS_UI_OFF>`로 연결했습니다. 대화·퀘스트·튜토리얼·트리거 박스 연출도 같은 방식으로 붙었습니다.
+
+#### B. 로컬 이벤트: 애니메이션 노티파이
+
+<Editor file="Model.h" fn="CModel">
+
+```cpp
+class ENGINE_DLL CModel final : public CComponent
+{
+	// ... 코드 중략
+public:
+	CMulticastDelegate<void(const AnimNotifyKey&)> OnNotify;
+	// ... 코드 중략
+};
+```
+
+</Editor>
+
+<Editor file="Model.cpp" fn="CModel::Emit_Notifies(...)">
+
+```cpp
+void CModel::Emit_Notifies(CModelAnimation* pAnimation, _float fCurPos, EAnimNotifyPhase ePhase)
+{
+	// ... 코드 중략
+	// 람다 ( From, To 사이에 있는 이벤트 Broadcast )
+	auto Emit_Range = [&](_float fFrom, _float fTo)->void
+		{
+			while (iIndex < notifyKeys.size() &&
+				notifyKeys[iIndex].fTrackPosition <= fTo)
+			{
+				if (notifyKeys[iIndex].fTrackPosition > fFrom)
+					OnNotify.Broadcast(notifyKeys[iIndex]);
+
+				pAnimation->Set_NotifyCursor(ePhase, ++iIndex);
+			}
+		};
+	// ... 코드 중략
+}
+```
+
+</Editor>
+
+<Editor file="GimmikController.cpp" fn="CGimmikController::Bind_ModelAnimNotify() 외">
+
+```cpp
+void CGimmikController::Bind_ModelAnimNotify()
+{
+    if (m_pOwnerModel == nullptr)
+        return;
+
+    Unbind_ModelAnimNotify();
+    
+    m_hAnimNotifyHandle = m_pOwnerModel->OnNotify.Subscribe(
+        [this](const AnimNotifyKey& key)
+        {
+            this->On_ModelAnimNotify(key);
+        });
+}
+
+void CGimmikController::Unbind_ModelAnimNotify()
+{
+    if (m_pOwnerModel == nullptr)
+        return;
+
+    m_pOwnerModel->OnNotify.Unsubscribe(m_hAnimNotifyHandle);
+    m_hAnimNotifyHandle = {};
+}
+
+void CGimmikController::Free()
+{
+    Unbind_ModelAnimNotify();
+    Super::Free();
+}
+```
+
+</Editor>
+
+<Fig n={2} white max={720} src="/img/reviews/duet/08-event-bus/use.png" caption="전역 이벤트는 버스의 태그 채널로, 로컬 이벤트는 모델이 직접 들고 있는 델리게이트로 전달" />
+
+노티파이는 그 모델을 가진 객체에서만 의미가 있으므로 전역 버스에 올리지 않았습니다(<FigRef n={2} />). 모델이 `OnNotify`를 멤버로 들고, 기믹 컨트롤러·콜라이더·이펙트·사운드·카메라 핸들러가 각자 구독합니다. 구독할 때 받은 핸들은 해제 시점(`Free`)에 반드시 돌려주어, 사라진 객체의 `this`를 붙든 콜백이 남지 않게 했습니다. 다시 구독하기 전에 먼저 해제하므로 같은 객체가 두 번 등록되지도 않습니다.
+
+</Tab>
+<Tab>
+
+이벤트는 문자열이나 번호 대신 빈 태그 구조체로 구분합니다. 태그의 `type_index`가 채널의 키이고, 태그 안의 `Signature`가 그 채널의 콜백 형식입니다.
+
+#### A. 태그 채널과 형식 검사
+
+<Editor file="EventBus_Manager.h" fn="IChannel, Channel, CEventBus_Manager">
+
+```cpp
+struct IChannel
+{
+	virtual ~IChannel() = default;
+};
+
+// 멀티캐스트 래핑
+template<class Signature>
+struct Channel : IChannel
+{
+	CMulticastDelegate<Signature> multicast;
+};
+
+NS_BEGIN(Engine)
+
+// ... 코드 중략
+
+class CEventBus_Manager final : public CBase
+{
+	// ... 코드 중략
+public:
+	template<typename Tag, typename Func>
+	DelegateHandle Add_Lambda(Func&& func)
+	{
+		using Sig = typename Tag::Signature;
+		return Subscribe<Tag>(std::function<Sig>(std::forward<Func>(func)));
+	}
+
+	template<typename Tag>
+	DelegateHandle Add_Static(typename Tag::Signature* pFunc)
+	{
+		using Sig = typename Tag::Signature;
+		return Subscribe<Tag>(std::function<Sig>(pFunc));
+	}
+
+	template<typename Tag, typename T, typename... Args>
+	DelegateHandle Add_MemFunc(T* pObj, void (T::* memFunc)(Args...))
+	{
+		using Sig = typename Tag::Signature;
+		static_assert(std::is_same_v<Sig, void(Args...)>, "signature not match");
+		return Subscribe<Tag>([pObj, memFunc](Args... args)
+			{
+				(pObj->*memFunc)(std::forward<Args>(args)...);
+			});
+	}
+	// ... 코드 중략
+	template<typename Tag, typename... Arg>
+	void Broadcast(Arg&&... a)
+	{
+		auto itr = m_channels.find(std::type_index(typeid(Tag)));
+		if (itr == m_channels.end()) return;
+
+		auto* pChannel = static_cast<Channel<typename Tag::Signature>*>(itr->second);
+		pChannel->multicast.Broadcast(std::forward<Arg>(a)...);
+	}
+	// ... 코드 중략
+private:
+	template<typename Tag>
+	DelegateHandle Subscribe(std::function<typename Tag::Signature> func)
+	{
+		auto* channel = GetOrCreate<Tag>();
+		return channel->multicast.Subscribe(std::move(func));
+	}
+
+	template<typename Tag>
+	Channel<typename Tag::Signature>* GetOrCreate()
+	{
+		const std::type_index key{ typeid(Tag) };
+		auto itr = m_channels.find(key);
+		if (itr != m_channels.end())
+			return static_cast<Channel<typename Tag::Signature>*>(itr->second);
+
+		auto* pChannel = new Channel<typename Tag::Signature>();
+		m_channels.emplace(key, pChannel);
+		return pChannel;
+	}
+private:
+	std::unordered_map<std::type_index, IChannel*> m_channels;
+	// ... 코드 중략
+};
+```
+
+</Editor>
+
+채널마다 델리게이트의 형식이 다르므로 한 컨테이너에 그대로 담을 수 없습니다. 그래서 가상 소멸자만 있는 `IChannel`을 공통 부모로 두고, 꺼낼 때는 태그로 형식을 알고 있으므로 `static_cast`로 되돌립니다. 키가 `type_index`인 `unordered_map`이라 채널 탐색은 평균 O(1)이고, 채널은 처음 구독될 때 만들어집니다. 아무도 구독하지 않은 이벤트를 방송하면 채널이 없으므로 바로 돌아옵니다.
+
+멤버 함수 구독은 `static_assert`로 멤버 함수의 형식이 태그의 `Signature`와 정확히 같은지 검사합니다. 이벤트 정의를 바꾸고 구독하는 쪽을 고치지 않으면 실행 전에 컴파일 오류로 드러납니다. 람다와 정적 함수는 `std::function<Sig>`로 바로 변환하므로, 변환이 안 되는 형식이면 마찬가지로 컴파일되지 않습니다.
+
+#### B. 게임 코드 쪽 진입점
+
+<Editor file="GameInstance.h" fn="CGameInstance::Subscribe / Broadcast">
+
+```cpp
+template<typename Tag, typename Func>
+inline DelegateHandle CGameInstance::Subscribe(Func&& func)
+{
+	return m_pEventBus_Manager->Add_Lambda<Tag>(std::forward<Func>(func));
+}
+
+// ... 코드 중략
+
+template<typename Tag, typename T, typename ...Args>
+inline DelegateHandle CGameInstance::Subscribe(T* pObj, void (T::* memFunc)(Args ...))
+{
+	return m_pEventBus_Manager->Add_MemFunc<Tag>(pObj, memFunc);
+}
+
+// ... 코드 중략
+
+template<typename Tag, typename... Arg>
+inline void CGameInstance::Broadcast(Arg&&... a)
+{
+	m_pEventBus_Manager->Broadcast<Tag>(std::forward<Arg>(a)...);
+}
+```
+
+</Editor>
+
+팀원은 관리자 클래스를 몰라도 `Subscribe<태그>`와 `Broadcast<태그>` 두 가지만 알면 됩니다. 인자에 람다를 넘기든 멤버 함수를 넘기든 오버로드가 알맞은 구독 방식을 골라 줍니다.
+
+</Tab>
+<Tab>
+
+구독자 목록을 들고 방송하는 부품입니다. 콜백 안에서 구독이 바뀌어도 순회가 깨지지 않도록, 방송 중의 변경은 모아 두었다가 방송이 끝난 뒤 반영합니다.
+
+#### A. 클래스 선언과 구독
+
+<Editor file="Engine_Struct.h" fn="Engine::DelegateHandle">
+
+```cpp
+namespace Engine
+{
+	// ... 코드 중략
+	struct DelegateHandle
+	{
+		uint64_t iID = { 0 };
+		// 0 미사용, 1 기본
+		// 원래는 Slot 재사용하면서 Generation++ 해야하지만 지금은 ID 관리
+		uint32_t iGeneration = { 0 };
+
+		bool operator == (const DelegateHandle& rhs) const noexcept
+		{
+			return (iID == rhs.iID) && (iGeneration == rhs.iGeneration);
+		}
+		// ... 코드 중략
+	};
+	// ... 코드 중략
+}
+```
+
+</Editor>
+
+<Editor file="MulticastDelegate.h" fn="CMulticastDelegate<void(Args...)>">
+
+```cpp
+template<class T>
+class CMulticastDelegate;
+
+template<class... Args>
+class CMulticastDelegate<void(Args...)>
+{
+	// ... 코드 중략
+	struct Slot
+	{
+		bool bAlive = { false };
+		DelegateHandle key = {};
+		std::function<void(Args...)> func;
+	};
+public:
+	CMulticastDelegate()
+	{
+		m_vecSlots.reserve(20);
+		m_vecPending.reserve(10);
+	}
+	DelegateHandle Subscribe(std::function<void(Args...)> func) noexcept;
+	bool Unsubscribe(DelegateHandle _handle) noexcept;
+	void Clear() noexcept;
+
+	// 타입일치 검사위해 A
+	template<typename... A>
+	void Broadcast(A&&... args)
+	{
+		static_assert(sizeof...(A) == sizeof...(Args), "Broadcast argument count must match the delegate signature");
+
+		m_iBroadcastDepth++;
+		for (size_t i = 0; i < m_vecSlots.size(); ++i)
+		{
+			if (!m_vecSlots[i].bAlive)
+				continue;
+
+			m_vecSlots[i].func(std::forward<A>(args)...);
+		}
+		m_iBroadcastDepth--;
+
+		if (!IsBroadcasting())
+			Apply_Pending();
+	}
+
+private:
+	bool IsBroadcasting() const { return m_iBroadcastDepth > 0; }
+	void Apply_Pending();
+private:
+	uint32_t m_iBroadcastDepth = { 0 };
+	uint64_t m_iNextID = { 1 };
+	std::vector<Slot> m_vecSlots;
+	std::vector<Slot> m_vecPending;
+};
+
+template<class ...Args>
+inline DelegateHandle CMulticastDelegate<void(Args...)>::Subscribe(std::function<void(Args...)> func) noexcept
+{
+	Slot slot = {};
+	slot.bAlive = true;
+	slot.key.iGeneration = 1;
+	slot.key.iID = m_iNextID++;
+	slot.func = std::move(func);
+
+	if (IsBroadcasting())
+		m_vecPending.emplace_back(std::move(slot));
+	else
+		m_vecSlots.emplace_back(std::move(slot));
+
+	return slot.key;
+}
+```
+
+</Editor>
+
+주 템플릿은 선언만 하고 `void(Args...)` 형식에 대해서만 부분 특수화해, 반환값 없는 함수 형식만 받도록 했습니다. 구독 하나는 살아 있는지 여부(`bAlive`), 해제용 핸들, 콜백을 담은 슬롯입니다. 슬롯을 연속된 `vector`에 두어 방송할 때는 앞에서부터 순서대로 훑기만 합니다. 방송 중에 구독이 들어오면 본 목록이 아니라 대기 목록(`m_vecPending`)에 넣습니다.
+
+#### B. 방송 중 해제와 지연 반영
+
+<Editor file="MulticastDelegate.h" fn="Unsubscribe(...), Apply_Pending()">
+
+```cpp
+template<class ...Args>
+inline bool CMulticastDelegate<void(Args...)>::Unsubscribe(DelegateHandle _handle) noexcept
+{
+	bool bReturn = { false };
+
+	if (IsBroadcasting())
+	{
+		for (auto& slot : m_vecSlots)
+		{
+			if (slot.bAlive && slot.key == _handle)
+			{
+				slot.bAlive = false;
+				bReturn = true;
+				break;
+			}
+		}
+
+		for (auto& slot : m_vecPending)
+		{
+			if (slot.bAlive && slot.key == _handle)
+			{
+				slot.bAlive = false;
+				bReturn = true;
+				break;
+			}
+		}
+	}
+	else
+	{
+		auto itr = std::remove_if(m_vecSlots.begin(), m_vecSlots.end(),
+			[&](const Slot& s) -> bool
+			{
+				return (s.bAlive && s.key == _handle);
+			});
+
+		if (itr != m_vecSlots.end())
+		{
+			bReturn = true;
+			m_vecSlots.erase(itr, m_vecSlots.end());
+		}
+	}
+
+	return bReturn;
+}
+
+// ... 코드 중략
+
+template<class ...Args>
+inline void CMulticastDelegate<void(Args...)>::Apply_Pending()
+{
+	auto itr = std::remove_if(m_vecSlots.begin(), m_vecSlots.end(),
+		[&](const Slot& s)->bool
+		{
+			return !s.bAlive;
+		});
+
+	m_vecSlots.erase(itr, m_vecSlots.end());
+
+	for (auto& slot : m_vecPending)
+	{
+		if (slot.bAlive)
+			m_vecSlots.emplace_back(std::move(slot));
+	}
+	m_vecPending.clear();
+}
+```
+
+</Editor>
+
+<Fig n={3} white max={560} src="/img/reviews/duet/08-event-bus/flow.png" caption="방송 중 구독·해제는 표시만 하고, 가장 바깥 방송이 끝날 때 한꺼번에 반영" />
+
+방송 중이 아니면 해제는 그 자리에서 지웁니다. 방송 중이면 슬롯을 지우지 않고 `bAlive`만 끄므로, 순회 중인 배열의 크기와 위치가 그대로 유지됩니다(<FigRef n={3} />). 방송 깊이를 세기 때문에 콜백 안에서 다시 방송하는 중첩 방송도 안전하고, 실제 정리는 가장 바깥 방송이 끝날 때 한 번만 일어납니다. 대기 목록에 들어갔다가 같은 방송 안에서 해제된 구독도 `bAlive`가 꺼져 있어 본 목록으로 옮겨지지 않습니다.
+
+</Tab>
+</Tabs>
+
+## 5. 피드백
+
+**방송 인자는 개수만 검사하고 형식은 검사하지 않습니다.** 구독 쪽은 `Signature`와 정확히 같은지 검사하지만, 방송 쪽 `static_assert`는 인자 개수만 비교합니다. 그래서 `int`를 받는 이벤트에 `float`를 넘기는 것처럼 암시적으로 변환되는 실수는 경고 없이 컴파일되고, 값이 잘린 채로 전달됩니다. 각 인자가 `Signature`의 매개변수로 변환 가능한지까지 검사하거나, 방송 함수의 매개변수를 `Signature`에서 직접 뽑아 쓰는 편이 구독 쪽 검사와 짝이 맞습니다.
+
+남은 개선점입니다.
+
+- `Broadcast`가 같은 인자를 구독자마다 `std::forward`로 넘깁니다. 이동 가능한 값을 넘기면 두 번째 구독자부터 이미 옮겨진 빈 값을 받습니다. 지금은 포인터·정수·`const&`만 넘겨서 드러나지 않았습니다.
+- 핸들의 세대(`iGeneration`)가 항상 1입니다. 슬롯을 재사용하지 않고 ID를 계속 늘리는 방식이라 지금은 문제가 없지만, 세대 값이 실제로는 쓰이지 않습니다.
+- 레벨을 바꿀 때 `Clear_All`이 채널을 모두 지웁니다. 다음 레벨까지 살아남는 객체가 들고 있던 구독도 함께 사라지므로, 그런 객체는 레벨마다 다시 구독해야 합니다.
+- 구독·방송에 동기화가 없어 메인 스레드에서만 써야 하는데, 이 전제가 코드에 드러나 있지 않습니다.
+
+### 다음 단계
+
+- 방송 함수의 인자 형식을 `Signature`에서 가져와, 구독과 방송 양쪽 모두 컴파일 단계에서 형식을 검사합니다.
+- 레벨을 넘어 유지되는 구독과 레벨 단위 구독을 나눠, 레벨 전환 때 레벨 단위 구독만 정리합니다.

@@ -1,9 +1,9 @@
 ---
 project: naruto
 order: 2
-title: 스킬 시스템 · 이벤트 버스
+title: 스킬 시스템
 topic: 스킬
-chips: [Event Bus, Data-Driven, std::function, unordered_map]
+chips: [Data-Driven, Command, Event Bus, std::function]
 ---
 import Chips from '../../../components/Chips.astro';
 import Fig from '../../../components/Fig.astro';
@@ -16,7 +16,7 @@ import Tab from '../../../components/Tab.astro';
 
 <Chips items={frontmatter.chips} />
 
-이벤트 버스는 보내는 쪽과 받는 쪽이 서로를 모른 채 이벤트 종류만으로 이어지게 하는 구조입니다. 여기에 데이터 주도 설계를 더하면 공통 흐름은 코드 한 곳에 두고, 객체마다 다른 동작은 커맨드 목록 같은 데이터로 정의할 수 있습니다.
+데이터 주도 설계를 쓰면 공통 흐름은 코드 한 곳에 두고, 객체마다 다른 동작은 커맨드 목록 같은 데이터로 정의할 수 있습니다. 캐릭터 상태와 스킬 오브젝트 사이는 이벤트 버스로 이어서, 보내는 쪽과 받는 쪽이 서로를 모른 채 이벤트 종류만으로 연결됩니다.
 
 스킬마다 다른 부분을 커맨드 데이터로 빼서, 새 스킬은 파츠 구성과 커맨드 목록만 정하면 붙습니다. 캐릭터 상태도 스킬 오브젝트를 직접 참조하지 않습니다.
 
@@ -36,8 +36,7 @@ import Tab from '../../../components/Tab.astro';
 
 | 클래스 | 책임 |
 | --- | --- |
-| `CEventBus_Manager` | 태그 타입별 채널 보관, 구독·해제·방송 |
-| `CMulticastDelegate` | 구독자 목록. 방송 중 구독 변경은 끝난 뒤 반영 |
+| `CEventBus_Manager` | 상태가 방송한 스킬 단계 이벤트를 구독한 스킬 컴포넌트에 전달 |
 | `CSkillComponent` | 슬롯별 쿨타임, 스킬 오브젝트 생성, 단계 이벤트를 해당 스킬에 전달 |
 | `CSkillStateContainer` | 스킬 하나의 애니메이션 단계(시작·충전·돌진 등)를 순서대로 진행하는 상태 |
 | `CSkillBase` · `SKILL_PRESET` | 단계 전환, 이벤트에 등록된 커맨드를 파츠에 실행 |
@@ -47,7 +46,7 @@ import Tab from '../../../components/Tab.astro';
 
 ## 4. 코드 리뷰
 
-<Tabs labels={['실제 사용', '이벤트 버스', '스킬 컴포넌트', '스킬 · 프리셋', '단계 묶음']}>
+<Tabs labels={['실제 사용', '스킬 컴포넌트', '스킬 · 프리셋', '단계 묶음']}>
 <Tab>
 
 캐릭터는 슬롯에 스킬 단계 상태와 오브젝트 태그를 등록하고, 상태는 단계마다 이벤트를 방송하기만 합니다.
@@ -96,6 +95,18 @@ HRESULT CMainPlayer::Ready_Ability()
 
 #### B. 단계별 이벤트 방송
 
+스킬 단계마다 이벤트 태그를 하나씩 정의합니다. 태그 안의 `Signature`가 콜백 형식입니다.
+
+<Editor file="Client_EventDefine.h" fn="Skill_Appear, Skill_Active, Skill_Disappear">
+
+```cpp
+struct Skill_Appear { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
+struct Skill_Active { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
+struct Skill_Disappear { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
+```
+
+</Editor>
+
 <Editor file="State_Chidori_Start.cpp" fn="CState_Chidori_Start::Start(...)">
 
 ```cpp
@@ -143,154 +154,7 @@ HRESULT CState_Chidori_Attack::Start(void* pArg, _bool bForce)
 
 </Editor>
 
-애니메이션 단계가 시작될 때마다 그 단계에 맞는 이벤트를 방송합니다. 시작 단계에서 스킬 오브젝트를 만들고, 돌진 단계에서 충돌체를 켜고, 공격 단계에서 사라지게 합니다.
-
-</Tab>
-<Tab>
-
-이벤트를 태그 타입으로 구분하는 전역 버스입니다. 태그 구조체의 `Signature`가 곧 콜백 형식이고, 태그 타입마다 채널(`m_channels`)을 하나씩 두어 `Add_MemFunc`로 구독하고 `Broadcast`로 호출합니다. 방송 중에 들어온 구독은 방송 깊이(`m_iBroadcastDepth`)를 보고 대기 목록(`m_vecPending`)에 모아 둡니다.
-
-#### A. 태그 타입 채널
-
-<Editor file="Client_EventDefine.h" fn="Skill_Appear, Skill_Active, Skill_Disappear">
-
-```cpp
-struct Skill_Appear { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
-struct Skill_Active { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
-struct Skill_Disappear { using Signature = void(CGameObject* pOwner, unsigned int iType, unsigned int _iIndex); };
-```
-
-</Editor>
-
-<Editor file="EventBus_Manager.h" fn="CEventBus_Manager">
-
-```cpp
-class CEventBus_Manager final : public CBase
-{
-	// ... 코드 중략
-public:
-	// ... 코드 중략
-	template<typename Tag, typename T, typename... Args>
-	DelegateHandle Add_MemFunc(T* pObj, void (T::* memFunc)(Args...))
-	{
-		using Sig = typename Tag::Signature;
-		static_assert(std::is_same_v<Sig, void(Args...)>, "signature not match");
-		return Subscribe<Tag>([pObj, memFunc](Args... args)
-			{
-				(pObj->*memFunc)(std::forward<Args>(args)...);
-			});
-	}
-	// ... 코드 중략
-	template<typename Tag, typename... Arg>
-	void Broadcast(Arg&&... a)
-	{
-		auto itr = m_channels.find(std::type_index(typeid(Tag)));
-		if (itr == m_channels.end()) return;
-
-		auto* pChannel = static_cast<Channel<typename Tag::Signature>*>(itr->second);
-		pChannel->multicast.Broadcast(std::forward<Arg>(a)...);
-	}
-	// ... 코드 중략
-private:
-	// ... 코드 중략
-	template<typename Tag>
-	Channel<typename Tag::Signature>* GetOrCreate()
-	{
-		const std::type_index key{ typeid(Tag) };
-		auto itr = m_channels.find(key);
-		if (itr != m_channels.end())
-			return static_cast<Channel<typename Tag::Signature>*>(itr->second);
-
-		auto* pChannel = new Channel<typename Tag::Signature>();
-		m_channels.emplace(key, pChannel);
-		return pChannel;
-	}
-private:
-	std::unordered_map<std::type_index, IChannel*> m_channels;
-	// ... 코드 중략
-};
-```
-
-</Editor>
-
-<Fig n={2} white max={560} src="/img/reviews/naruto/02-skill-system/bus.png" caption="태그 타입별 채널과 방송 중 구독 변경" />
-
-이벤트는 문자열이나 번호 대신 빈 태그 구조체로 구분하고, 태그 타입의 `type_index`로 채널을 찾습니다. 구독하는 멤버 함수의 형식이 태그의 `Signature`와 다르면 `static_assert`가 컴파일 단계에서 막습니다(<FigRef n={2} />).
-
-#### B. 방송 중 구독 변경
-
-<Editor file="MulticastDelegate.h" fn="CMulticastDelegate<void(Args...)>">
-
-```cpp
-template<class... Args>
-class CMulticastDelegate<void(Args...)>
-{
-	// ... 코드 중략
-public:
-	// ... 코드 중략
-	template<typename... A>
-	void Broadcast(A&&... args)
-	{
-		static_assert(sizeof...(A) == sizeof...(Args), "Broadcast argument count must match the delegate signature");
-
-		m_iBroadcastDepth++;
-		for (size_t i = 0; i < m_vecSlots.size(); ++i)
-		{
-			if (!m_vecSlots[i].bAlive)
-				continue;
-
-			m_vecSlots[i].func(std::forward<A>(args)...);
-		}
-		m_iBroadcastDepth--;
-
-		if (!IsBroadcasting())
-			Apply_Pending();
-	}
-	// ... 코드 중략
-};
-
-template<class ...Args>
-inline DelegateHandle CMulticastDelegate<void(Args...)>::Subscribe(std::function<void(Args...)> func) noexcept
-{
-	Slot slot = {};
-	slot.bAlive = true;
-	slot.key.iGeneration = 1;
-	slot.key.iID = m_iNextID++;
-	slot.func = std::move(func);
-
-	if (IsBroadcasting())
-		m_vecPending.emplace_back(std::move(slot));
-	else
-		m_vecSlots.emplace_back(std::move(slot));
-
-	return slot.key;
-}
-
-// ... 코드 중략
-
-template<class ...Args>
-inline void CMulticastDelegate<void(Args...)>::Apply_Pending()
-{
-	auto itr = std::remove_if(m_vecSlots.begin(), m_vecSlots.end(),
-		[&](const Slot& s)->bool
-		{
-			return !s.bAlive;
-		});
-
-	m_vecSlots.erase(itr, m_vecSlots.end());
-
-	for (auto& slot : m_vecPending)
-	{
-		if (slot.bAlive)
-			m_vecSlots.emplace_back(std::move(slot));
-	}
-	m_vecPending.clear();
-}
-```
-
-</Editor>
-
-구독자 콜백 안에서 다시 구독하거나 해제하면 순회 중인 배열이 바뀌어 반복자가 깨집니다. 그래서 방송 중에는 새 구독을 대기 목록에 넣고 해제는 표시만 해 두었다가, 가장 바깥 방송이 끝날 때 한꺼번에 반영합니다. 방송 깊이를 세므로 방송 안에서 다시 방송해도 안전합니다.
+애니메이션 단계가 시작될 때마다 그 단계에 맞는 이벤트를 방송합니다. 시작 단계에서 스킬 오브젝트를 만들고, 돌진 단계에서 충돌체를 켜고, 공격 단계에서 사라지게 합니다. 이벤트 버스와 Multicast Delegate의 내부 구조는 [듀엣 나이트 어비스 모작 — 이벤트 버스 · Multicast Delegate](/reviews/duet/08-event-bus/)에서 따로 다룹니다.
 
 </Tab>
 <Tab>
@@ -359,9 +223,9 @@ void CSkillComponent::On_SkillAppear(CGameObject* pOwner, _uint iType, _uint _iI
 
 </Editor>
 
-<Fig n={3} white max={600} src="/img/reviews/naruto/02-skill-system/flow.png" caption="입력에서 스킬 파츠 동작까지" />
+<Fig n={2} white max={600} src="/img/reviews/naruto/02-skill-system/flow.png" caption="입력에서 스킬 파츠 동작까지" />
 
-상태는 "이 캐릭터의 몇 번 스킬이 나타났다"고 방송만 합니다. 스킬 컴포넌트가 자기 캐릭터의 이벤트만 골라 해당 슬롯의 스킬 오브젝트에 전달하므로(<FigRef n={3} />), 상태 코드는 스킬 오브젝트를 직접 참조하지 않습니다.
+상태는 "이 캐릭터의 몇 번 스킬이 나타났다"고 방송만 합니다. 스킬 컴포넌트가 자기 캐릭터의 이벤트만 골라 해당 슬롯의 스킬 오브젝트에 전달하므로(<FigRef n={2} />), 상태 코드는 스킬 오브젝트를 직접 참조하지 않습니다.
 
 </Tab>
 <Tab>
@@ -453,9 +317,9 @@ HRESULT CSkillShuriken::Initialize_Prototype()
 
 </Editor>
 
-<Fig n={4} white max={760} src="/img/reviews/naruto/02-skill-system/preset.png" caption="나선수리검의 단계 이벤트별 커맨드 목록" />
+<Fig n={3} white max={760} src="/img/reviews/naruto/02-skill-system/preset.png" caption="나선수리검의 단계 이벤트별 커맨드 목록" />
 
-나선수리검은 나타날 때 코어를 켜서 0.2배에서 3배로 키우고, 수리검 파츠를 켜서 회전시킵니다. 이 내용이 모두 커맨드 데이터이고 실행 코드는 모든 스킬이 같아서, 새 스킬은 파츠 구성과 커맨드 목록만 정하면 됩니다(<FigRef n={4} />).
+나선수리검은 나타날 때 코어를 켜서 0.2배에서 3배로 키우고, 수리검 파츠를 켜서 회전시킵니다. 이 내용이 모두 커맨드 데이터이고 실행 코드는 모든 스킬이 같아서, 새 스킬은 파츠 구성과 커맨드 목록만 정하면 됩니다(<FigRef n={3} />).
 
 #### B. 이벤트 → 커맨드 실행
 
@@ -619,6 +483,4 @@ void CSkillStateContainer::Update(const _float fTimeDelta)
 남은 개선점입니다.
 
 - 치도리 상태들이 `(1, 1)`처럼 슬롯 번호를 직접 적고 있어, 슬롯 배치가 바뀌면 함께 고쳐야 합니다. 컨테이너가 자기 슬롯 번호를 하위 단계에 넘겨 주는 편이 낫습니다.
-- `Broadcast`가 같은 인자를 구독자마다 `std::forward`로 넘깁니다. 이동 가능한 값을 넘기면 두 번째 구독자부터 빈 값을 받게 됩니다(지금은 포인터·정수뿐이라 문제 없음).
-- 구독 핸들의 세대 값이 항상 1로 고정되어 핸들 재사용을 구분하지 못합니다.
 - 소리 재생 커맨드(`PlayOneShot`)는 종류만 있고 처리 코드가 비어 있습니다.
