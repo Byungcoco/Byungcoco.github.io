@@ -21,7 +21,7 @@ import Tab from '../../../components/Tab.astro';
 
 <Chips items={frontmatter.chips} />
 
-네비게이션 메시는 걸을 수 있는 영역을 삼각형 셀로 나누고, 셀마다 이웃 셀을 기록해 둔 데이터입니다. 캐릭터는 지금 셀과 그 이웃만 확인하며 움직이므로, 맵 전체를 검사하지 않고도 이동 가능 여부와 높이를 알 수 있습니다. 귀 자르기(Ear Clipping)는 다각형에서 볼록한 꼭짓점을 하나씩 잘라 내 삼각형으로 나누는 알고리즘입니다.
+네비게이션 메시는 걸을 수 있는 영역을 삼각형 셀로 나누고, 셀마다 이웃 셀을 기록해 둔 데이터입니다. 캐릭터는 지금 셀과 그 이웃만 확인하며 움직이므로, 맵 전체를 검사하지 않고도 이동 가능 여부와 높이를 알 수 있습니다. EarClipping은 다각형에서 볼록한 꼭짓점을 하나씩 잘라 내 삼각형으로 나누는 알고리즘입니다.
 
 외곽선만 찍으면 셀과 이웃이 만들어져 맵 작업이 빨라졌습니다. 게임에서는 지나간 셀만 검사하는 가벼운 이동 판정과 벽 타기까지 같은 네비메시로 처리합니다.
 
@@ -50,7 +50,7 @@ import Tab from '../../../components/Tab.astro';
 
 ## 4. 코드 리뷰
 
-<Tabs labels={['실제 사용', '귀 자르기 · 구멍', '이웃 · 영역 잇기', '셀 이동']}>
+<Tabs labels={['실제 사용', 'EarClipping · 구멍', '이웃 · 영역 잇기', '셀 이동']}>
 <Tab>
 
 캐릭터 이동은 셀 검사를 통과할 때만 위치를 바꾸고, 벽 타기는 셀의 면 법선을 기준으로 자세를 맞춥니다.
@@ -134,7 +134,7 @@ void CMainPlayer::Movement_Wall(const _float fTimeDelta)
 
 툴에서 찍은 다각형을 삼각형 셀로 바꾸는 클래스입니다. `Compute_SignedAreaXZ`로 감기 방향을 맞춘 뒤 `Compute_Triangle_EarClippingXZ`가 귀(`Is_Ear`)를 잘라 나가고, 구멍이 있으면 `Build_CellsFromPolygon`이 다리로 이어 다각형 하나로 만듭니다. 결과 셀은 파일로 저장되어 게임의 `CNavigation`이 읽습니다.
 
-#### A. 감기 방향과 귀 자르기
+#### A. 감기 방향과 EarClipping
 
 <Editor file="PolygonNavigationCellMaker.cpp" fn="CPolygonNavigationCellMaker::Compute_Triangle_EarClippingXZ(...)">
 
@@ -363,7 +363,7 @@ void CPolygonNavigationCellMaker::Build_CellsFromPolygon(CPolygon* pOuterPolygon
 
 <Fig n={3} white max={640} src="/img/reviews/naruto/03-navmesh/hole.png" caption="구멍을 다리 변으로 이어 다각형 하나로 만들기" />
 
-귀 자르기는 구멍 없는 다각형 하나만 다룰 수 있습니다. 그래서 구멍의 감기 방향을 외곽과 반대로 맞추고, 툴에서 고른 외곽 점과 구멍 점을 다리 변으로 이어 "외곽 → 다리 → 구멍 한 바퀴 → 다리 → 외곽" 순서의 정점 목록 하나로 펼칩니다(<FigRef n={3} />). 구멍을 뒤집을 때 다리가 가리키던 구멍 점 번호도 함께 바꾸므로, 사용자가 고른 점이 그대로 유지됩니다.
+EarClipping은 구멍 없는 다각형 하나만 다룰 수 있습니다. 그래서 구멍의 감기 방향을 외곽과 반대로 맞추고, 툴에서 고른 외곽 점과 구멍 점을 다리 변으로 이어 "외곽 → 다리 → 구멍 한 바퀴 → 다리 → 외곽" 순서의 정점 목록 하나로 펼칩니다(<FigRef n={3} />). 구멍을 뒤집을 때 다리가 가리키던 구멍 점 번호도 함께 바꾸므로, 사용자가 고른 점이 그대로 유지됩니다.
 
 </Tab>
 <Tab>
